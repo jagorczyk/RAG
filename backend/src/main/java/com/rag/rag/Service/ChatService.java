@@ -1,16 +1,21 @@
 package com.rag.rag.Service;
 
-import dev.langchain4j.model.ollama.OllamaChatModel;
+import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
+import dev.langchain4j.service.spring.AiService;
 import dev.langchain4j.service.spring.AiServiceWiringMode;
+import dev.langchain4j.service.UserMessage;
 
-@dev.langchain4j.service.spring.AiService(
+import java.util.UUID;
+
+@AiService(
         wiringMode = AiServiceWiringMode.EXPLICIT,
         chatModel = "chatLanguageModel",
         contentRetriever = "contentRetriever",
-        retrievalAugmentor = "retrievalAugmentor"
+        retrievalAugmentor = "retrievalAugmentor",
+        chatMemoryProvider = "chatMemoryProvider"
 )
-public interface AiService {
+public interface ChatService {
 
     @SystemMessage("""
     Jesteś inteligentnym asystentem ds. analizy dokumentacji (RAG).
@@ -36,5 +41,5 @@ public interface AiService {
     ### FORMAT ODPOWIEDZI:
     Udzielaj odpowiedzi w formie ciągłego tekstu lub punktów, ale pamiętaj o nawiasach ze źródłem przy każdym fakcie.
     """)
-    String answer(String question);
+    String answer(@MemoryId UUID chatId, @UserMessage String question);
 }
