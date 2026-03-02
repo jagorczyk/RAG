@@ -7,6 +7,7 @@ import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -23,14 +24,15 @@ public class ChatMemoryService implements ChatMemoryStore {
         this.repository = repository;
     }
 
+    @Transactional
     @Override
     public List<ChatMessage> getMessages(Object memoryId) {
-        if (memoryId instanceof UUID chatId) {
-            Optional<ChatMemoryEntity> entity = repository.findById(chatId);
 
-            if (entity.isPresent() && entity.get().getMessages() != null) {
-                return ChatMessageDeserializer.messagesFromJson(entity.get().getMessages());
-            }
+        if (memoryId instanceof UUID chatId) {
+            return repository.findById(chatId)
+                    .map(ChatMemoryEntity::getMessages)
+                    .map(ChatMessageDeserializer::messagesFromJson)
+                    .orElseGet(ArrayList::new);
         }
         return new ArrayList<>();
     }

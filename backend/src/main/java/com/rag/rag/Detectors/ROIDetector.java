@@ -1,6 +1,7 @@
 package com.rag.rag.Detectors;
 
 import org.opencv.core.*;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
@@ -16,7 +17,10 @@ public class ROIDetector {
 
     private static final List<String> ANIMALS = Arrays.asList("cat", "dog", "horse", "bird");
 
-    public ROIDetector(String textModelPath, String yoloModelPath) {
+    public ROIDetector(
+            @Value("${textdetector.model.path}") String textModelPath,
+            @Value("${yolo.model.path}") String yoloModelPath
+    ) {
         this.textDetector = new TextDetector(textModelPath);
         this.yoloDetector = new YoloDetector(yoloModelPath);
     }

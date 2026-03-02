@@ -40,8 +40,6 @@ public class TextDetector {
             else textBoundingBox = createBoundingRect(textBoundingBox, r);
         }
 
-        if (textBoundingBox == null) return null;
-
         Rect labelContainer = findEnclosingLabel(src, textBoundingBox);
 
         if (labelContainer != null) {

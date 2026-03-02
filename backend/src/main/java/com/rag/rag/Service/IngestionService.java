@@ -88,7 +88,7 @@ public class IngestionService {
     public void processImage(Path imagePath) {
         Mat src = null;
         Mat result = null;
-        Mat resizedResult = null; // NOWY OBIEKT DO SKALOWANIA
+        Mat resizedResult = null;
         MatOfByte matOfByte = null;
 
         try {
@@ -101,36 +101,27 @@ public class IngestionService {
                 throw new RuntimeException("Nie udało się wczytać obrazu: " + imagePath);
             }
 
-            // 1. Kadrowanie (Twój ROIDetector)
             result = detector.detectAndChooseBest(src.clone());
 
             if (result == null || result.empty()) {
                 result = src.clone();
             }
 
-            // 2. SKALOWANIE OBRAZU (Ochrona przed wywaleniem Ollamy)
-            // Ustawiamy maksymalny wymiar na 1024 piksele
             double maxDim = 1024.0;
             double scale = Math.min(maxDim / result.width(), maxDim / result.height());
 
             resizedResult = new Mat();
             if (scale < 1.0) {
-                // Obraz jest większy niż 1024x1024, pomniejszamy go (INTER_AREA jest najlepsze do pomniejszania)
                 Imgproc.resize(result, resizedResult, new Size(), scale, scale, Imgproc.INTER_AREA);
-                System.out.println("Skalowanie obrazu dla LLM: " + result.size() + " -> " + resizedResult.size());
             } else {
-                // Obraz jest już mały, zostawiamy jak jest
                 result.copyTo(resizedResult);
             }
 
-            // 3. Konwersja zmniejszonego obrazu do Base64
             matOfByte = new MatOfByte();
-            // Możemy dodatkowo użyć kompresji JPEG, podając parametry (np. jakość 80%), ale standardowa też zadziała.
             Imgcodecs.imencode("." + format, resizedResult, matOfByte);
             byte[] byteArray = matOfByte.toArray();
             String base64Image = Base64.getEncoder().encodeToString(byteArray);
 
-            // 4. Budowanie promptu
             UserMessage message = UserMessage.from(
                     TextContent.from("""
                     Provide a detailed technical description of this image for retrieval purposes.
@@ -159,10 +150,9 @@ public class IngestionService {
         } catch (Exception e) {
             throw new RuntimeException("Błąd podczas przetwarzania obrazu: " + imagePath, e);
         } finally {
-            // Sprzątanie wszystkich macierzy!
             if (src != null) src.release();
             if (result != null) result.release();
-            if (resizedResult != null) resizedResult.release(); // Pamiętaj o nowej macierzy
+            if (resizedResult != null) resizedResult.release();
             if (matOfByte != null) matOfByte.release();
         }
     }

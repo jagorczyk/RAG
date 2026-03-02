@@ -99,7 +99,7 @@ public class YoloDetector {
         if (bestBox != null) {
             this.lastDetectedClass = COCO_CLASSES.get(bestClassId);
             this.lastDetectedRect = new Rect((int) bestBox.x, (int) bestBox.y, (int) bestBox.width, (int) bestBox.height);
-            this.lastConfidence = bestConfidence; // Zapisujemy pewność
+            this.lastConfidence = bestConfidence;
 
             return safeCrop(src, bestBox, 20);
         }

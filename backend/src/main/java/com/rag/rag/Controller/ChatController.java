@@ -13,22 +13,9 @@ import java.util.UUID;
 public class ChatController {
 
     private final ChatService chatService;
-    private final JdbcTemplate jdbcTemplate;
 
-    public ChatController(ChatService chatService, JdbcTemplate jdbcTemplate) {
+    public ChatController(ChatService chatService) {
         this.chatService = chatService;
-        this.jdbcTemplate = jdbcTemplate;
-    }
-
-    @DeleteMapping("/clear")
-    public ResponseEntity<String> clearEmbeddingsTable() {
-        try {
-            jdbcTemplate.execute("TRUNCATE TABLE embeddings");
-            return ResponseEntity.ok("Truncated embeddings.");
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError()
-                    .body("Error truncating: " + e.getMessage());
-        }
     }
 
     @PostMapping("/create")

@@ -22,6 +22,7 @@ import dev.langchain4j.service.AiServices;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -32,9 +33,14 @@ import java.util.List;
 @Configuration
 public class AiConfiguration {
 
-    static String OLLAMA_URL = "http://localhost:11434";
-    static String OLLAMA_TEXT_MODEL = "llama3";
-    static String OLLAMA_IMAGES_MODEL = "llava";
+    @Value("${ollama.base.url}")
+    private String BASE_URL;
+    @Value("${chat.language.model}")
+    private String TEXT_MODEL;
+    @Value("${vision.language.model}")
+    private String VISION_MODEL;
+    @Value("${embedding.model}")
+    private String EMBEDDING_MODEL;
 
     @Bean
     Tokenizer tokenizer() {
@@ -45,8 +51,8 @@ public class AiConfiguration {
     @Primary
     ChatLanguageModel chatLanguageModel() {
         return OllamaChatModel.builder()
-                .baseUrl(OLLAMA_URL)
-                .modelName(OLLAMA_TEXT_MODEL)
+                .baseUrl(BASE_URL)
+                .modelName(TEXT_MODEL)
                 .timeout(Duration.ofMinutes(10))
                 .numCtx(4096)
                 .numPredict(1024)
@@ -57,8 +63,8 @@ public class AiConfiguration {
     @Bean("visionModel")
     ChatLanguageModel visionLanguageModel() {
         return OllamaChatModel.builder()
-                .baseUrl(OLLAMA_URL)
-                .modelName(OLLAMA_IMAGES_MODEL)
+                .baseUrl(BASE_URL)
+                .modelName(VISION_MODEL)
                 .timeout(Duration.ofMinutes(10))
                 .numCtx(4096)
                 .numPredict(512)
@@ -100,23 +106,11 @@ public class AiConfiguration {
 
     @Bean
     EmbeddingModel embeddingModel() {
-        //return new AllMiniLmL6V2EmbeddingModel();
         return OllamaEmbeddingModel.builder()
-                .baseUrl("http://localhost:11434")
-                .modelName("bge-m3")
+                .baseUrl(BASE_URL)
+                .modelName(EMBEDDING_MODEL)
                 .build();
     }
-
-    @Bean
-    public String yoloModelPath() {
-        return "C:/Users/mrigo/springboot/RAG/backend/models/yolo11x.onnx";
-    }
-
-    @Bean
-    public String textModelPath() {
-        return "C:/Users/mrigo/springboot/RAG/backend/models/DB_TD500_resnet50.onnx";
-    }
-
 
     @Bean
     public EmbeddingStoreIngestor embeddingStoreIngestor(
