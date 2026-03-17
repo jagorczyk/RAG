@@ -1,6 +1,7 @@
 package com.rag.rag.Configuration;
 import com.rag.rag.Service.ChatMemoryService;
 import com.rag.rag.Service.ChatService;
+import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
@@ -14,11 +15,14 @@ import dev.langchain4j.model.ollama.OllamaEmbeddingModel;
 import dev.langchain4j.model.openai.OpenAiTokenizer;
 import dev.langchain4j.rag.DefaultRetrievalAugmentor;
 import dev.langchain4j.rag.RetrievalAugmentor;
+import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.rag.content.injector.ContentInjector;
 import dev.langchain4j.rag.content.injector.DefaultContentInjector;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 import dev.langchain4j.service.AiServices;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
@@ -29,6 +33,7 @@ import org.springframework.context.annotation.Primary;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Configuration
 public class AiConfiguration {
@@ -74,19 +79,33 @@ public class AiConfiguration {
 
     @Bean
     ContentRetriever contentRetriever(EmbeddingStore<TextSegment> embeddingStore, EmbeddingModel embeddingModel) {
-        return EmbeddingStoreContentRetriever.builder()
-                .embeddingStore(embeddingStore)
-                .embeddingModel(embeddingModel)
-                .maxResults(3)
-                .minScore(0.5)
-                .build();
+
+        return query -> {
+            var queryEmbedding = embeddingModel.embed(query.text()).content();
+            EmbeddingSearchRequest searchRequest = EmbeddingSearchRequest.builder()
+                    .queryEmbedding(queryEmbedding)
+                    .maxResults(3)
+                    .minScore(0.7)
+                    .build();
+
+            EmbeddingSearchResult<TextSegment> searchResult = embeddingStore.search(searchRequest);
+
+            return searchResult.matches().stream()
+                    .map(match -> {
+                        TextSegment segment = match.embedded();
+                        Metadata metadata = segment.metadata().copy();
+                        metadata.put("score", match.score());
+                        return Content.from(TextSegment.from(segment.text(), metadata));
+                    })
+                    .collect(Collectors.toList());
+        };
     }
 
     @Bean
     public RetrievalAugmentor retrievalAugmentor(ContentRetriever contentRetriever) {
 
         ContentInjector contentInjector = DefaultContentInjector.builder()
-                .metadataKeysToInclude(List.of("path", "filename", "document_id"))
+                .metadataKeysToInclude(List.of("path", "score", "filename", "document_id"))
                 .build();
 
         return DefaultRetrievalAugmentor.builder()

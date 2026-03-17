@@ -1,29 +1,33 @@
 package com.rag.rag.Service;
 
 import com.rag.rag.Detectors.ROIDetector;
+import com.rag.rag.Dto.SourceDto;
+import com.rag.rag.Entity.FolderEntity;
+import com.rag.rag.Entity.ImageEntity;
+import com.rag.rag.Repository.ImageRepository;
 import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.Metadata;
-import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
 import dev.langchain4j.data.document.parser.TextDocumentParser;
 import dev.langchain4j.data.document.parser.apache.tika.ApacheTikaDocumentParser;
 import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.service.Result;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
-import org.opencv.core.Mat;
-import org.opencv.core.MatOfByte;
-import org.opencv.core.Size;
-import org.opencv.imgcodecs.Imgcodecs;
-import org.opencv.imgproc.Imgproc;
+import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Base64;
-import java.util.stream.Stream;
+import java.util.List;
 
 @Service
 public class IngestionService {
@@ -31,159 +35,161 @@ public class IngestionService {
     private final ChatLanguageModel visionModel;
     private final EmbeddingStoreIngestor ingestor;
     private final ROIDetector detector;
+    private final ImageRepository imageRepository;
 
     public IngestionService(
             @Qualifier("visionModel") ChatLanguageModel visionModel,
             EmbeddingStoreIngestor ingestor,
-            ROIDetector detector
+            ROIDetector detector,
+            ImageRepository imageRepository
     ) {
         this.visionModel = visionModel;
         this.ingestor = ingestor;
         this.detector = detector;
+        this.imageRepository = imageRepository;
     }
 
-    public void ingestFilesFromDirectory(Path directory) {
-        try (Stream<Path> files = Files.walk(directory)) {
-            files.filter(Files::isRegularFile)
-                    .filter(this::isFileSupported)
-                    .forEach(this::chooseParser);
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            System.out.println("Zaladowano dane z folderu: " + directory);
+    private Document chooseParser(byte[] fileData, String path, String fileName, String extension) {
+        Document document = null;
+
+        switch (extension) {
+            case "txt" -> document = processTextFile(fileData);
+            case "pdf" -> document = processPdfFile(fileData);
+            case "png", "jpg", "jpeg" -> document = processImage(fileData, path, fileName);
+            default -> System.out.println("Skipped file: " + path + ", wrong file extension.");
         }
+
+        return document;
     }
 
-    private void chooseParser(Path file) {
-        switch (getFileExtension(file)) {
-            case ".txt" -> processTextFile(file);
-            case ".pdf" -> processPdfFile(file);
-            case ".png", ".jpg", ".jpeg" -> processImage(file);
-            default -> System.out.println("Pominieto plik: " + file + ", nieobslugiwany format.");
-        }
-    }
-
-    public void processTextFile(Path filePath) {
-        try {
-            Document document = FileSystemDocumentLoader.loadDocument(filePath, new TextDocumentParser());
-            enrichMetadata(document, filePath);
-
-            ingestor.ingest(document);
+    public Document processTextFile(byte[] fileData) {
+        try (InputStream stream = new ByteArrayInputStream(fileData)) {
+            TextDocumentParser parser = new TextDocumentParser();
+            return parser.parse(stream);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    public void processPdfFile(Path filePath) {
-        try {
-            Document document = FileSystemDocumentLoader.loadDocument(filePath, new ApacheTikaDocumentParser());
-            enrichMetadata(document, filePath);
-
-            ingestor.ingest(document);
+    public Document processPdfFile(byte[] fileData) {
+        try (InputStream stream = new ByteArrayInputStream(fileData)) {
+            ApacheTikaDocumentParser parser = new ApacheTikaDocumentParser();
+            return parser.parse(stream);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-    public void processImage(Path imagePath) {
-        Mat src = null;
-        Mat result = null;
-        Mat resizedResult = null;
-        MatOfByte matOfByte = null;
-
+    public Document processImage(byte[] imageData, String path, String fileName) {
         try {
-            String fileName = imagePath.getFileName().toString();
             String format = fileName.toLowerCase().endsWith(".png") ? "png" : "jpg";
             String mimeType = "image/" + (format.equals("png") ? "png" : "jpeg");
 
-            src = Imgcodecs.imread(imagePath.toString());
-            if (src.empty()) {
-                throw new RuntimeException("Nie udało się wczytać obrazu: " + imagePath);
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            Thumbnails.of(new ByteArrayInputStream(imageData))
+                    .size(1024, 1024)
+                    .outputFormat(format)
+                    .toOutputStream(outputStream);
+
+            byte[] processedBytes = outputStream.toByteArray();
+            String base64Image = Base64.getEncoder().encodeToString(processedBytes);
+
+            if (imageRepository.findByPath(path).isEmpty()) {
+                ImageEntity imageEntity = ImageEntity.builder()
+                        .path(path)
+                        .fileName(fileName)
+                        .fileType(mimeType)
+                        .imageData(processedBytes)
+                        .build();
+                imageRepository.save(imageEntity);
             }
-
-            result = detector.detectAndChooseBest(src.clone());
-
-            if (result == null || result.empty()) {
-                result = src.clone();
-            }
-
-            double maxDim = 1024.0;
-            double scale = Math.min(maxDim / result.width(), maxDim / result.height());
-
-            resizedResult = new Mat();
-            if (scale < 1.0) {
-                Imgproc.resize(result, resizedResult, new Size(), scale, scale, Imgproc.INTER_AREA);
-            } else {
-                result.copyTo(resizedResult);
-            }
-
-            matOfByte = new MatOfByte();
-            Imgcodecs.imencode("." + format, resizedResult, matOfByte);
-            byte[] byteArray = matOfByte.toArray();
-            String base64Image = Base64.getEncoder().encodeToString(byteArray);
 
             UserMessage message = UserMessage.from(
                     TextContent.from("""
-                    Provide a detailed technical description of this image for retrieval purposes.
-                    
-                    Step 1: Identify the main subject (e.g., device type, model, object).
-                    Step 2: Transcribe any visible text, labels, or serial numbers strictly.
-                    Step 3: Describe the condition of the object (e.g., damaged, new, dirty).
-                    Step 4: Describe the environment or context if relevant.
-                    
-                    Focus on factual keywords that a user might search for.
-                    """),
+                Provide a detailed technical description of this image for retrieval purposes.
+                
+                Step 1: Identify the main subject (e.g., device type, model, object).
+                Step 2: Transcribe any visible text, labels, or serial numbers strictly.
+                Step 3: Describe the condition of the object (e.g., damaged, new, dirty).
+                Step 4: Describe the environment or context if relevant.
+                
+                Focus on factual keywords that a user might search for.
+                """),
                     ImageContent.from(base64Image, mimeType)
             );
 
             String description = visionModel.generate(message).content().text();
-            String group = getFileGroup(imagePath);
+            return Document.from(description);
 
-            Metadata metadata = Metadata
-                    .from("document_id", group)
+        } catch (Exception e) {
+            throw new RuntimeException("Error while processing image: " + path, e);
+        }
+    }
+
+    @Transactional
+    public void ingestMultipartFile(MultipartFile file, FolderEntity folder) throws IOException {
+        String fileName = file.getOriginalFilename();
+        String extension = StringUtils.getFilenameExtension(fileName);
+        String group = folder.getName();
+
+        String path = "dir://" + folder.getName() + "/" + file.getOriginalFilename();
+        byte[] data = file.getBytes();
+
+        Document parsedDocument = chooseParser(data, path, fileName, extension);
+        if (parsedDocument != null) {
+            parsedDocument.metadata()
+                    .put("document_id", group)
                     .put("filename", fileName)
-                    .put("path", imagePath.toString());
-
-            Document document = Document.from(description, metadata);
-            ingestor.ingest(document);
-
-        } catch (Exception e) {
-            throw new RuntimeException("Błąd podczas przetwarzania obrazu: " + imagePath, e);
-        } finally {
-            if (src != null) src.release();
-            if (result != null) result.release();
-            if (resizedResult != null) resizedResult.release();
-            if (matOfByte != null) matOfByte.release();
+                    .put("path", path);
+            ingestor.ingest(parsedDocument);
         }
     }
 
-    private String getFileGroup(Path file) {
-        try {
-            Path parent = file.toAbsolutePath().getParent();
-            return (parent != null) ? parent.getFileName().toString() : "root";
-        } catch (Exception e) {
-            return "unknown";
+    public SourceDto createSourceDto(String path, String metadataFileName, Double score) {
+        if (path == null) {
+            return new SourceDto(null, metadataFileName, score, null, "OTHER");
         }
+
+        String lowerPath = path.toLowerCase();
+        String extension = "";
+
+        int dotIndex = lowerPath.lastIndexOf('.');
+        if (dotIndex >= 0) {
+            extension = lowerPath.substring(dotIndex);
+        }
+
+        String type = switch (extension) {
+            case ".pdf" -> "PDF";
+            case ".txt" -> "TEXT";
+            case ".jpg", ".jpeg", ".png" -> "IMAGE";
+            default -> "OTHER";
+        };
+
+        String base64 = null;
+        String finalFileName = metadataFileName != null ? metadataFileName : path;
+
+        var imageOpt = imageRepository.findByPath(path);
+        if (imageOpt.isPresent()) {
+            finalFileName = imageOpt.get().getFileName();
+            if ("IMAGE".equals(type)) {
+                base64 = Base64.getEncoder().encodeToString(imageOpt.get().getImageData());
+            }
+        }
+
+        return new SourceDto(path, finalFileName, score, base64, type);
     }
 
-    private void enrichMetadata(Document document, Path file) {
-        String group = getFileGroup(file);
-        document.metadata()
-                .put("document_id", group)
-                .put("filename", file.getFileName().toString())
-                .put("path", file.toString());
-    }
+    public List<SourceDto> getSources(Result<String> result) {
+        return result.sources().stream()
+                .map(source -> {
+                    var metadata = source.textSegment().metadata();
+                    String path = metadata.getString("path");
+                    String fileName = metadata.getString("filename");
+                    Double score = metadata.getDouble("score");
 
-    private String getFileExtension(Path file) {
-        return file.getFileName().toString().substring(file.getFileName().toString().lastIndexOf("."));
+                    return createSourceDto(path, fileName, score);
+                })
+                .distinct()
+                .toList();
     }
-
-    private boolean isFileSupported(Path file) {
-        return file.getFileName().toString().endsWith(".png") ||
-                file.getFileName().toString().endsWith(".jpg") ||
-                file.getFileName().toString().endsWith(".jpeg") ||
-                file.getFileName().toString().endsWith(".txt") ||
-                file.getFileName().toString().endsWith(".pdf");
-    }
-
 }

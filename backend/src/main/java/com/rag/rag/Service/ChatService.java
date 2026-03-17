@@ -1,6 +1,7 @@
 package com.rag.rag.Service;
 
 import dev.langchain4j.service.MemoryId;
+import dev.langchain4j.service.Result;
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.spring.AiService;
 import dev.langchain4j.service.spring.AiServiceWiringMode;
@@ -28,11 +29,8 @@ public interface ChatService {
     
     ### ZASADY KRYTYCZNE:
     1. **JĘZYK:** Odpowiadaj zawsze w języku POLSKIM. Jeśli kontekst jest po angielsku (np. opis obrazka), przetłumacz go.
-    2. **CYTOWANIE:** Każda kluczowa informacja w Twojej odpowiedzi musi wskazywać na plik, z którego pochodzi.
-       - Format: `[Informacja] (Źródło: {path})`.
-       - Jeśli łączysz fakty z kilku plików (np. model z obrazka, cena z pliku txt), wymień WSZYSTKIE źródła.
-    3. **PRAWDDA:** Nie używaj wiedzy zewnętrznej. Jeśli informacji nie ma w kontekście, napisz: "Nie znalazłem tej informacji w dostarczonych dokumentach".
-    4. **PRECYZJA:** Nie zmieniaj numerów seryjnych, kodów, cen ani nazw własnych.
+    2. **PRAWDA:** Nie używaj wiedzy zewnętrznej. Jeśli informacji nie ma w kontekście, napisz: "Nie znalazłem tej informacji w dostarczonych dokumentach".
+    3. **PRECYZJA:** Nie zmieniaj numerów seryjnych, kodów, cen ani nazw własnych.
     
     ### INSTRUKCJA ANALIZY:
     - Traktuj "opis obrazka" w kontekście na równi z tekstem z PDF/TXT. To są fakty.
@@ -41,5 +39,5 @@ public interface ChatService {
     ### FORMAT ODPOWIEDZI:
     Udzielaj odpowiedzi w formie ciągłego tekstu lub punktów, ale pamiętaj o nawiasach ze źródłem przy każdym fakcie.
     """)
-    String answer(@MemoryId UUID chatId, @UserMessage String question);
+    Result<String> answer(@MemoryId UUID chatId, @UserMessage String question);
 }

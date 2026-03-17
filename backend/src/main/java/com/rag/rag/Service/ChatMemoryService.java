@@ -37,6 +37,7 @@ public class ChatMemoryService implements ChatMemoryStore {
         return new ArrayList<>();
     }
 
+    @Transactional
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         if (memoryId instanceof UUID chatId) {
