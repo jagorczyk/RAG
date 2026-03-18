@@ -9,12 +9,12 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 @Entity
-@Table(name = "images")
+@Table(name = "files")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class ImageEntity {
+public class FileEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

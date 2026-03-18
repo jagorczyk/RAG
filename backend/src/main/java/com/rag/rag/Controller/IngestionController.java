@@ -1,25 +1,15 @@
 package com.rag.rag.Controller;
 
 import com.rag.rag.Dto.FileDto;
-import com.rag.rag.Entity.ImageEntity;
-import com.rag.rag.Repository.ImageRepository;
+import com.rag.rag.Entity.FileEntity;
+import com.rag.rag.Repository.FileRepository;
 import com.rag.rag.Service.IngestionService;
-import org.jetbrains.annotations.NotNull;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.awt.*;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 import java.util.List;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @RestController
 @RequestMapping("/api/data")
@@ -27,12 +17,12 @@ import java.util.stream.Stream;
 public class IngestionController {
     private final IngestionService ingestionService;
     private final JdbcTemplate jdbcTemplate;
-    private final ImageRepository imageRepository;
+    private final FileRepository imageRepository;
 
     public IngestionController(
             IngestionService ingestionService,
             JdbcTemplate jdbcTemplate,
-            ImageRepository imageRepository
+            FileRepository imageRepository
     ) {
         this.ingestionService = ingestionService;
         this.jdbcTemplate = jdbcTemplate;
@@ -70,7 +60,7 @@ public class IngestionController {
 
     @GetMapping("/files")
     public ResponseEntity<List<FileDto>> getFiles() {
-        List<ImageEntity> images = imageRepository.findAll();
+        List<FileEntity> images = imageRepository.findAll();
         List<FileDto> files = new ArrayList<>();
         files = images
                 .stream()

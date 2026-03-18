@@ -3,8 +3,8 @@ package com.rag.rag.Service;
 import com.rag.rag.Detectors.ROIDetector;
 import com.rag.rag.Dto.SourceDto;
 import com.rag.rag.Entity.FolderEntity;
-import com.rag.rag.Entity.ImageEntity;
-import com.rag.rag.Repository.ImageRepository;
+import com.rag.rag.Entity.FileEntity;
+import com.rag.rag.Repository.FileRepository;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.parser.TextDocumentParser;
 import dev.langchain4j.data.document.parser.apache.tika.ApacheTikaDocumentParser;
@@ -25,7 +25,6 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
@@ -35,13 +34,13 @@ public class IngestionService {
     private final ChatLanguageModel visionModel;
     private final EmbeddingStoreIngestor ingestor;
     private final ROIDetector detector;
-    private final ImageRepository imageRepository;
+    private final FileRepository imageRepository;
 
     public IngestionService(
             @Qualifier("visionModel") ChatLanguageModel visionModel,
             EmbeddingStoreIngestor ingestor,
             ROIDetector detector,
-            ImageRepository imageRepository
+            FileRepository imageRepository
     ) {
         this.visionModel = visionModel;
         this.ingestor = ingestor;
@@ -51,10 +50,11 @@ public class IngestionService {
 
     private Document chooseParser(byte[] fileData, String path, String fileName, String extension) {
         Document document = null;
+        if (extension == null) return null;
 
-        switch (extension) {
-            case "txt" -> document = processTextFile(fileData);
-            case "pdf" -> document = processPdfFile(fileData);
+        switch (extension.toLowerCase()) {
+            case "txt" -> document = processTextFile(fileData, path, fileName);
+            case "pdf" -> document = processPdfFile(fileData, path, fileName);
             case "png", "jpg", "jpeg" -> document = processImage(fileData, path, fileName);
             default -> System.out.println("Skipped file: " + path + ", wrong file extension.");
         }
@@ -62,8 +62,17 @@ public class IngestionService {
         return document;
     }
 
-    public Document processTextFile(byte[] fileData) {
+    public Document processTextFile(byte[] fileData, String path, String fileName) {
         try (InputStream stream = new ByteArrayInputStream(fileData)) {
+            if (imageRepository.findByPath(path).isEmpty()) {
+                FileEntity txtEntity = FileEntity.builder()
+                        .path(path)
+                        .fileName(fileName)
+                        .fileType("txt")
+                        .imageData(null)
+                        .build();
+                imageRepository.save(txtEntity);
+            }
             TextDocumentParser parser = new TextDocumentParser();
             return parser.parse(stream);
         } catch (Exception e) {
@@ -71,8 +80,17 @@ public class IngestionService {
         }
     }
 
-    public Document processPdfFile(byte[] fileData) {
+    public Document processPdfFile(byte[] fileData, String path, String fileName) {
         try (InputStream stream = new ByteArrayInputStream(fileData)) {
+            if (imageRepository.findByPath(path).isEmpty()) {
+                FileEntity pdfEntity = FileEntity.builder()
+                        .path(path)
+                        .fileName(fileName)
+                        .fileType("application/pdf")
+                        .imageData(null)
+                        .build();
+                imageRepository.save(pdfEntity);
+            }
             ApacheTikaDocumentParser parser = new ApacheTikaDocumentParser();
             return parser.parse(stream);
         } catch (Exception e) {
@@ -95,7 +113,7 @@ public class IngestionService {
             String base64Image = Base64.getEncoder().encodeToString(processedBytes);
 
             if (imageRepository.findByPath(path).isEmpty()) {
-                ImageEntity imageEntity = ImageEntity.builder()
+                FileEntity imageEntity = FileEntity.builder()
                         .path(path)
                         .fileName(fileName)
                         .fileType(mimeType)

@@ -8,22 +8,15 @@ import com.rag.rag.Entity.ChatMemoryEntity;
 import com.rag.rag.Entity.ChatMessageEntity;
 import com.rag.rag.Repository.ChatMemoryRepository;
 import com.rag.rag.Repository.ChatMessageRepository;
-import com.rag.rag.Repository.ImageRepository;
+import com.rag.rag.Repository.FileRepository;
 import com.rag.rag.Service.ChatMemoryService;
 import com.rag.rag.Service.ChatService;
 import com.rag.rag.Service.IngestionService;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.TextContent;
-import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.service.Result;
-import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 @RestController
@@ -32,7 +25,7 @@ import java.util.stream.IntStream;
 public class ChatController {
 
     private final ChatService chatService;
-    private final ImageRepository imageRepository;
+    private final FileRepository imageRepository;
     private final ChatMemoryRepository chatMemoryRepository;
     private final ChatMemoryService chatMemoryService;
     private final ChatMessageRepository chatMessageRepository;
@@ -40,7 +33,7 @@ public class ChatController {
 
     public ChatController(
             ChatService chatService,
-            ImageRepository imageRepository,
+            FileRepository imageRepository,
             ChatMemoryRepository chatMemoryRepository,
             ChatMemoryService chatMemoryService,
             ChatMessageRepository chatMessageRepository,

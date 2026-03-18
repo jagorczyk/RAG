@@ -1,12 +1,12 @@
 package com.rag.rag.Repository;
 
-import com.rag.rag.Entity.ImageEntity;
+import com.rag.rag.Entity.FileEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 
 @Repository
-public interface ImageRepository extends JpaRepository<ImageEntity, Long> {
-    Optional<ImageEntity> findByPath(String path);
+public interface FileRepository extends JpaRepository<FileEntity, Long> {
+    Optional<FileEntity> findByPath(String path);
 }
