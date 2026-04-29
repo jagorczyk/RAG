@@ -34,18 +34,18 @@ public class IngestionService {
     private final ChatLanguageModel visionModel;
     private final EmbeddingStoreIngestor ingestor;
     private final ROIDetector detector;
-    private final FileRepository imageRepository;
+    private final FileRepository fileRepository;
 
     public IngestionService(
             @Qualifier("visionModel") ChatLanguageModel visionModel,
             EmbeddingStoreIngestor ingestor,
             ROIDetector detector,
-            FileRepository imageRepository
+            FileRepository fileRepository
     ) {
         this.visionModel = visionModel;
         this.ingestor = ingestor;
         this.detector = detector;
-        this.imageRepository = imageRepository;
+        this.fileRepository = fileRepository;
     }
 
     private Document chooseParser(byte[] fileData, String path, String fileName, String extension) {
@@ -64,14 +64,14 @@ public class IngestionService {
 
     public Document processTextFile(byte[] fileData, String path, String fileName) {
         try (InputStream stream = new ByteArrayInputStream(fileData)) {
-            if (imageRepository.findByPath(path).isEmpty()) {
+            if (fileRepository.findByPath(path).isEmpty()) {
                 FileEntity txtEntity = FileEntity.builder()
                         .path(path)
                         .fileName(fileName)
                         .fileType("txt")
                         .imageData(null)
                         .build();
-                imageRepository.save(txtEntity);
+                fileRepository.save(txtEntity);
             }
             TextDocumentParser parser = new TextDocumentParser();
             return parser.parse(stream);
@@ -82,14 +82,14 @@ public class IngestionService {
 
     public Document processPdfFile(byte[] fileData, String path, String fileName) {
         try (InputStream stream = new ByteArrayInputStream(fileData)) {
-            if (imageRepository.findByPath(path).isEmpty()) {
+            if (fileRepository.findByPath(path).isEmpty()) {
                 FileEntity pdfEntity = FileEntity.builder()
                         .path(path)
                         .fileName(fileName)
                         .fileType("application/pdf")
                         .imageData(null)
                         .build();
-                imageRepository.save(pdfEntity);
+                fileRepository.save(pdfEntity);
             }
             ApacheTikaDocumentParser parser = new ApacheTikaDocumentParser();
             return parser.parse(stream);
@@ -105,34 +105,25 @@ public class IngestionService {
 
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             Thumbnails.of(new ByteArrayInputStream(imageData))
-                    .size(1024, 1024)
+                    .size(800, 800)
                     .outputFormat(format)
                     .toOutputStream(outputStream);
 
             byte[] processedBytes = outputStream.toByteArray();
             String base64Image = Base64.getEncoder().encodeToString(processedBytes);
 
-            if (imageRepository.findByPath(path).isEmpty()) {
+            if (fileRepository.findByPath(path).isEmpty()) {
                 FileEntity imageEntity = FileEntity.builder()
                         .path(path)
                         .fileName(fileName)
                         .fileType(mimeType)
                         .imageData(processedBytes)
                         .build();
-                imageRepository.save(imageEntity);
+                fileRepository.save(imageEntity);
             }
 
             UserMessage message = UserMessage.from(
-                    TextContent.from("""
-                Provide a detailed technical description of this image for retrieval purposes.
-                
-                Step 1: Identify the main subject (e.g., device type, model, object).
-                Step 2: Transcribe any visible text, labels, or serial numbers strictly.
-                Step 3: Describe the condition of the object (e.g., damaged, new, dirty).
-                Step 4: Describe the environment or context if relevant.
-                
-                Focus on factual keywords that a user might search for.
-                """),
+                    TextContent.from("What exactly is in this picture? Transcribe all visible codes, numbers, identifiers, and describe their meaning. Be very detailed. Respond in English."),
                     ImageContent.from(base64Image, mimeType)
             );
 
@@ -168,42 +159,55 @@ public class IngestionService {
             return new SourceDto(null, metadataFileName, score, null, "OTHER");
         }
 
-        String lowerPath = path.toLowerCase();
-        String extension = "";
-
-        int dotIndex = lowerPath.lastIndexOf('.');
-        if (dotIndex >= 0) {
-            extension = lowerPath.substring(dotIndex);
-        }
-
-        String type = switch (extension) {
-            case ".pdf" -> "PDF";
-            case ".txt" -> "TEXT";
-            case ".jpg", ".jpeg", ".png" -> "IMAGE";
-            default -> "OTHER";
-        };
-
         String base64 = null;
+        String type = "OTHER";
         String finalFileName = metadataFileName != null ? metadataFileName : path;
 
-        var imageOpt = imageRepository.findByPath(path);
-        if (imageOpt.isPresent()) {
-            finalFileName = imageOpt.get().getFileName();
-            if ("IMAGE".equals(type)) {
-                base64 = Base64.getEncoder().encodeToString(imageOpt.get().getImageData());
+        var fileOpt = fileRepository.findByPath(path);
+        if (fileOpt.isPresent()) {
+            FileEntity file = fileOpt.get();
+            finalFileName = file.getFileName();
+            String mimeType = file.getFileType().toLowerCase();
+            
+            
+            if (mimeType.contains("image")) {
+                type = "IMAGE";
+                if (file.getImageData() != null) {
+                    base64 = Base64.getEncoder().encodeToString(file.getImageData());
+                }
+            } else if (mimeType.contains("pdf")) {
+                type = "PDF";
+            } else if (mimeType.contains("txt") || mimeType.equals("text/plain")) {
+                type = "TEXT";
             }
+        } else {
+            
+            String lowerPath = path.toLowerCase();
+            if (lowerPath.endsWith(".pdf")) type = "PDF";
+            else if (lowerPath.endsWith(".txt")) type = "TEXT";
+            else if (lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".png")) type = "IMAGE";
         }
 
         return new SourceDto(path, finalFileName, score, base64, type);
     }
 
     public List<SourceDto> getSources(Result<String> result) {
+        if (result.sources() == null) {
+            return List.of();
+        }
         return result.sources().stream()
                 .map(source -> {
                     var metadata = source.textSegment().metadata();
                     String path = metadata.getString("path");
                     String fileName = metadata.getString("filename");
-                    Double score = metadata.getDouble("score");
+                    
+                    double score = 0.0;
+                    String scoreStr = metadata.getString("score");
+                    if (scoreStr != null) {
+                        try {
+                            score = Double.parseDouble(scoreStr);
+                        } catch (NumberFormatException ignored) {}
+                    }
 
                     return createSourceDto(path, fileName, score);
                 })

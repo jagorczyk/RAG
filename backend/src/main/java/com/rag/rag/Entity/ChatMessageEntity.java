@@ -1,46 +1,61 @@
 package com.rag.rag.Entity;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
-
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
 @Entity
-@Table(name="chat_messages")
-@NoArgsConstructor
-@AllArgsConstructor
-@Data
+@Table(name = "messages")
 public class ChatMessageEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-    @Column(name = "chat_id", nullable = false)
+    @Column(name = "chat_id")
     private UUID chatId;
 
-    @Column(name = "role", nullable = false)
     private String role;
 
-    @Column(name="text_context", columnDefinition = "TEXT") 
+    @Column(columnDefinition = "TEXT")
     private String textContext;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name="image_paths", columnDefinition = "jsonb")
+    @Column(name = "image_paths", columnDefinition = "jsonb")
     private List<String> imagePaths;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name="scores", columnDefinition = "jsonb")
+    @Column(name = "scores", columnDefinition = "jsonb")
     private List<Double> scores;
 
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
+
+    public ChatMessageEntity() {}
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public UUID getChatId() { return chatId; }
+    public void setChatId(UUID chatId) { this.chatId = chatId; }
+
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
+
+    public String getTextContext() { return textContext; }
+    public void setTextContext(String textContext) { this.textContext = textContext; }
+
+    public List<String> getImagePaths() { return imagePaths; }
+    public void setImagePaths(List<String> imagePaths) { this.imagePaths = imagePaths; }
+
+    public List<Double> getScores() { return scores; }
+    public void setScores(List<Double> scores) { this.scores = scores; }
+
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 
     @PrePersist
     protected void onCreate() {

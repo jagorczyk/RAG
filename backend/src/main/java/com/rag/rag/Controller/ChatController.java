@@ -1,21 +1,18 @@
 package com.rag.rag.Controller;
 
-import com.rag.rag.Dto.ChatMessageDto;
-import com.rag.rag.Dto.MessageRequest;
-import com.rag.rag.Dto.MessageResponse;
-import com.rag.rag.Dto.SourceDto;
+import com.rag.rag.Dto.*;
 import com.rag.rag.Entity.ChatMemoryEntity;
 import com.rag.rag.Entity.ChatMessageEntity;
 import com.rag.rag.Repository.ChatMemoryRepository;
 import com.rag.rag.Repository.ChatMessageRepository;
-import com.rag.rag.Repository.FileRepository;
-import com.rag.rag.Service.ChatMemoryService;
 import com.rag.rag.Service.ChatService;
 import com.rag.rag.Service.IngestionService;
 import dev.langchain4j.service.Result;
+import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.IntStream;
 
@@ -25,40 +22,44 @@ import java.util.stream.IntStream;
 public class ChatController {
 
     private final ChatService chatService;
-    private final FileRepository imageRepository;
     private final ChatMemoryRepository chatMemoryRepository;
-    private final ChatMemoryService chatMemoryService;
     private final ChatMessageRepository chatMessageRepository;
     private final IngestionService ingestionService;
 
     public ChatController(
             ChatService chatService,
-            FileRepository imageRepository,
             ChatMemoryRepository chatMemoryRepository,
-            ChatMemoryService chatMemoryService,
             ChatMessageRepository chatMessageRepository,
             IngestionService ingestionService
     ) {
         this.chatService = chatService;
-        this.imageRepository = imageRepository;
         this.chatMemoryRepository = chatMemoryRepository;
-        this.chatMemoryService = chatMemoryService;
         this.chatMessageRepository = chatMessageRepository;
         this.ingestionService = ingestionService;
     }
 
     @GetMapping("/all")
     public List<UUID> getAllChats() {
-        return chatMemoryRepository.findAll().stream()
+        return chatMemoryRepository.findAllByOrderByLastMessageAtDesc().stream()
                 .map(ChatMemoryEntity::getChatId)
                 .toList();
     }
 
+    @Transactional
     @PostMapping("/create")
-    public UUID createChat() {
-        UUID chatId = UUID.randomUUID();
-        chatMemoryService.updateMessages(chatId, new ArrayList<>());
-        return chatId;
+    public ResponseEntity<?> createChat() {
+        try {
+            UUID chatId = UUID.randomUUID();
+            ChatMemoryEntity entity = new ChatMemoryEntity();
+            entity.setChatId(chatId);
+            entity.setMessages("[]");
+            entity.setName(chatId.toString());
+            chatMemoryRepository.save(entity);
+            return ResponseEntity.ok(Map.of("id", chatId.toString()));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().body(e.getMessage());
+        }
     }
 
     @Transactional(readOnly = true)
@@ -69,18 +70,12 @@ public class ChatController {
                     List<SourceDto> sources = List.of();
 
                     if (entity.getImagePaths() != null) {
-
                         List<String> paths = entity.getImagePaths();
                         sources = IntStream.range(0, paths.size())
                                 .mapToObj(i -> {
                                     String path = paths.get(i);
                                     Double score = entity.getScores().get(i);
-
-                                    return ingestionService.createSourceDto(
-                                            path,
-                                            null,
-                                            score
-                                    );
+                                    return ingestionService.createSourceDto(path, null, score);
                                 })
                                 .toList();
                     }
@@ -90,9 +85,12 @@ public class ChatController {
                 .toList();
     }
 
-    @Transactional()
     @PostMapping("/{chatId}/send")
-    public MessageResponse chat(@PathVariable UUID chatId, @RequestBody MessageRequest messageRequest) {
+    public ResponseEntity<?> chat(@PathVariable UUID chatId, @RequestBody MessageRequest messageRequest) {
+        if (messageRequest.message() == null || messageRequest.message().trim().isEmpty()) {
+            return ResponseEntity.badRequest().body("Message content cannot be empty");
+        }
+
         ChatMessageEntity userMsg = new ChatMessageEntity();
         userMsg.setChatId(chatId);
         userMsg.setRole("USER");
@@ -101,31 +99,79 @@ public class ChatController {
         userMsg.setScores(List.of());
         chatMessageRepository.save(userMsg);
 
+        chatMemoryRepository.findById(chatId).ifPresent(chat -> {
+            chat.setLastMessageAt(LocalDateTime.now());
+            chatMemoryRepository.save(chat);
+        });
+
         Result<String> result = chatService.answer(chatId, messageRequest.message());
 
-        System.out.println(
-                result.sources().stream()
-                        .map(n -> n.textSegment().metadata().getDouble("score"))
-                        .toList()
-        );
+        String aiResponse = result.content();
+        System.out.println("AI RESPONSE: [" + aiResponse + "]");
 
-        List<String> paths = result.sources().stream()
-                .map(source -> source.textSegment().metadata().getString("path"))
-                .toList();
+        if (aiResponse == null || aiResponse.trim().isEmpty()) {
+            aiResponse = "Przepraszam, model zwrócił pustą odpowiedź.";
+        }
 
-        List<Double> scores = result.sources().stream()
-                .map(source -> source.textSegment().metadata().getDouble("score"))
-                .toList();
+        boolean noInfo = aiResponse.toLowerCase().contains("nie znaleziono informacji") ||
+                aiResponse.trim().isEmpty();
+
+        // Filtruj źródła na podstawie @wzmianek w ODPOWIEDZI modelu (nie w pytaniu)
+        // Model ma instrukcję żeby cytować źródła jako @ścieżka — wyciągamy tylko te
+        List<SourceDto> filteredSources;
+        if (noInfo) {
+            filteredSources = List.of();
+        } else {
+            List<SourceDto> allSources = ingestionService.getSources(result);
+
+            // Wyciągnij @wzmianki z odpowiedzi modelu
+            List<String> mentionedInResponse = new ArrayList<>();
+            java.util.regex.Matcher responseMatcher = java.util.regex.Pattern
+                    .compile("@([^\\s,\\]\\)]+)")
+                    .matcher(aiResponse);
+            while (responseMatcher.find()) {
+                mentionedInResponse.add(responseMatcher.group(1).toLowerCase());
+            }
+            System.out.println("MENTIONS IN RESPONSE: " + mentionedInResponse);
+
+            if (!mentionedInResponse.isEmpty()) {
+                // Pokaż tylko źródła które model faktycznie wymienił w odpowiedzi
+                filteredSources = allSources.stream()
+                        .filter(s -> mentionedInResponse.stream().anyMatch(m ->
+                                s.path().toLowerCase().contains(m) ||
+                                        s.fileName().toLowerCase().contains(m)))
+                        .toList();
+            } else {
+                // Model nie użył @wzmianek — pokaż wszystkie źródła jako fallback
+                filteredSources = allSources;
+            }
+            System.out.println("FILTERED SOURCES COUNT: " + filteredSources.size());
+        }
+
+        List<String> finalPaths = filteredSources.stream().map(SourceDto::path).toList();
+        List<Double> finalScores = filteredSources.stream().map(SourceDto::score).toList();
 
         ChatMessageEntity aiMsg = new ChatMessageEntity();
         aiMsg.setChatId(chatId);
         aiMsg.setRole("AI");
-        aiMsg.setTextContext(result.content());
-        aiMsg.setImagePaths(paths);
-        aiMsg.setScores(scores);
+        aiMsg.setTextContext(aiResponse);
+        aiMsg.setImagePaths(finalPaths);
+        aiMsg.setScores(finalScores);
         chatMessageRepository.save(aiMsg);
 
-        List<SourceDto> sources = ingestionService.getSources(result);
-        return new MessageResponse(result.content(), sources);
+        return ResponseEntity.ok(new MessageResponse(aiResponse, filteredSources));
+    }
+
+    @PostMapping("/{chatId}/rename")
+    public ResponseEntity<?> rename(@PathVariable UUID chatId, @RequestBody ChatRenameDto chatRenameDto) {
+        ChatMemoryEntity chatMemoryEntity = chatMemoryRepository.findById(chatId).orElse(null);
+
+        if (chatMemoryEntity == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        chatMemoryEntity.setName(chatRenameDto.newName());
+        chatMemoryRepository.save(chatMemoryEntity);
+        return ResponseEntity.ok().build();
     }
 }

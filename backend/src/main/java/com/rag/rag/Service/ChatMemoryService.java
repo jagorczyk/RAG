@@ -41,8 +41,30 @@ public class ChatMemoryService implements ChatMemoryStore {
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         if (memoryId instanceof UUID chatId) {
-            String json = ChatMessageSerializer.messagesToJson(messages);
-            ChatMemoryEntity entity = new ChatMemoryEntity(chatId, json);
+            List<ChatMessage> cleanMessages = messages.stream().map(msg -> {
+                if (msg instanceof dev.langchain4j.data.message.UserMessage userMsg) {
+                    String text = userMsg.singleText();
+                    if (text != null && text.contains("DANE Z BAZY DANYCH:\n") && text.contains("PYTANIE UŻYTKOWNIKA: ")) {
+                        int start = text.indexOf("PYTANIE UŻYTKOWNIKA: ") + "PYTANIE UŻYTKOWNIKA: ".length();
+                        int end = text.indexOf("\n\nDANE Z BAZY DANYCH:\n");
+                        if (start != -1 && end != -1 && end > start) {
+                            String originalQuestion = text.substring(start, end);
+                            return dev.langchain4j.data.message.UserMessage.from(originalQuestion);
+                        }
+                    }
+                }
+                return msg;
+            }).toList();
+            
+            String json = ChatMessageSerializer.messagesToJson(cleanMessages);
+            ChatMemoryEntity entity = repository.findById(chatId)
+                    .orElseGet(() -> {
+                        ChatMemoryEntity newEntity = new ChatMemoryEntity();
+                        newEntity.setChatId(chatId);
+                        newEntity.setName(chatId.toString());
+                        return newEntity;
+                    });
+            entity.setMessages(json);
             repository.save(entity);
         }
     }

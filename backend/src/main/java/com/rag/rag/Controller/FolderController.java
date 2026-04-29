@@ -50,4 +50,5 @@ public class FolderController {
 
         ingestionService.ingestMultipartFile(file, folder);
     }
+
 }
