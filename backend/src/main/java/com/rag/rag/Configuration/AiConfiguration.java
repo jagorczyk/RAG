@@ -10,6 +10,7 @@ import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.ollama.OllamaChatModel;
 import dev.langchain4j.model.ollama.OllamaEmbeddingModel;
+import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.openai.OpenAiTokenizer;
 import dev.langchain4j.rag.DefaultRetrievalAugmentor;
@@ -42,6 +43,8 @@ public class AiConfiguration {
 
     private final JdbcTemplate jdbcTemplate;
 
+    private static final int MAX_SEGMENT_CHARS = 400;
+
     public AiConfiguration(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
@@ -54,22 +57,24 @@ public class AiConfiguration {
     private String VISION_MODEL;
     @Value("${embedding.model}")
     private String EMBEDDING_MODEL;
+    @Value("${openai.api.key}")
+    private String OPENAI_API_KEY;
 
     @Bean
     Tokenizer tokenizer() {
-        return new OpenAiTokenizer("gpt-3.5-turbo");
+        return new OpenAiTokenizer("gpt-4o-mini");
     }
 
     @Bean
     @Primary
     ChatLanguageModel chatLanguageModel() {
-        return OllamaChatModel.builder()
-                .baseUrl(BASE_URL)
-                .modelName(TEXT_MODEL)
-                .timeout(Duration.ofMinutes(10))
-                .numCtx(16384)
-                .numPredict(1024)
+        return OpenAiChatModel.builder()
+                .baseUrl("https://api.groq.com/openai/v1")
+                .apiKey(OPENAI_API_KEY)
+                .modelName("llama-3.3-70b-versatile")
                 .temperature(0.1)
+                .maxTokens(512)
+                .timeout(Duration.ofMinutes(2))
                 .build();
     }
 
@@ -101,7 +106,7 @@ public class AiConfiguration {
             var queryEmbedding = embeddingModel.embed(cleanQuery).content();
             EmbeddingSearchRequest.EmbeddingSearchRequestBuilder searchRequestBuilder = EmbeddingSearchRequest.builder()
                     .queryEmbedding(queryEmbedding)
-                    .maxResults(10)
+                    .maxResults(5)      // zmniejszono z 10 - oszczędność tokenów
                     .minScore(0.70);
 
             List<String> mentions = new ArrayList<>();
@@ -118,9 +123,8 @@ public class AiConfiguration {
                 Filter filenameFilter = metadataKey("filename").isIn(mentions);
                 Filter folderFilter = metadataKey("document_id").isIn(mentions);
                 searchRequestBuilder.filter(pathFilter.or(filenameFilter).or(folderFilter));
-                // Przy @wzmiankach obniż próg - szukamy konkretnego pliku
                 searchRequestBuilder.minScore(0.01);
-                searchRequestBuilder.maxResults(30);
+                searchRequestBuilder.maxResults(10); // zmniejszono z 30
             }
 
             EmbeddingSearchResult<TextSegment> vectorResults = embeddingStore.search(searchRequestBuilder.build());
@@ -141,7 +145,7 @@ public class AiConfiguration {
                         params.add(mention);
                         params.add("%" + mention + "%");
                     }
-                    sql.append(" LIMIT 15");
+                    sql.append(" LIMIT 5"); // zmniejszono z 15
 
                     keywordContents.addAll(jdbcTemplate.query(sql.toString(), params.toArray(), (rs, rowNum) -> {
                         String text = rs.getString("text");
@@ -174,13 +178,14 @@ public class AiConfiguration {
                     })
                     .forEach(combinedResults::add);
 
-            return combinedResults.stream().limit(3).collect(Collectors.toList());
+            return combinedResults.stream().limit(5).collect(Collectors.toList());
         };
     }
 
     @Bean
     public RetrievalAugmentor retrievalAugmentor(ContentRetriever contentRetriever, ChatLanguageModel chatLanguageModel) {
         ContentInjector contentInjector = (contents, query) -> {
+            System.out.println("CONTENT INJECTOR RECEIVED CONTENTS COUNT: " + contents.size());
             String userQuestion = query.singleText();
             if (userQuestion == null || userQuestion.trim().isEmpty()) userQuestion = "Pytanie";
 
@@ -189,33 +194,31 @@ public class AiConfiguration {
             String contextJoined = contents.stream()
                     .map(content -> {
                         TextSegment segment = content.textSegment();
-                        String path = segment.metadata().getString("path");
                         String filename = segment.metadata().getString("filename");
                         String folderName = segment.metadata().getString("document_id");
 
-                        return String.format("DOCUMENT: %s\nFOLDER: %s\nPATH: %s\nCONTENT: %s",
+                        // Ucinamy długie teksty segmentów - główna przyczyna przekraczania limitu tokenów
+                        String text = segment.text();
+                        if (text.length() > MAX_SEGMENT_CHARS) {
+                            text = text.substring(0, MAX_SEGMENT_CHARS) + "...";
+                        }
+
+                        // Skrócony format (bez PATH) - oszczędność tokenów
+                        return String.format("DOC: %s (folder: %s)\n%s",
                                 filename != null ? filename : "unknown",
                                 folderName != null ? folderName : "none",
-                                path != null ? path : "unknown",
-                                segment.text());
+                                text);
                     })
-                    .collect(Collectors.joining("\n\n---\n\n"));
+                    .collect(Collectors.joining("\n---\n"));
 
+            // Skrócony prompt - poprzedni miał ~500 tokenów samych instrukcji
             String finalPrompt =
-                    "You are a helpful assistant that answers questions based strictly on the provided documents.\n" +
-                            "The user's question is in Polish. Your answer must be in Polish.\n" +
-                            "Current datetime: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) + "\n\n" +
-                            "RULES:\n" +
-                            "1. Answer ONLY based on the documents below.\n" +
-                            "2. If the documents contain relevant data (passwords, IPs, addresses, credentials, names), you MUST include them in your answer.\n" +
-                            "3. The documents may contain image descriptions written in English - treat them as valid data sources.\n" +
-                            "4. Only say 'Nie znaleziono informacji w dokumentach' if the documents truly contain nothing relevant.\n" +
-                            "5. When citing a source, always use @ prefix before the filename/path. Never use quotes around document names.\n" +
-                            "   Correct: (źródło: @funbox/20240422-205600-Zagumnie-Krakow-2024.jpg)\n" +
-                            "   Wrong:   (z dokumentu \"funbox/20240422-205600-Zagumnie-Krakow-2024.jpg\")\n" +
-                            "6. Never start your response with 'Oto odpowiedź na Twoje pytanie:' or similar phrases.\n\n" +
-                            "USER QUESTION: " + userQuestion + "\n\n" +
-                            "DOCUMENTS:\n" + contextJoined;
+                    "Answer in Polish based ONLY on these documents. " +
+                            "Include passwords/IPs/credentials if present. " +
+                            "Cite sources as @filename (no quotes). " +
+                            "If nothing relevant: 'Nie znaleziono informacji w dokumentach.'\n\n" +
+                            "Q: " + userQuestion + "\n\n" +
+                            "DOCS:\n" + contextJoined;
 
             System.out.println("FINAL PROMPT LENGTH: " + finalPrompt.length());
 
@@ -232,7 +235,7 @@ public class AiConfiguration {
     public ChatMemoryProvider chatMemoryProvider(ChatMemoryService chatMemoryService, Tokenizer tokenizer) {
         return memoryId -> TokenWindowChatMemory.builder()
                 .id(memoryId)
-                .maxTokens(14000, tokenizer)
+                .maxTokens(4000, tokenizer) // zmniejszono z 14000 - Groq limit TPM
                 .chatMemoryStore(chatMemoryService)
                 .build();
     }
