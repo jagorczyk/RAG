@@ -1,109 +1,171 @@
-# RAG (Retrieval-Augmented Generation) - System Zarzadzania Dokumentami
+# RAG (Retrieval-Augmented Generation) - Document Management System
 
-Projekt to aplikacja RAG (Retrieval-Augmented Generation) sluzaca do zarzadzania dokumentami, ich analizy oraz interakcji z nimi poprzez czat wykorzystujacy modele jezykowe. System wspiera dokumenty tekstowe, pliki PDF oraz obrazy, oferujac zaawansowane mozliwosci detekcji obiektow i tekstu na obrazach.
+This project is a RAG (Retrieval-Augmented Generation) application designed for document management, analysis, and interaction through a chat interface powered by language models. The system supports text documents, PDF files, and images, offering advanced object and text detection capabilities on images.
 
-## Architektura i Stos Technologiczny
+## Architecture and Technology Stack
 
-Projekt sklada sie z dwoch glownych czesci: backendu (Spring Boot) oraz frontendu (Next.js).
+The project consists of two main parts: the backend (Spring Boot) and the frontend (Next.js).
 
 ### Backend
-*   **Jezyk:** Java 17
+*   **Language:** Java 17
 *   **Framework:** Spring Boot 4.0.2
-*   **Baza danych:** PostgreSQL z rozszerzeniem PGVector (przechowywanie wektorow)
-*   **AI/LLM:** LangChain4j, Ollama, OpenAI API (kompatybilne z Groq)
-*   **Modele:** 
-    *   Llama 3.1 (czat)
-    *   MiniCPM-V (wizja)
-    *   bge-m3 (osadzenia / embeddings)
-    *   YOLOv8s (detekcja obiektow)
-    *   DB_TD500_resnet50 (detekcja tekstu)
-*   **Przetwarzanie dokumentow:** Apache PDFBox, Apache Tika, OpenCV, DJL (Deep Java Library)
+*   **Database:** PostgreSQL with PGVector extension (for vector storage)
+*   **AI/LLM:** LangChain4j, Ollama, OpenAI API (compatible with Groq)
+*   **Models:** 
+    *   Llama 3.1 (chat)
+    *   MiniCPM-V (vision)
+    *   bge-m3 (embeddings)
+    *   YOLOv8s (object detection)
+    *   DB_TD500_resnet50 (text detection)
+*   **Document Processing:** Apache PDFBox, Apache Tika, OpenCV, DJL (Deep Java Library)
 
 ### Frontend
 *   **Framework:** Next.js 16.2.2, React 19
-*   **Stylizacja:** TailwindCSS 4
-*   **Glowne funkcjonalnosci:**
-    *   Wysuwany panel boczny (dashboard) z lista konwersacji i nawigacja.
-    *   Interfejs czatu do rozmow z asystentem na temat wgranych dokumentow.
-    *   Zarzadzanie folderami i podglad plikow (ze wsparciem miniatur dla obrazow i ikon dla plikow tekstowych/PDF).
+*   **Styling:** TailwindCSS 4
+*   **Main Features:**
+    *   A sliding side panel (dashboard) containing a list of conversations and navigation.
+    *   A chat interface for conversing with the assistant about uploaded documents.
+    *   Folder management and file preview (with support for image thumbnails and icons for text/PDF files).
 
 ---
 
-## Konfiguracja i Uruchomienie
+## Configuration and Setup
 
-### Wymagania wstepne
-*   Docker i Docker Compose
-*   Java 17 (dla backendu)
+### Prerequisites
+*   Docker and Docker Compose
+*   Java 17 (for the backend)
 *   Maven
-*   Node.js 20+ (dla frontendu)
-*   Ollama (zainstalowane lokalnie lub w kontenerze)
+*   Node.js 20+ (for the frontend)
+*   Ollama (installed locally or via container)
 
-### Krok 1: Uruchomienie bazy danych
-W glownym katalogu projektu znajduje sie plik `docker-compose.yml`, ktory definiuje kontener bazy danych PostgreSQL z rozszerzeniem PGVector.
-Uruchom baze danych za pomoca polecenia:
+### Step 1: Database Setup
+The main project directory contains a `docker-compose.yml` file which defines a PostgreSQL database container with the PGVector extension.
+Start the database using the following command:
 ```bash
 docker-compose up -d pgvector
 ```
 
-### Krok 2: Konfiguracja Backendu
-W katalogu `backend/` znajduje sie kod zrodlowy serwera.
+### Step 2: Backend Configuration
+The server source code is located in the `backend/` directory.
 
-1.  **Pobranie modeli:**
-    Modele detekcji (YOLO i TextDetector) musza znalezc sie w katalogu `backend/models/`. Domyslne sciezki to:
+1.  **Model Download:**
+    The detection models (YOLO and TextDetector) must be placed in the `backend/models/` directory. Default paths are:
     *   `models/yolov8s.onnx`
     *   `models/DB_TD500_resnet50.onnx`
-2.  **Zmienne srodowiskowe:**
-    Backend mozna skonfigurowac za pomoca pliku `backend/.env` (opcjonalny) lub bezposrednio w `backend/src/main/resources/application.properties`. Wymagane jest ustawienie klucza API dla OpenAI (lub Groq, zgodnie z konfiguracja URL):
+2.  **Environment Variables:**
+    The backend can be configured using a `backend/.env` file (optional) or directly within `backend/src/main/resources/application.properties`. An API key for OpenAI (or Groq, depending on URL configuration) is required:
     ```properties
-    OPENAI_API_KEY=twoj_klucz_api
+    OPENAI_API_KEY=your_api_key
     ```
-    Opcjonalnie dostosuj parametry bazy danych jesli zmieniono je w docker-compose:
+    Optionally, adjust database parameters if they were changed in the docker-compose setup:
     ```properties
     DB_URL=jdbc:postgresql://localhost:5433/vector_db
     DB_USERNAME=user
     DB_PASSWORD=password
     ```
-3.  **Uruchomienie:**
+3.  **Running the Server:**
     ```bash
     cd backend
     ./mvnw spring-boot:run
     ```
 
-### Krok 3: Konfiguracja Frontendu
-W katalogu `frontend/` znajduje sie kod aplikacji klienckiej.
+### Step 3: Frontend Configuration
+The client application code is located in the `frontend/` directory.
 
-1.  **Instalacja zaleznosci:**
+1.  **Installing Dependencies:**
     ```bash
     cd frontend
     npm install
     ```
-2.  **Uruchomienie:**
+2.  **Running the Application:**
     ```bash
     npm run dev
     ```
-    Aplikacja domyslnie uruchomi sie na porcie 3000.
+    The application will run on port 3000 by default.
 
 ---
 
-## Endpointy API (Backend)
+## API Endpoints (Backend)
 
-Backend wystawia nastepujace endpointy REST API:
+The backend exposes the following REST API endpoints:
 
-### Modul Czatu (`/api/chat`)
-*   `GET /api/chat/all` - Pobiera liste wszystkich identyfikatorow konwersacji (posortowane od najnowszych).
-*   `POST /api/chat/create` - Tworzy nowa, pusta konwersacje i zwraca jej identyfikator.
-*   `GET /api/chat/{chatId}/messages` - Pobiera historie wiadomosci dla konkretnej konwersacji (uwzgledniajac powiazane zrodla/obrazy).
-*   `POST /api/chat/{chatId}/send` - Wysyla nowa wiadomosc do czatu i uruchamia proces LLM. Wymaga ciala zadania w postaci obiektu z polem `message`.
-*   `POST /api/chat/{chatId}/rename` - Zmienia nazwe konwersacji. Wymaga ciala zadania z polem `newName`.
+### Chat Module (`/api/chat`)
 
-### Modul Folderow (`/api/folders`)
-*   `GET /api/folders` - Pobiera liste wszystkich folderow.
-*   `POST /api/folders/create` - Tworzy nowy folder. Wymaga ciala zadania z polem `name`.
-*   `DELETE /api/folders/{id}` - Usuwa folder o wskazanym identyfikatorze.
-*   `POST /api/folders/{id}/upload` - Przesyla i przetwarza (ingestion) nowy plik (`multipart/form-data` z polem `file`) przypisujac go do wybranego folderu. Obsluguje ekstrakcje tekstu, wektoryzacje oraz detekcje obrazow.
+*   **`GET /api/chat/all`**
+    *   **Description:** Retrieves a list of all conversation IDs (sorted from newest to oldest).
 
-### Modul Danych i Ingestii (`/api/data`)
-*   `GET /api/data/files` - Pobiera liste wszystkich plikow w systemie (zwraca m.in. sciezki, nazwy plikow oraz dane obrazow w formacie Base64).
-*   `POST /api/data/files/move` - Przenosi pliki do innego folderu. Wymaga ciala zadania zawierajacego `targetFolderId` oraz liste `filePaths`. Aktualizuje rowniez metadane w bazie wektorowej.
-*   `POST /api/data/files/rename` - Zmienia nazwe pliku. Wymaga ciala zadania zawierajacego `oldPath` oraz `newName`. Aktualizuje sciezke pliku w systemie oraz metadane w bazie wektorowej.
-*   `DELETE /api/data/clear` - Czysci wszystkie dane z tabeli osadzen (embeddings). Uwaga: operacja nieodwracalna.
+*   **`POST /api/chat/create`**
+    *   **Description:** Creates a new, empty conversation and returns its identifier.
+
+*   **`GET /api/chat/{chatId}/messages`**
+    *   **Description:** Retrieves the message history for a specific conversation (including associated sources/images).
+
+*   **`POST /api/chat/{chatId}/send`**
+    *   **Description:** Sends a new message to the chat and triggers the LLM process.
+    *   **Request Body (JSON):**
+        ```json
+        {
+          "message": "Hello, what's in this document?"
+        }
+        ```
+
+*   **`POST /api/chat/{chatId}/rename`**
+    *   **Description:** Renames the conversation.
+    *   **Request Body (JSON):**
+        ```json
+        {
+          "newName": "New Conversation Name"
+        }
+        ```
+
+### Folder Module (`/api/folders`)
+
+*   **`GET /api/folders`**
+    *   **Description:** Retrieves a list of all folders.
+
+*   **`POST /api/folders/create`**
+    *   **Description:** Creates a new folder.
+    *   **Request Body (JSON):**
+        ```json
+        {
+          "name": "Documents"
+        }
+        ```
+
+*   **`DELETE /api/folders/{id}`**
+    *   **Description:** Deletes the folder with the specified identifier.
+
+*   **`POST /api/folders/{id}/upload`**
+    *   **Description:** Uploads and processes (ingestion) a new file, assigning it to the selected folder. Supports text extraction, vectorization, and image detection.
+    *   **Request Body:** `multipart/form-data` containing a `file` field.
+
+### Data and Ingestion Module (`/api/data`)
+
+*   **`GET /api/data/files`**
+    *   **Description:** Retrieves a list of all files in the system (returns paths, filenames, and image data in Base64 format among other things).
+
+*   **`POST /api/data/files/move`**
+    *   **Description:** Moves files to a different folder. Also updates metadata in the vector database.
+    *   **Request Body (JSON):**
+        ```json
+        {
+          "targetFolderId": "uuid-of-the-target-folder",
+          "filePaths": [
+            "dir://old-folder/file1.png",
+            "dir://old-folder/file2.txt"
+          ]
+        }
+        ```
+
+*   **`POST /api/data/files/rename`**
+    *   **Description:** Renames a file. Updates the file path in the system and the metadata in the vector database.
+    *   **Request Body (JSON):**
+        ```json
+        {
+          "oldPath": "dir://folder/old-name.txt",
+          "newName": "new-name.txt"
+        }
+        ```
+
+*   **`DELETE /api/data/clear`**
+    *   **Description:** Clears all data from the embeddings table. **Warning:** This operation is irreversible.
