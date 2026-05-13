@@ -17,7 +17,7 @@ The project consists of two main parts: the backend (Spring Boot) and the fronte
     *   bge-m3 (embeddings)
     *   YOLOv8s (object detection)
     *   DB_TD500_resnet50 (text detection)
-*   **Document Processing:** Apache PDFBox, Apache Tika, OpenCV, DJL (Deep Java Library)
+*   **Document Processing:** Apache PDFBox, Apache Tika, OpenCV
 
 ### Frontend
 *   **Framework:** Next.js 16.2.2, React 19
