@@ -5,6 +5,7 @@ import com.rag.rag.chat.repository.ChatMemoryRepository;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ChatMessageSerializer;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
@@ -40,14 +41,14 @@ public class ChatMemoryService implements ChatMemoryStore {
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         if (memoryId instanceof UUID chatId) {
             List<ChatMessage> cleanMessages = messages.stream().map(msg -> {
-                if (msg instanceof dev.langchain4j.data.message.UserMessage userMsg) {
+                if (msg instanceof UserMessage userMsg) {
                     String text = userMsg.singleText();
                     if (text != null && text.contains("DANE Z BAZY DANYCH:\n") && text.contains("PYTANIE UŻYTKOWNIKA: ")) {
                         int start = text.indexOf("PYTANIE UŻYTKOWNIKA: ") + "PYTANIE UŻYTKOWNIKA: ".length();
                         int end = text.indexOf("\n\nDANE Z BAZY DANYCH:\n");
                         if (start != -1 && end != -1 && end > start) {
                             String originalQuestion = text.substring(start, end);
-                            return dev.langchain4j.data.message.UserMessage.from(originalQuestion);
+                            return UserMessage.from(originalQuestion);
                         }
                     }
                 }

@@ -10,20 +10,5 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   privileged: true
-  #   ports:
-  #     - "11435:11434"
-  #   volumes:
-  #     - ollama:/root/.ollama
-  #   devices:
-  #     - /dev/dxg:/dev/dxg
-  #   environment:
-  #     - OLLAMA_KEEP_ALIVE=5m
-  #     - ZES_ENABLE_SYSMAN=1
-  #   restart: always
-
 volumes:
   pgdata:
-  # ollama:
