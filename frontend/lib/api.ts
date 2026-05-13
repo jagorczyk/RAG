@@ -34,13 +34,28 @@ export interface Source {
   type: "PDF" | "TEXT" | "IMAGE" | "OTHER";
 }
 
+interface ApiFolder {
+  id: string;
+  name: string;
+}
 
+interface ApiFile {
+  path: string;
+  name: string;
+  fileType: string;
+  imageBase64?: string;
+}
+
+interface ApiMessage {
+  type: "USER" | "ASSISTANT";
+  text: string;
+  sources?: Source[];
+}
 
 export async function getChats(): Promise<Chat[]> {
   const response = await fetch(`${BASE_URL}/api/chat/all`);
   if (!response.ok) throw new Error("Failed to fetch chats");
   const chatIds: string[] = await response.json();
-  
   
   return chatIds.map(id => ({
     id,
@@ -67,7 +82,7 @@ export async function createChat(): Promise<Chat> {
 export async function getFolders(): Promise<Folder[]> {
   const response = await fetch(`${BASE_URL}/api/folders`);
   if (!response.ok) throw new Error("Failed to fetch folders");
-  const folders: any[] = await response.json();
+  const folders: ApiFolder[] = await response.json();
   
   return folders.map(f => ({
     id: f.id,
@@ -104,7 +119,7 @@ export async function deleteFolder(id: string): Promise<void> {
 export async function getAllFiles(): Promise<FileItem[]> {
   const response = await fetch(`${BASE_URL}/api/data/files`);
   if (!response.ok) throw new Error("Failed to fetch files");
-  const allFiles: any[] = await response.json();
+  const allFiles: ApiFile[] = await response.json();
   
   return allFiles.map(f => ({
     id: f.path,
@@ -117,8 +132,7 @@ export async function getAllFiles(): Promise<FileItem[]> {
 export async function getFilesInFolder(folderName: string): Promise<FileItem[]> {
   const response = await fetch(`${BASE_URL}/api/data/files`);
   if (!response.ok) throw new Error("Failed to fetch files");
-  const allFiles: any[] = await response.json();
-  
+  const allFiles: ApiFile[] = await response.json();
   
   const folderPrefix = `dir://${folderName}/`;
   return allFiles
@@ -170,7 +184,7 @@ export async function moveFiles(filePaths: string[], targetFolderId: string): Pr
 export async function getMessagesForChat(chatId: string): Promise<Message[]> {
   const response = await fetch(`${BASE_URL}/api/chat/${chatId}/messages`);
   if (!response.ok) throw new Error("Failed to fetch messages");
-  const messages: any[] = await response.json();
+  const messages: ApiMessage[] = await response.json();
   
   return messages.map((m, index) => ({
     id: `${chatId}-${index}`,

@@ -36,7 +36,7 @@ export default function FoldersPage() {
     try {
       
       const firstFile = e.target.files[0];
-      const relativePath = (firstFile as any).webkitRelativePath;
+      const relativePath = (firstFile as unknown as { webkitRelativePath: string }).webkitRelativePath;
       const folderName = relativePath.split('/')[0] || "Nowy Folder";
 
       
@@ -83,7 +83,6 @@ export default function FoldersPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold text-slate-900 mb-2">Foldery</h1>
-            {}
           </div>
           
           <div className="flex items-center gap-3">
@@ -95,7 +94,7 @@ export default function FoldersPage() {
                 className="hidden" 
                 onChange={handleFolderUpload} 
                 disabled={isUploadingFolder}
-                {...{ webkitdirectory: "", directory: "" } as any}
+                {...{ webkitdirectory: "", directory: "" } as unknown as React.InputHTMLAttributes<HTMLInputElement>}
               />
             </label>
             <button 
@@ -152,7 +151,7 @@ export default function FoldersPage() {
           <div className="flex flex-col items-center justify-center p-12 text-center border-2 border-dashed border-gray-200 rounded-xl bg-gray-50">
             <FolderOpen size={48} className="text-gray-400 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-1">Brak folderów</h3>
-            <p className="text-gray-500 max-w-sm">Nie utworzono jeszcze żadnych folderów. Kliknij przycisk "Nowy Folder", aby rozpocząć.</p>
+            <p className="text-gray-500 max-w-sm">Nie utworzono jeszcze żadnych folderów. Kliknij przycisk &quot;Nowy Folder&quot;, aby rozpocząć.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">

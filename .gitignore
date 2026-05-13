@@ -1,0 +1,56 @@
+# =========================
+# System/OS Files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# IDEs & Editors
+# =========================
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# =========================
+# Root Project Files
+# =========================
+startup_log.txt
+*.log
+
+# =========================
+# Backend (Spring Boot / Java / Maven)
+# =========================
+backend/target/
+backend/*.jar
+backend/*.war
+backend/.mvn/wrapper/maven-wrapper.jar
+backend/logs/
+
+# Do not track local data or large models by default
+backend/data/
+backend/models/
+
+# =========================
+# Frontend (Next.js / Node.js)
+# =========================
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/coverage/
+frontend/.env*.local
+frontend/.npm/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnp.*
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+*.env
+*.env.local

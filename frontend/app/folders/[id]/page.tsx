@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, use, useRef } from "react";
-import Link from "next/navigation";
+
 import { 
   ArrowLeft, 
   FileText, 
@@ -30,6 +30,7 @@ import {
   moveFiles 
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
+import { ImagePreview } from "@/components/ui/ImagePreview";
 
 interface FolderDetailPageProps {
   params: Promise<{ id: string }>;
@@ -222,7 +223,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
   return (
     <div className="flex flex-col h-full bg-white overflow-y-auto">
       <div className="p-8 max-w-6xl mx-auto w-full">
-        {}
         <div className="mb-6">
           <button 
             onClick={() => router.push("/folders")}
@@ -246,7 +246,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-bold text-slate-900 mb-2">{folder.name}</h1>
-            {}
           </div>
           
           <div className="flex items-center gap-3">
@@ -258,7 +257,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
                 className="hidden" 
                 onChange={handleFileUpload} 
                 disabled={isUploading}
-                {...{ webkitdirectory: "", directory: "" } as any}
+                {...{ webkitdirectory: "", directory: "" } as unknown as React.InputHTMLAttributes<HTMLInputElement>}
               />
             </label>
             <label className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-md hover:bg-slate-800 transition-colors shadow-sm cursor-pointer">
@@ -276,7 +275,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
           </div>
         </div>
 
-        {}
         <div 
           onDragEnter={handleDrag}
           onDragLeave={handleDrag}
@@ -293,7 +291,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
           <p className="text-gray-400 text-sm mt-1">Obsługiwane formaty: PDF, TXT, PNG, JPG</p>
         </div>
 
-        {}
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm relative">
           <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wider">
             <div className="col-span-1 flex items-center">
@@ -418,7 +415,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
         </div>
       </div>
 
-      {}
       {selectedIds.size > 0 && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-6 py-3 rounded-full shadow-2xl z-40 flex items-center gap-6 animate-in slide-in-from-bottom-4 duration-300">
           <div className="flex items-center gap-2 pr-6 border-r border-slate-700 text-sm font-medium">
@@ -450,7 +446,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
         </div>
       )}
 
-      {}
       {showMoveModal && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
@@ -488,25 +483,8 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
         </div>
       )}
 
-      {}
       {previewImage && (
-        <div 
-          className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
-          onClick={() => setPreviewImage(null)}
-        >
-          <button 
-            className="absolute top-6 right-6 p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-full transition-colors"
-            onClick={() => setPreviewImage(null)}
-          >
-            <X size={32} />
-          </button>
-          <img 
-            src={previewImage} 
-            alt="Preview" 
-            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+        <ImagePreview url={previewImage} onClose={() => setPreviewImage(null)} />
       )}
     </div>
   );

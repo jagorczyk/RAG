@@ -1,4 +1,4 @@
-import { ChatInterface } from "@/components/ChatInterface";
+import { ChatInterface } from "@/components/chat/ChatInterface";
 
 interface ChatPageProps {
   params: Promise<{ id: string }>;
