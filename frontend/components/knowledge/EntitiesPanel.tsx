@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { getAllEntities, KnowledgeEntity, renameEntity } from "@/lib/knowledge-api";
-import { Check, Edit2, ImageOff, X } from "lucide-react";
+import { Check, Edit2, X } from "lucide-react";
 
-const COLLAGE_SLOTS = 4;
+const MAX_COLLAGE_PHOTOS = 4;
 
 function photoUrl(photo: NonNullable<KnowledgeEntity["photos"]>[number]) {
   return `data:${photo.fileType};base64,${photo.imageBase64}`;
@@ -12,51 +12,44 @@ function entityTypeLabel(type: string) {
   return type === "PERSON" ? "Osoba" : "Zwierzę";
 }
 
-function EntityPhotoCollage({ photos }: { photos: KnowledgeEntity["photos"] }) {
-  const items = photos?.slice(0, COLLAGE_SLOTS) ?? [];
-  const hasPhotos = items.length > 0;
+function collageGridClass(count: number): string {
+  if (count === 1) {
+    return "grid-cols-1 grid-rows-1";
+  }
+  if (count === 2) {
+    return "grid-cols-2 grid-rows-1";
+  }
+  return "grid-cols-2 grid-rows-2";
+}
+
+function collageCellClass(count: number, index: number): string {
+  if (count === 3 && index === 2) {
+    return "col-span-2";
+  }
+  return "";
+}
+
+function EntityPhotoCollage({ photos }: { photos: NonNullable<KnowledgeEntity["photos"]> }) {
+  const items = photos.slice(0, MAX_COLLAGE_PHOTOS);
 
   return (
     <div
-      className="entity-collage mt-3 grid aspect-square w-full grid-cols-2 grid-rows-2 gap-px overflow-hidden rounded-[8px] border border-border bg-border"
-      aria-label={hasPhotos ? `Kolaż ${items.length} zdjęć` : "Brak zdjęć"}
+      className={`entity-collage mt-3 grid aspect-square w-full gap-px overflow-hidden rounded-[8px] border border-border bg-border ${collageGridClass(items.length)}`}
+      aria-label={`Kolaż ${items.length} zdjęć`}
     >
-      {Array.from({ length: COLLAGE_SLOTS }, (_, index) => {
-        const photo = items[index];
-
-        if (!hasPhotos) {
-          if (index !== 0) {
-            return null;
-          }
-          return (
-            <div
-              key="empty"
-              className="col-span-2 row-span-2 flex flex-col items-center justify-center gap-1.5 bg-surface text-ink-muted"
-            >
-              <ImageOff size={18} strokeWidth={1.75} aria-hidden />
-              <span className="text-xs">Brak zdjęć</span>
-            </div>
-          );
-        }
-
-        return (
-          <div
-            key={photo?.path ?? `slot-${index}`}
-            className="relative min-h-0 min-w-0 bg-surface-raised"
-          >
-            {photo ? (
-              <img
-                src={photoUrl(photo)}
-                alt=""
-                className="absolute inset-0 h-full w-full object-cover"
-                loading="lazy"
-              />
-            ) : (
-              <div className="absolute inset-0 bg-surface" aria-hidden />
-            )}
-          </div>
-        );
-      })}
+      {items.map((photo, index) => (
+        <div
+          key={photo.path}
+          className={`relative min-h-0 min-w-0 bg-surface-raised ${collageCellClass(items.length, index)}`}
+        >
+          <img
+            src={photoUrl(photo)}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+            loading="lazy"
+          />
+        </div>
+      ))}
     </div>
   );
 }
@@ -65,6 +58,11 @@ export function EntitiesPanel() {
   const [entities, setEntities] = useState<KnowledgeEntity[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+
+  const visibleEntities = useMemo(
+    () => entities.filter((entity) => (entity.photos?.length ?? 0) > 0),
+    [entities]
+  );
 
   useEffect(() => {
     loadEntities();
@@ -103,19 +101,20 @@ export function EntitiesPanel() {
             Rozpoznane postacie i zwierzęta
           </h3>
           <p className="mt-0.5 text-sm text-ink-muted">
-            {entities.length > 0
-              ? `${entities.length} ${entities.length === 1 ? "wpis" : entities.length < 5 ? "wpisy" : "wpisów"}`
+            {visibleEntities.length > 0
+              ? `${visibleEntities.length} ${visibleEntities.length === 1 ? "wpis" : visibleEntities.length < 5 ? "wpisy" : "wpisów"}`
               : "Encje wykryte na zdjęciach"}
           </p>
         </div>
       </div>
 
-      {entities.length === 0 ? (
-        <p className="text-sm text-ink-muted">Brak encji w bazie.</p>
+      {visibleEntities.length === 0 ? (
+        <p className="text-sm text-ink-muted">Brak encji ze zdjęciami.</p>
       ) : (
         <ul className="entity-grid m-0 list-none p-0">
-          {entities.map((entity) => {
-            const photoCount = entity.photos?.length ?? 0;
+          {visibleEntities.map((entity) => {
+            const photos = entity.photos ?? [];
+            const photoCount = photos.length;
 
             return (
               <li key={entity.id}>
@@ -159,17 +158,15 @@ export function EntitiesPanel() {
                           </h4>
                           <p className="mt-0.5 text-xs text-ink-muted">
                             {entityTypeLabel(entity.type)}
-                            {photoCount > 0 && (
-                              <span className="text-ink-muted">
-                                {" · "}
-                                {photoCount}{" "}
-                                {photoCount === 1
-                                  ? "zdjęcie"
-                                  : photoCount < 5
-                                    ? "zdjęcia"
-                                    : "zdjęć"}
-                              </span>
-                            )}
+                            <span className="text-ink-muted">
+                              {" · "}
+                              {photoCount}{" "}
+                              {photoCount === 1
+                                ? "zdjęcie"
+                                : photoCount < 5
+                                  ? "zdjęcia"
+                                  : "zdjęć"}
+                            </span>
                           </p>
                         </div>
                         <button
@@ -181,7 +178,7 @@ export function EntitiesPanel() {
                           <Edit2 size={15} />
                         </button>
                       </div>
-                      <EntityPhotoCollage photos={entity.photos} />
+                      <EntityPhotoCollage photos={photos} />
                     </>
                   )}
                 </article>
