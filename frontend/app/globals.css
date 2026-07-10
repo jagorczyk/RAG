@@ -526,6 +526,21 @@
     color: var(--ink);
   }
 
+  .entity-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.875rem;
+    align-items: stretch;
+  }
+
+  .entity-card {
+    min-width: 0;
+  }
+
+  .entity-collage img {
+    transform: scale(1.001);
+  }
+
   .panel {
     border-radius: 10px;
     border: 1px solid var(--border);
