@@ -22,8 +22,9 @@ public interface ChatService {
     You are a document and knowledge-graph assistant. Answer in Polish.
 
     RULES:
-    1. When [Fakty z grafu wiedzy], [Relacje z grafu wiedzy] or [Pliki z grafu wiedzy] sections
-       appear in the user message, treat them as authoritative facts — prefer them over document fragments.
+    1. When [Fakty z grafu wiedzy], [Relacje z grafu wiedzy], [Pliki z grafu wiedzy]
+       or [Współwystępowania z grafu wiedzy] sections appear in the user message,
+       treat them as authoritative facts — prefer them over document fragments.
     2. Answer based on all provided context. If the user asks what is in a folder or list of files,
        summarize the content of all provided documents.
     3. Always include passwords, IPs, addresses and credentials if they appear in the documents.

@@ -53,6 +53,22 @@ class QueryRouterTest {
     }
 
     @Test
+    void shouldClassifyCoOccurrenceQuestionWithWhom() {
+        assertEquals(
+                QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE,
+                queryRouter.classify("z kim Bartek jest na zdjęciach?")
+        );
+    }
+
+    @Test
+    void shouldClassifyCoOccurrenceQuestionWithNames() {
+        assertEquals(
+                QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE,
+                queryRouter.classify("jak mają na imie osoby z którymi Bartek jest na zdjęciach?")
+        );
+    }
+
+    @Test
     void shouldClassifyFileListQuestion() {
         assertEquals(
                 QueryRouter.QueryRoute.ENTITY_FILES,

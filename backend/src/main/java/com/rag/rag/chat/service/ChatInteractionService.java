@@ -88,6 +88,7 @@ public class ChatInteractionService {
             case ENTITY_SPATIAL_LEFT -> graphQueryService.buildSpatialLeftContextForQuestion(question);
             case ENTITY_SPATIAL_RIGHT -> graphQueryService.buildSpatialRightContextForQuestion(question);
             case ENTITY_FILES, ENTITY_LIST -> graphQueryService.buildFileListContextForQuestion(question);
+            case ENTITY_CO_OCCURRENCE -> graphQueryService.buildCoOccurrenceContextForQuestion(question);
             case ENTITY_DESCRIPTION -> buildDescriptionContext(chatId, question);
             case ENTITY_ACTIVITY -> buildEntityContext(question);
             case HYBRID -> buildEntityContext(question);
@@ -313,8 +314,10 @@ public class ChatInteractionService {
         return isFileListRoute(route)
                 || graphContext.startsWith("[Pliki z grafu wiedzy]")
                 || graphContext.startsWith("[Relacje z grafu wiedzy]")
+                || graphContext.startsWith("[Współwystępowania z grafu wiedzy]")
                 || graphContext.startsWith("[Fakty z grafu wiedzy]")
                 || route == QueryRouter.QueryRoute.HYBRID
+                || route == QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE
                 || route == QueryRouter.QueryRoute.ENTITY_ACTIVITY
                 || route == QueryRouter.QueryRoute.ENTITY_DESCRIPTION
                 || route == QueryRouter.QueryRoute.ENTITY_NEIGHBOR

@@ -13,6 +13,17 @@ public class QueryRouter {
     private static final Pattern NEIGHBOR_PATTERN = Pattern.compile("(?i).*(kto|jaka osoba|co to za osoba).*(obok|siedzi obok|stoi obok).*");
     private static final Pattern SPATIAL_LEFT_PATTERN = Pattern.compile("(?i).*(po lewej|po lewej stronie).*(od|strony).*");
     private static final Pattern SPATIAL_RIGHT_PATTERN = Pattern.compile("(?i).*(po prawej|po prawej stronie).*(od|strony).*");
+    private static final Pattern CO_OCCURRENCE_PATTERN = Pattern.compile(
+            "(?i).*("
+                    + "z\\s+kim"
+                    + "|z\\s+którymi|z\\s+ktorymi"
+                    + "|osob(y|ami)\\s+z\\s+którymi|osob(y|ami)\\s+z\\s+ktorymi"
+                    + "|kto\\s+jest.*na\\s+zdj"
+                    + "|wspólnie|wspolnie"
+                    + "|razem\\s+(na|z)"
+                    + "|jak\\s+(mają|ma)\\s+na\\s+imi"
+                    + ").*"
+    );
     private static final Pattern ENTITY_FILES_PATTERN = Pattern.compile(
             "(?i).*((na których|w jakich).*(zdjęci|zdjeciach|plik|plikach|obraz|obrazach|foto|fotografiach)"
                     + "|(gdzie jest|gdzie występuje|w których plikach)).*"
@@ -40,6 +51,7 @@ public class QueryRouter {
         ENTITY_NEIGHBOR,
         ENTITY_SPATIAL_LEFT,
         ENTITY_SPATIAL_RIGHT,
+        ENTITY_CO_OCCURRENCE,
         ENTITY_FILES,
         ENTITY_DESCRIPTION,
         ENTITY_ACTIVITY,
@@ -57,6 +69,9 @@ public class QueryRouter {
         }
         if (SPATIAL_RIGHT_PATTERN.matcher(question).matches()) {
             return QueryRoute.ENTITY_SPATIAL_RIGHT;
+        }
+        if (CO_OCCURRENCE_PATTERN.matcher(question).matches()) {
+            return QueryRoute.ENTITY_CO_OCCURRENCE;
         }
         if (ENTITY_FILES_PATTERN.matcher(question).matches()) {
             return QueryRoute.ENTITY_FILES;

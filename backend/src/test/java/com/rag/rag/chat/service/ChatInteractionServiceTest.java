@@ -302,6 +302,37 @@ class ChatInteractionServiceTest {
         assertEquals("Bartek występuje na dwóch zdjęciach.", response.response());
     }
 
+    @Test
+    void shouldUseCoOccurrenceGraphContextForWithWhomQuestion() {
+        MessageRequest request = new MessageRequest("jak mają na imie osoby z którymi Bartek jest na zdjęciach?");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Bartek"));
+        String graphContext = """
+                [Współwystępowania z grafu wiedzy]
+                - Bartek występuje w pliku 20230526_232615.jpg razem z: Olek, Pati | plik: dir://pati/20230526_232615.jpg
+                - Wszystkie osoby współwystępujące z Bartek: Olek, Pati
+                """;
+        when(graphQueryService.buildCoOccurrenceContextForQuestion(any())).thenReturn(graphContext);
+
+        Result<String> aiResult = Result.<String>builder()
+                .content("Osoby współwystępujące z Bartkiem to Olek i Pati.")
+                .build();
+        when(chatAiService.answer(eq(chatId), eq(graphContext + "\n\nPytanie użytkownika: " + request.message())))
+                .thenReturn(aiResult);
+
+        SourceDto photo = new SourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 0.9, null, "IMAGE");
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(photo));
+        when(ingestionService.createSourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 1.0))
+                .thenReturn(photo);
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Osoby współwystępujące z Bartkiem to Olek i Pati.", response.response());
+        assertEquals(1, response.sources().size());
+        verify(graphQueryService).buildCoOccurrenceContextForQuestion(request.message());
+    }
+
     private static Content retrievalContent(String path, String filename, double score, String text) {
         return Content.from(TextSegment.from(text, Metadata.from(Map.of(
                 "path", path,

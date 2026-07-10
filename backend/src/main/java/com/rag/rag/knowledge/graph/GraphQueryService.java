@@ -235,6 +235,123 @@ public class GraphQueryService {
         return found ? contextBuilder.toString() : "";
     }
 
+    @Transactional(readOnly = true)
+    public String buildCoOccurrenceContextForQuestion(String question) {
+        Optional<String> entityName = findEntityNameInQuestion(question);
+        if (entityName.isEmpty()) {
+            entityName = resolveEntityNameFromQuestion(question);
+        }
+        if (entityName.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder contextBuilder = new StringBuilder("[Współwystępowania z grafu wiedzy]\n");
+        Map<String, Set<String>> peopleByFile = new LinkedHashMap<>();
+        Set<String> allCoOccurringPeople = new LinkedHashSet<>();
+        Set<String> processedRows = new LinkedHashSet<>();
+
+        for (String variant : PolishNameMatcher.generateVariants(entityName.get())) {
+            for (CoOccurrenceRow row : getCoOccurringPeopleForEntity(variant)) {
+                String personName = resolveCoOccurrenceName(row);
+                if (isSamePersonAsAnchor(entityName.get(), personName, row.label())) {
+                    continue;
+                }
+
+                String rowKey = row.filePath() + "|" + personName.toLowerCase(Locale.ROOT);
+                if (!processedRows.add(rowKey)) {
+                    continue;
+                }
+
+                peopleByFile.computeIfAbsent(row.filePath(), ignored -> new LinkedHashSet<>()).add(personName);
+                allCoOccurringPeople.add(personName);
+            }
+        }
+
+        if (peopleByFile.isEmpty()) {
+            return "";
+        }
+
+        for (Map.Entry<String, Set<String>> entry : peopleByFile.entrySet()) {
+            contextBuilder.append("- ")
+                    .append(entityName.get())
+                    .append(" występuje w pliku ")
+                    .append(fileNameFromPath(entry.getKey()))
+                    .append(" razem z: ")
+                    .append(String.join(", ", entry.getValue()))
+                    .append(" | plik: ")
+                    .append(entry.getKey())
+                    .append("\n");
+        }
+
+        contextBuilder.append("- Wszystkie osoby współwystępujące z ")
+                .append(entityName.get())
+                .append(": ")
+                .append(String.join(", ", allCoOccurringPeople))
+                .append("\n");
+
+        return contextBuilder.toString();
+    }
+
+    @Transactional(readOnly = true)
+    public List<CoOccurrenceRow> getCoOccurringPeopleForEntity(String entityNameOrAlias) {
+        String sql = """
+            SELECT DISTINCT em2.file_path, em2.label, e2.display_name
+            FROM entity_mentions em1
+            LEFT JOIN entities e1 ON em1.entity_id = e1.id
+            LEFT JOIN entity_aliases ea1 ON ea1.entity_id = e1.id
+            JOIN entity_mentions em2 ON em2.file_path = em1.file_path AND em2.id <> em1.id
+            LEFT JOIN entities e2 ON em2.entity_id = e2.id
+            WHERE em1.status IN ('CONFIRMED', 'SUGGESTED')
+              AND em2.status IN ('CONFIRMED', 'SUGGESTED')
+              AND (e1.display_name ILIKE :name OR ea1.alias ILIKE :name OR em1.label ILIKE :name)
+            ORDER BY em2.file_path, COALESCE(e2.display_name, em2.label)
+            """;
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = entityManager.createNativeQuery(sql)
+                .setParameter("name", "%" + entityNameOrAlias + "%")
+                .getResultList();
+
+        List<CoOccurrenceRow> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            result.add(new CoOccurrenceRow(
+                    (String) row[0],
+                    (String) row[1],
+                    row[2] != null ? (String) row[2] : null
+            ));
+        }
+        return result;
+    }
+
+    private String resolveCoOccurrenceName(CoOccurrenceRow row) {
+        if (row.displayName() != null && !row.displayName().isBlank()) {
+            return row.displayName();
+        }
+        return row.label();
+    }
+
+    private boolean isSamePersonAsAnchor(String anchorName, String personName, String label) {
+        Set<String> anchorVariants = PolishNameMatcher.generateVariants(anchorName);
+        for (String anchorVariant : anchorVariants) {
+            if (matchesNameVariant(anchorVariant, personName) || matchesNameVariant(anchorVariant, label)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean matchesNameVariant(String variant, String name) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+        for (String nameVariant : PolishNameMatcher.generateVariants(name)) {
+            if (variant.equalsIgnoreCase(nameVariant)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private String buildDirectedRelationContext(
             String question,
             Pattern entityPattern,
@@ -425,4 +542,6 @@ public class GraphQueryService {
     }
 
     public record MentionFileRow(String filePath, String label) {}
+
+    public record CoOccurrenceRow(String filePath, String label, String displayName) {}
 }
