@@ -359,8 +359,7 @@ public class KnowledgeApiController {
             return ResponseEntity.ok(List.of());
         }
 
-        faceEmbeddingRepository.deleteByFilePath(path);
-        faceIdentityService.processImageFaces(file.getImageData(), path, file.getFileName(), mentions);
+        faceIdentityService.replaceFaceEmbeddingsForFile(file.getImageData(), path, file.getFileName(), mentions);
 
         List<EntityMentionViewDto> result = mentionRepository.findByFilePath(path).stream()
                 .map(this::toMentionViewDto)

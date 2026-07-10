@@ -2,6 +2,9 @@ package com.rag.rag.knowledge.repository;
 
 import com.rag.rag.knowledge.face.FaceEmbedding;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -16,5 +19,10 @@ public interface FaceEmbeddingRepository extends JpaRepository<FaceEmbedding, UU
 
     java.util.Optional<FaceEmbedding> findFirstByMention_Id(UUID mentionId);
 
-    void deleteByFilePath(String filePath);
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("DELETE FROM FaceEmbedding fe WHERE fe.filePath = :filePath")
+    void deleteByFilePath(@Param("filePath") String filePath);
+
+    @Query("SELECT fe FROM FaceEmbedding fe WHERE fe.filePath <> :filePath")
+    List<FaceEmbedding> findAllExceptFilePath(@Param("filePath") String filePath);
 }

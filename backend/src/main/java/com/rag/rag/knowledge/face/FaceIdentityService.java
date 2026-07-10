@@ -15,8 +15,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -28,8 +31,22 @@ public class FaceIdentityService {
     private final EntityMentionRepository mentionRepository;
     private final IdentityResolutionService identityResolutionService;
 
-    @Value("${face.match.threshold:0.42}")
+    @Value("${face.match.threshold:0.40}")
     private double matchThreshold;
+
+    @Value("${face.match.suggestion-threshold:0.36}")
+    private double suggestionThreshold;
+
+    @Transactional
+    public void replaceFaceEmbeddingsForFile(
+            byte[] imageBytes,
+            String filePath,
+            String fileName,
+            List<EntityMention> personMentions
+    ) {
+        faceEmbeddingRepository.deleteByFilePath(filePath);
+        processImageFaces(imageBytes, filePath, fileName, personMentions);
+    }
 
     @Transactional
     public void processImageFaces(byte[] imageBytes, String filePath, String fileName, List<EntityMention> personMentions) {
@@ -51,7 +68,7 @@ public class FaceIdentityService {
                 continue;
             }
 
-            Optional<EntityMatch> existingMatch = findBestEntityMatch(embedding);
+            Optional<EntityMatch> existingMatch = findBestEntityMatch(embedding, filePath);
             EntityMention mention = i < sortedMentions.size() ? sortedMentions.get(i) : null;
 
             KnowledgeEntity entity;
@@ -59,7 +76,7 @@ public class FaceIdentityService {
                 entity = mention.getEntity();
             } else if (mention != null) {
                 entity = identityResolutionService.findOrCreateEntityByName(mention.getLabel());
-            } else if (existingMatch.isPresent()) {
+            } else if (existingMatch.isPresent() && existingMatch.get().score() >= matchThreshold) {
                 entity = existingMatch.get().entity();
             } else {
                 entity = identityResolutionService.findOrCreateEntityByName("Nieznana osoba " + (i + 1));
@@ -73,7 +90,7 @@ public class FaceIdentityService {
                 mention = mentionRepository.save(mention);
             }
 
-            if (mention != null && existingMatch.isPresent()) {
+            if (mention != null && existingMatch.isPresent() && existingMatch.get().score() >= suggestionThreshold) {
                 KnowledgeEntity matchedEntity = existingMatch.get().entity();
                 if (!matchedEntity.getId().equals(entity.getId())) {
                     identityResolutionService.suggestFaceMatch(mention, matchedEntity, existingMatch.get().score());
@@ -115,20 +132,34 @@ public class FaceIdentityService {
                 .build());
     }
 
-    private Optional<EntityMatch> findBestEntityMatch(float[] queryEmbedding) {
-        EntityMatch best = null;
+    Optional<EntityMatch> findBestEntityMatch(float[] queryEmbedding, String excludeFilePath) {
+        List<FaceEmbedding> storedEmbeddings = excludeFilePath == null || excludeFilePath.isBlank()
+                ? faceEmbeddingRepository.findAll()
+                : faceEmbeddingRepository.findAllExceptFilePath(excludeFilePath);
 
-        for (FaceEmbedding stored : faceEmbeddingRepository.findAll()) {
+        return findBestEntityMatchFrom(storedEmbeddings, queryEmbedding);
+    }
+
+    Optional<EntityMatch> findBestEntityMatchFrom(List<FaceEmbedding> storedEmbeddings, float[] queryEmbedding) {
+        Map<UUID, EntityMatch> bestByEntity = new LinkedHashMap<>();
+        for (FaceEmbedding stored : storedEmbeddings) {
             if (stored.getEmbedding() == null || stored.getEntity() == null) {
                 continue;
             }
+
             double score = cosineSimilarity(queryEmbedding, stored.getEmbedding());
-            if (score >= matchThreshold && (best == null || score > best.score())) {
-                best = new EntityMatch(stored.getEntity(), score);
+            if (score < suggestionThreshold) {
+                continue;
+            }
+
+            UUID entityId = stored.getEntity().getId();
+            EntityMatch current = bestByEntity.get(entityId);
+            if (current == null || score > current.score()) {
+                bestByEntity.put(entityId, new EntityMatch(stored.getEntity(), score));
             }
         }
 
-        return Optional.ofNullable(best);
+        return bestByEntity.values().stream().max(Comparator.comparingDouble(EntityMatch::score));
     }
 
     static double cosineSimilarity(float[] a, float[] b) {
@@ -156,5 +187,5 @@ public class FaceIdentityService {
         return (face.bbox().get(0) + face.bbox().get(2)) / 2.0;
     }
 
-    private record EntityMatch(KnowledgeEntity entity, double score) {}
+    record EntityMatch(KnowledgeEntity entity, double score) {}
 }
