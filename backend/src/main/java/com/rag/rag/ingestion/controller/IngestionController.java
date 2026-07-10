@@ -1,5 +1,6 @@
 package com.rag.rag.ingestion.controller;
 
+import com.rag.rag.folder.dto.FileDeleteDto;
 import com.rag.rag.folder.dto.FileDto;
 import com.rag.rag.folder.dto.FileMoveDto;
 import com.rag.rag.folder.dto.FileRenameDto;
@@ -35,6 +36,17 @@ public class IngestionController {
         this.jdbcTemplate = jdbcTemplate;
         this.fileRepository = fileRepository;
         this.folderRepository = folderRepository;
+    }
+
+    @Transactional
+    @PostMapping("/files/delete")
+    public ResponseEntity<?> deleteFiles(@RequestBody FileDeleteDto deleteDto) {
+        if (deleteDto.filePaths() == null || deleteDto.filePaths().isEmpty()) {
+            return ResponseEntity.badRequest().body("No file paths provided.");
+        }
+
+        ingestionService.deleteFiles(deleteDto.filePaths());
+        return ResponseEntity.ok().build();
     }
 
     @Transactional
@@ -112,6 +124,15 @@ public class IngestionController {
         }
     }
 
+    @Transactional
+    @DeleteMapping("/clear-all")
+    public ResponseEntity<Map<String, String>> clearAllData() {
+        ingestionService.clearAllData();
+        return ResponseEntity.ok(Map.of(
+                "message", "Wyczyszczono foldery, pliki, embeddingi i graf wiedzy."
+        ));
+    }
+
 
 
 
@@ -141,10 +162,113 @@ public class IngestionController {
                                 i.getFileName(),
                                 i.getImageData() != null ?
                                 Base64.getEncoder().encodeToString(i.getImageData()) : null,
-                                i.getFileType()
+                                i.getFileType(),
+                                getExtractedText(i.getPath())
                         )
                 ).toList();
 
         return ResponseEntity.ok(files);
+    }
+
+    private List<String> getEmbeddingChunks(String path) {
+        return jdbcTemplate.queryForList(
+                "SELECT text FROM embeddings WHERE metadata->>'path' = ?",
+                String.class,
+                path
+        );
+    }
+
+    private String getExtractedText(String path) {
+        List<String> chunks = getEmbeddingChunks(path);
+        if (chunks.isEmpty()) {
+            return null;
+        }
+
+        String text = chunks.get(0).trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+
+        int maxLength = 200;
+        if (text.length() > maxLength) {
+            return text.substring(0, maxLength) + "…";
+        }
+        return text;
+    }
+
+    @GetMapping("/files/embeddings")
+    public ResponseEntity<Map<String, String>> getFileEmbeddings(@RequestParam("path") String path) {
+        Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
+        if (fileOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        FileEntity file = fileOpt.get();
+        List<String> chunks = getEmbeddingChunks(path);
+        String content = chunks.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(chunk -> !chunk.isEmpty())
+                .reduce((a, b) -> a + "\n\n---\n\n" + b)
+                .orElse("Brak embeddingów dla tego pliku.");
+
+        return ResponseEntity.ok(Map.of(
+                "title", file.getFileName(),
+                "content", content,
+                "chunkCount", String.valueOf(chunks.size())
+        ));
+    }
+
+    @GetMapping("/files/preview")
+    public ResponseEntity<Map<String, String>> getFilePreview(@RequestParam("path") String path) {
+        Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
+        if (fileOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        FileEntity file = fileOpt.get();
+        String mimeType = file.getFileType() != null ? file.getFileType() : "application/octet-stream";
+
+        if (mimeType.startsWith("image/") && file.getImageData() != null) {
+            String imageBase64 = Base64.getEncoder().encodeToString(file.getImageData());
+            String dataUrl = "data:" + mimeType + ";base64," + imageBase64;
+            return ResponseEntity.ok(Map.of(
+                    "kind", "image",
+                    "title", file.getFileName(),
+                    "mimeType", mimeType,
+                    "content", dataUrl
+            ));
+        }
+
+        if (mimeType.contains("pdf") || mimeType.equals("text/plain")) {
+            List<String> chunks = getEmbeddingChunks(path);
+
+            String previewText = chunks.stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(chunk -> !chunk.isEmpty())
+                    .reduce((a, b) -> a + "\n\n" + b)
+                    .orElse("Brak dostępnej treści podglądu dla tego pliku.");
+
+            int maxPreviewLength = 24000;
+            if (previewText.length() > maxPreviewLength) {
+                previewText = previewText.substring(0, maxPreviewLength) + "\n\n[...]";
+            }
+
+            return ResponseEntity.ok(Map.of(
+                    "kind", mimeType.contains("pdf") ? "pdf" : "text",
+                    "title", file.getFileName(),
+                    "mimeType", mimeType,
+                    "content", previewText
+            ));
+        }
+
+        String fallback = "Podgląd nie jest dostępny dla typu: " + mimeType;
+        return ResponseEntity.ok(Map.of(
+                "kind", "other",
+                "title", file.getFileName(),
+                "mimeType", mimeType,
+                "content", fallback
+        ));
     }
 }

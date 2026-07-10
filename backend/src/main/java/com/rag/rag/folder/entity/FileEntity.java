@@ -29,4 +29,9 @@ public class FileEntity {
     @JdbcTypeCode(SqlTypes.BINARY)
     @Column(name = "image_data")
     private byte[] imageData;
+
+    private String entityTag;
+
+    @Enumerated(EnumType.STRING)
+    private IngestionStatus ingestionStatus;
 }

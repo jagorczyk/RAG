@@ -12,6 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -53,6 +54,8 @@ public class FolderController {
 
         try {
             ingestionService.ingestMultipartFile(file, folder);
+            folder.setUpdatedAt(LocalDateTime.now());
+            folderRepository.save(folder);
         } catch (IOException e) {
             log.error("Failed to upload file to folder {}", folder.getName(), e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to process the uploaded file.");

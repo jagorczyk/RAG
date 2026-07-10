@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class RagApplication {
 
 	public static void main(String[] args) {
-		nu.pattern.OpenCV.loadLocally();
+
 		SpringApplication.run(RagApplication.class, args);
 	}
 
