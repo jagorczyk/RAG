@@ -16,6 +16,9 @@ export interface EntityMention {
   status: string;
   visualCues: string;
   entity?: KnowledgeEntity;
+  entityId?: string | null;
+  entityDisplayName?: string | null;
+  bbox?: number[] | null;
 }
 
 export interface EntityPhoto {

@@ -12,5 +12,9 @@ public interface FaceEmbeddingRepository extends JpaRepository<FaceEmbedding, UU
 
     List<FaceEmbedding> findByEntityId(UUID entityId);
 
+    List<FaceEmbedding> findByFilePath(String filePath);
+
+    java.util.Optional<FaceEmbedding> findFirstByMentionId(UUID mentionId);
+
     void deleteByFilePath(String filePath);
 }

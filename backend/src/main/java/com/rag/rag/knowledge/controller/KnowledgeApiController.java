@@ -2,17 +2,20 @@ package com.rag.rag.knowledge.controller;
 
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
+import com.rag.rag.knowledge.dto.EntityMentionViewDto;
 import com.rag.rag.knowledge.dto.EntityPhotoDto;
 import com.rag.rag.knowledge.dto.EntitySummaryDto;
 import com.rag.rag.knowledge.entity.EntityAlias;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.face.FaceEmbedding;
 import com.rag.rag.knowledge.identity.IdentitySuggestion;
 import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import com.rag.rag.knowledge.identity.SuggestionStatus;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
+import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +44,7 @@ public class KnowledgeApiController {
     private final EntityAliasRepository aliasRepository;
     private final IdentityResolutionService identityResolutionService;
     private final FileRepository fileRepository;
+    private final FaceEmbeddingRepository faceEmbeddingRepository;
 
     private static final int MAX_PHOTOS_PER_ENTITY = 4;
 
@@ -205,10 +209,64 @@ public class KnowledgeApiController {
     }
 
     @GetMapping("/mentions/by-file")
-    public ResponseEntity<List<EntityMention>> getMentionsForFile(@RequestParam String path) {
-        List<EntityMention> mentions = mentionRepository.findAll().stream()
-                .filter(m -> path.equals(m.getFilePath()))
+    public ResponseEntity<List<EntityMentionViewDto>> getMentionsForFile(@RequestParam String path) {
+        List<EntityMentionViewDto> mentions = mentionRepository.findByFilePath(path).stream()
+                .map(this::toMentionViewDto)
+                .sorted(this::compareMentionsForDisplay)
                 .toList();
         return ResponseEntity.ok(mentions);
+    }
+
+    private EntityMentionViewDto toMentionViewDto(EntityMention mention) {
+        List<Float> bbox = faceEmbeddingRepository.findFirstByMentionId(mention.getId())
+                .map(FaceEmbedding::getBbox)
+                .map(this::bboxToList)
+                .orElse(null);
+
+        KnowledgeEntity entity = mention.getEntity();
+        return new EntityMentionViewDto(
+                mention.getId(),
+                mention.getFilePath(),
+                mention.getLabel(),
+                mention.getConfidence(),
+                mention.getStatus() != null ? mention.getStatus().name() : null,
+                mention.getVisualCues(),
+                entity != null ? entity.getId() : null,
+                entity != null ? entity.getDisplayName() : null,
+                bbox
+        );
+    }
+
+    private List<Float> bboxToList(float[] bbox) {
+        if (bbox == null || bbox.length < 4) {
+            return null;
+        }
+        List<Float> values = new ArrayList<>(4);
+        for (float value : bbox) {
+            values.add(value);
+        }
+        return values;
+    }
+
+    private int compareMentionsForDisplay(EntityMentionViewDto a, EntityMentionViewDto b) {
+        double centerA = bboxCenterX(a.bbox());
+        double centerB = bboxCenterX(b.bbox());
+        if (centerA >= 0 && centerB >= 0) {
+            return Double.compare(centerA, centerB);
+        }
+        if (centerA >= 0) {
+            return -1;
+        }
+        if (centerB >= 0) {
+            return 1;
+        }
+        return a.label().compareToIgnoreCase(b.label());
+    }
+
+    private double bboxCenterX(List<Float> bbox) {
+        if (bbox == null || bbox.size() < 4) {
+            return -1;
+        }
+        return (bbox.get(0) + bbox.get(2)) / 2.0;
     }
 }
