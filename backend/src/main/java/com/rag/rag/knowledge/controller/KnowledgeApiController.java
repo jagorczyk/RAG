@@ -31,6 +31,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.HashSet;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Comparator;
 import java.util.Base64;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,6 +40,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Locale;
 
 @RestController
 @RequestMapping("/api/knowledge")
@@ -191,22 +194,81 @@ public class KnowledgeApiController {
     }
 
     @GetMapping("/entities")
+    @Transactional
     public ResponseEntity<List<EntitySummaryDto>> getAllEntities() {
         identityResolutionService.consolidateDuplicateEntities();
-        List<EntitySummaryDto> entities = entityRepository.findAll().stream()
-                .map(entity -> new EntitySummaryDto(
-                        entity.getId(),
-                        entity.getDisplayName(),
-                        entity.getType(),
-                        loadPhotosForEntity(entity.getId())
-                ))
+
+        Map<String, EntitySummaryDto> entitiesByKey = new LinkedHashMap<>();
+        for (KnowledgeEntity entity : entityRepository.findAll()) {
+            String key = entityKey(entity.getDisplayName());
+            if (key == null) {
+                continue;
+            }
+            entitiesByKey.putIfAbsent(key, toEntitySummary(entity));
+        }
+
+        Map<String, List<EntityMention>> mentionsByLabel = new LinkedHashMap<>();
+        for (EntityMention mention : mentionRepository.findAll()) {
+            String label = mention.getLabel();
+            if (label == null || label.isBlank() || identityResolutionService.isGenericPersonLabel(label)) {
+                continue;
+            }
+            String key = entityKey(label);
+            if (key == null) {
+                continue;
+            }
+            mentionsByLabel.computeIfAbsent(key, ignored -> new ArrayList<>()).add(mention);
+        }
+
+        for (Map.Entry<String, List<EntityMention>> entry : mentionsByLabel.entrySet()) {
+            if (entitiesByKey.containsKey(entry.getKey())) {
+                continue;
+            }
+
+            String displayLabel = entry.getValue().stream()
+                    .map(EntityMention::getLabel)
+                    .filter(label -> label != null && !label.isBlank())
+                    .max(Comparator.comparingInt(String::length))
+                    .orElse(entry.getKey());
+
+            KnowledgeEntity entity = identityResolutionService.findOrCreateEntityByName(displayLabel);
+            entitiesByKey.put(entry.getKey(), new EntitySummaryDto(
+                    entity.getId(),
+                    displayLabel,
+                    entity.getType(),
+                    loadPhotosForMentions(entry.getValue())
+            ));
+        }
+
+        List<EntitySummaryDto> entities = entitiesByKey.values().stream()
+                .sorted(Comparator.comparing(EntitySummaryDto::displayName, String.CASE_INSENSITIVE_ORDER))
                 .toList();
         return ResponseEntity.ok(entities);
     }
 
+    private EntitySummaryDto toEntitySummary(KnowledgeEntity entity) {
+        return new EntitySummaryDto(
+                entity.getId(),
+                entity.getDisplayName(),
+                entity.getType(),
+                loadPhotosForEntity(entity.getId())
+        );
+    }
+
+    private String entityKey(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        return name.trim().toLowerCase(Locale.ROOT);
+    }
+
     private List<EntityPhotoDto> loadPhotosForEntity(UUID entityId) {
+        return loadPhotosForMentions(mentionRepository.findByEntityId(entityId));
+    }
+
+    private List<EntityPhotoDto> loadPhotosForMentions(List<EntityMention> mentions) {
         Set<String> filePaths = new LinkedHashSet<>();
-        for (EntityMention mention : mentionRepository.findByEntityId(entityId)) {
+        for (EntityMention mention : mentions) {
             if (mention.getFilePath() != null && !mention.getFilePath().isBlank()) {
                 filePaths.add(mention.getFilePath());
             }

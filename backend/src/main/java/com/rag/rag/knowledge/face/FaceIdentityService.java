@@ -16,7 +16,6 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
 
 @Slf4j
@@ -56,18 +55,12 @@ public class FaceIdentityService {
             EntityMention mention = i < sortedMentions.size() ? sortedMentions.get(i) : null;
 
             KnowledgeEntity entity;
-            if (existingMatch.isPresent()) {
-                entity = existingMatch.get().entity();
-                log.info(
-                        "Face matched existing person '{}' with score {} in {}",
-                        entity.getDisplayName(),
-                        String.format(Locale.US, "%.3f", existingMatch.get().score()),
-                        filePath
-                );
-            } else if (mention != null && mention.getEntity() != null) {
+            if (mention != null && mention.getEntity() != null) {
                 entity = mention.getEntity();
             } else if (mention != null) {
                 entity = identityResolutionService.findOrCreateEntityByName(mention.getLabel());
+            } else if (existingMatch.isPresent()) {
+                entity = existingMatch.get().entity();
             } else {
                 entity = identityResolutionService.findOrCreateEntityByName("Nieznana osoba " + (i + 1));
                 mention = EntityMention.builder()
@@ -78,6 +71,13 @@ public class FaceIdentityService {
                         .entity(entity)
                         .build();
                 mention = mentionRepository.save(mention);
+            }
+
+            if (mention != null && existingMatch.isPresent()) {
+                KnowledgeEntity matchedEntity = existingMatch.get().entity();
+                if (!matchedEntity.getId().equals(entity.getId())) {
+                    identityResolutionService.suggestFaceMatch(mention, matchedEntity, existingMatch.get().score());
+                }
             }
 
             if (mention != null) {

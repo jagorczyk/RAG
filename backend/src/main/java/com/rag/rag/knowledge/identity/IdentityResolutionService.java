@@ -187,6 +187,38 @@ public class IdentityResolutionService {
         suggestionRepository.save(suggestion);
     }
 
+    public void suggestFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, double score) {
+        if (mention == null || matchedEntity == null) {
+            return;
+        }
+        if (mention.getEntity() != null && mention.getEntity().getId().equals(matchedEntity.getId())) {
+            return;
+        }
+
+        Optional<EntityMention> candidateMention = mentionRepository.findByEntityId(matchedEntity.getId()).stream()
+                .filter(other -> !other.getId().equals(mention.getId()))
+                .findFirst();
+        if (candidateMention.isEmpty()) {
+            return;
+        }
+
+        boolean alreadySuggested = suggestionRepository.findAll().stream()
+                .anyMatch(suggestion -> suggestion.getStatus() == SuggestionStatus.PENDING
+                        && ((suggestion.getMentionA().getId().equals(mention.getId())
+                                && suggestion.getMentionB().getId().equals(candidateMention.get().getId()))
+                            || (suggestion.getMentionB().getId().equals(mention.getId())
+                                && suggestion.getMentionA().getId().equals(candidateMention.get().getId()))));
+        if (alreadySuggested) {
+            return;
+        }
+
+        saveSuggestion(mention, candidateMention.get(), score);
+    }
+
+    public boolean isGenericPersonLabel(String label) {
+        return isGenericLabel(label);
+    }
+
     private double computeSimilarity(EntityMention a, EntityMention b) {
         String labelA = normalizeLabel(a.getLabel());
         String labelB = normalizeLabel(b.getLabel());
