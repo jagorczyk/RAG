@@ -271,6 +271,37 @@ class ChatInteractionServiceTest {
         assertTrue(response.sources().stream().noneMatch(s -> s.fileName().equals("20230526_232902.jpg")));
     }
 
+    @Test
+    void shouldUseAllGraphSourcesForPureFileListQuestionEvenWhenRetrievalIsPartial() {
+        MessageRequest request = new MessageRequest("na których zdjęciach znajduje się Bartek?");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_FILES);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Bartek"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Bartek występuje w pliku: 20230526_232615.jpg (etykieta: Bartek) | plik: dir://pati/20230526_232615.jpg
+                - Bartek występuje w pliku: 20230601_193903.jpg (etykieta: Bartek) | plik: dir://pati/20230601_193903.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+
+        Result<String> aiResult = Result.<String>builder()
+                .content("Bartek występuje na dwóch zdjęciach.")
+                .build();
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
+
+        SourceDto photo1 = new SourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 0.9, null, "IMAGE");
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(photo1));
+        when(ingestionService.createSourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 1.0))
+                .thenReturn(photo1);
+        when(ingestionService.createSourceDto("dir://pati/20230601_193903.jpg", "20230601_193903.jpg", 1.0))
+                .thenReturn(new SourceDto("dir://pati/20230601_193903.jpg", "20230601_193903.jpg", 1.0, null, "IMAGE"));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals(2, response.sources().size());
+        assertEquals("Bartek występuje na dwóch zdjęciach.", response.response());
+    }
+
     private static Content retrievalContent(String path, String filename, double score, String text) {
         return Content.from(TextSegment.from(text, Metadata.from(Map.of(
                 "path", path,

@@ -146,13 +146,19 @@ public class ChatInteractionService {
             List<String> contextKeywords = extractContextKeywords(question, entityName);
             List<SourceDto> contextRetrieval = filterRetrievalByQuestionContext(result, question, entityName);
             List<SourceDto> retrievalPool = !contextRetrieval.isEmpty() ? contextRetrieval : retrievalSources;
-            List<SourceDto> candidates = narrowWithRetrieval(graphSources, retrievalPool);
 
-            if (candidates.isEmpty() && !retrievalSources.isEmpty()) {
-                candidates = narrowWithRetrieval(graphSources, retrievalSources);
-            }
-            if (candidates.isEmpty() && (isFileListRoute(route) || contextKeywords.isEmpty())) {
+            List<SourceDto> candidates;
+            if (isPureFileListQuestion(route, contextKeywords)) {
                 candidates = dedupeSources(graphSources);
+            } else {
+                candidates = narrowWithRetrieval(graphSources, retrievalPool);
+
+                if (candidates.isEmpty() && !retrievalSources.isEmpty()) {
+                    candidates = narrowWithRetrieval(graphSources, retrievalSources);
+                }
+                if (candidates.isEmpty()) {
+                    candidates = dedupeSources(graphSources);
+                }
             }
 
             candidates = rankByRetrievalScore(candidates, retrievalSources);
@@ -359,6 +365,10 @@ public class ChatInteractionService {
 
     private boolean isFileListRoute(QueryRouter.QueryRoute route) {
         return route == QueryRouter.QueryRoute.ENTITY_FILES || route == QueryRouter.QueryRoute.ENTITY_LIST;
+    }
+
+    private boolean isPureFileListQuestion(QueryRouter.QueryRoute route, List<String> contextKeywords) {
+        return isFileListRoute(route) && contextKeywords.isEmpty();
     }
 
     private boolean responseReferencesSource(String lowerResponse, SourceDto source) {
