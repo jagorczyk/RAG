@@ -32,7 +32,7 @@ export function Sidebar() {
 
   const pathname = usePathname();
   const router = useRouter();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, mounted, toggleTheme } = useTheme();
 
   const fetchChats = async () => {
     try {
@@ -123,7 +123,14 @@ export function Sidebar() {
           className={`flex min-w-0 items-center gap-2.5 ${isOpen ? "flex-1" : "mx-auto justify-center"}`}
           title="RAG"
         >
-          <Image src="/logo_rag.png" alt="RAG" width={30} height={30} priority />
+          <Image
+            src="/logo_rag.png"
+            alt="RAG"
+            width={30}
+            height={30}
+            priority
+            className="h-[30px] w-[30px] object-contain"
+          />
           {isOpen && (
             <p className="truncate text-sm font-semibold text-ink">RAG</p>
           )}
@@ -281,11 +288,20 @@ export function Sidebar() {
           type="button"
           onClick={toggleTheme}
           className={`nav-item w-full ${!isOpen ? "justify-center px-0" : ""}`}
-          title={theme === "light" ? "Tryb ciemny" : "Tryb jasny"}
+          title={
+            !mounted
+              ? "Motyw"
+              : theme === "light"
+                ? "Tryb ciemny"
+                : "Tryb jasny"
+          }
+          suppressHydrationWarning
         >
-          {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+          {!mounted || theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
           {isOpen && (
-            <span>{theme === "light" ? "Ciemny" : "Jasny"}</span>
+            <span suppressHydrationWarning>
+              {!mounted ? "Motyw" : theme === "light" ? "Ciemny" : "Jasny"}
+            </span>
           )}
         </button>
       </div>
