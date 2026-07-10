@@ -236,7 +236,8 @@ public class IngestionController {
                     "kind", "image",
                     "title", file.getFileName(),
                     "mimeType", mimeType,
-                    "content", dataUrl
+                    "content", dataUrl,
+                    "path", path
             ));
         }
 
@@ -259,7 +260,8 @@ public class IngestionController {
                     "kind", mimeType.contains("pdf") ? "pdf" : "text",
                     "title", file.getFileName(),
                     "mimeType", mimeType,
-                    "content", previewText
+                    "content", previewText,
+                    "path", path
             ));
         }
 
@@ -268,7 +270,8 @@ public class IngestionController {
                 "kind", "other",
                 "title", file.getFileName(),
                 "mimeType", mimeType,
-                "content", fallback
+                "content", fallback,
+                "path", path
         ));
     }
 }

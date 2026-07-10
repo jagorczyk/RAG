@@ -3,7 +3,7 @@
 import { X, Edit2, Check } from "lucide-react";
 import { FilePreview } from "@/lib/api";
 import { useState, useEffect, useMemo } from "react";
-import { getMentionsForFile, EntityMention, renameMention } from "@/lib/knowledge-api";
+import { getMentionsForFile, detectFacesForFile, EntityMention, renameMention } from "@/lib/knowledge-api";
 import { FaceAnnotatedImage } from "@/components/ui/FaceAnnotatedImage";
 import { getFaceColor } from "@/lib/face-colors";
 
@@ -30,7 +30,15 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
   const loadMentions = async () => {
     if (!preview.path) return;
     try {
-      const data = await getMentionsForFile(preview.path);
+      let data = await getMentionsForFile(preview.path);
+      const needsFaceDetection = data.some((mention) => !mention.bbox || mention.bbox.length < 4);
+      if (data.length > 0 && needsFaceDetection) {
+        try {
+          data = await detectFacesForFile(preview.path);
+        } catch (detectError) {
+          console.warn("Face detection unavailable:", detectError);
+        }
+      }
       setMentions(data);
     } catch (e) {
       console.error(e);

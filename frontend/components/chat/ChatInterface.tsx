@@ -300,6 +300,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         title: source.fileName,
         mimeType: source.fileName.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg",
         content: imageUrl,
+        path: source.path,
       });
       return;
     }

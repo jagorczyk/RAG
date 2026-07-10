@@ -69,7 +69,7 @@ export function FaceAnnotatedImage({ src, alt, faces }: FaceAnnotatedImageProps)
     updateMetrics();
     window.addEventListener("resize", updateMetrics);
     return () => window.removeEventListener("resize", updateMetrics);
-  }, [updateMetrics, src]);
+  }, [updateMetrics, src, faces]);
 
   return (
     <div className="relative mx-auto w-fit max-w-full">
@@ -96,7 +96,7 @@ export function FaceAnnotatedImage({ src, alt, faces }: FaceAnnotatedImageProps)
           return (
             <div
               key={face.id}
-              className="pointer-events-none absolute"
+              className="pointer-events-none absolute z-10 box-border"
               style={{
                 left,
                 top,

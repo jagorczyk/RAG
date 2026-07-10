@@ -10,6 +10,7 @@ import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.face.FaceEmbedding;
+import com.rag.rag.knowledge.face.FaceIdentityService;
 import com.rag.rag.knowledge.identity.IdentitySuggestion;
 import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import com.rag.rag.knowledge.identity.SuggestionStatus;
@@ -19,9 +20,11 @@ import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
 import java.util.Base64;
@@ -45,6 +48,7 @@ public class KnowledgeApiController {
     private final IdentityResolutionService identityResolutionService;
     private final FileRepository fileRepository;
     private final FaceEmbeddingRepository faceEmbeddingRepository;
+    private final FaceIdentityService faceIdentityService;
 
     private static final int MAX_PHOTOS_PER_ENTITY = 4;
 
@@ -217,8 +221,33 @@ public class KnowledgeApiController {
         return ResponseEntity.ok(mentions);
     }
 
+    @PostMapping("/mentions/by-file/detect-faces")
+    @Transactional
+    public ResponseEntity<List<EntityMentionViewDto>> detectFacesForFile(@RequestParam String path) {
+        FileEntity file = fileRepository.findByPath(path)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "File not found"));
+
+        if (file.getImageData() == null || file.getImageData().length == 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File has no image data");
+        }
+
+        List<EntityMention> mentions = mentionRepository.findByFilePath(path);
+        if (mentions.isEmpty()) {
+            return ResponseEntity.ok(List.of());
+        }
+
+        faceEmbeddingRepository.deleteByFilePath(path);
+        faceIdentityService.processImageFaces(file.getImageData(), path, file.getFileName(), mentions);
+
+        List<EntityMentionViewDto> result = mentionRepository.findByFilePath(path).stream()
+                .map(this::toMentionViewDto)
+                .sorted(this::compareMentionsForDisplay)
+                .toList();
+        return ResponseEntity.ok(result);
+    }
+
     private EntityMentionViewDto toMentionViewDto(EntityMention mention) {
-        List<Float> bbox = faceEmbeddingRepository.findFirstByMentionId(mention.getId())
+        List<Float> bbox = faceEmbeddingRepository.findFirstByMention_Id(mention.getId())
                 .map(FaceEmbedding::getBbox)
                 .map(this::bboxToList)
                 .orElse(null);

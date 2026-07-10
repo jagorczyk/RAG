@@ -344,7 +344,8 @@ export async function getFilePreview(path: string): Promise<FilePreview> {
   const params = new URLSearchParams({ path });
   const response = await fetch(`${BASE_URL}/api/data/files/preview?${params.toString()}`);
   if (!response.ok) throw new Error("Failed to fetch file preview");
-  return response.json() as Promise<FilePreview>;
+  const data = await response.json();
+  return { ...data, path: data.path ?? path };
 }
 
 export async function deleteChat(chatId: string): Promise<void> {

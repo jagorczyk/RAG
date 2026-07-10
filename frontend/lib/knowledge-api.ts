@@ -74,6 +74,15 @@ export async function getMentionsForFile(path: string): Promise<EntityMention[]>
   return res.json();
 }
 
+export async function detectFacesForFile(path: string): Promise<EntityMention[]> {
+  const params = new URLSearchParams({ path });
+  const res = await fetch(`${API_URL}/api/knowledge/mentions/by-file/detect-faces?${params.toString()}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to detect faces for file");
+  return res.json();
+}
+
 export async function renameEntity(entityId: string, newName: string): Promise<void> {
   const params = new URLSearchParams({ newName });
   const res = await fetch(`${API_URL}/api/knowledge/entities/${entityId}/rename?${params.toString()}`, { method: "PUT" });
