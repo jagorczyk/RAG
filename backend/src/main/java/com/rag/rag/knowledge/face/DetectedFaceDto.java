@@ -1,11 +1,13 @@
 package com.rag.rag.knowledge.face;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 public record DetectedFaceDto(
         List<Float> embedding,
         List<Float> bbox,
-        double detScore
+        @JsonProperty("det_score") double detScore
 ) {
     public float[] embeddingArray() {
         if (embedding == null) {

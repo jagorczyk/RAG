@@ -3,15 +3,11 @@ package com.rag.rag.knowledge.face;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
-import org.springframework.http.ContentDisposition;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
-import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
 
@@ -19,7 +15,9 @@ import java.util.List;
 @Component
 public class FaceRecognitionClient {
 
-    private final RestClient restClient;
+    private final RestTemplate restTemplate;
+    private final String analyzeUrl;
+    private final String healthUrl;
     private final boolean enabled;
 
     public FaceRecognitionClient(
@@ -27,9 +25,10 @@ public class FaceRecognitionClient {
             @Value("${face.service.enabled:true}") boolean enabled
     ) {
         this.enabled = enabled;
-        this.restClient = RestClient.builder()
-                .baseUrl(baseUrl)
-                .build();
+        this.restTemplate = new RestTemplate();
+        String normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        this.analyzeUrl = normalizedBaseUrl + "/analyze";
+        this.healthUrl = normalizedBaseUrl + "/health";
     }
 
     public List<DetectedFaceDto> analyze(byte[] imageBytes, String fileName) {
@@ -39,22 +38,10 @@ public class FaceRecognitionClient {
 
         try {
             String resolvedFileName = StringUtils.hasText(fileName) ? fileName : "image.jpg";
-            HttpHeaders fileHeaders = new HttpHeaders();
-            fileHeaders.setContentDisposition(ContentDisposition.formData()
-                    .name("file")
-                    .filename(resolvedFileName)
-                    .build());
-
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            body.add("file", new HttpEntity<>(new ByteArrayResource(imageBytes), fileHeaders));
+            body.add("file", new NamedByteArrayResource(imageBytes, resolvedFileName));
 
-            FaceAnalyzeResponse response = restClient.post()
-                    .uri("/analyze")
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(body)
-                    .retrieve()
-                    .body(FaceAnalyzeResponse.class);
-
+            FaceAnalyzeResponse response = restTemplate.postForObject(analyzeUrl, body, FaceAnalyzeResponse.class);
             if (response == null || response.faces() == null) {
                 return List.of();
             }
@@ -70,13 +57,24 @@ public class FaceRecognitionClient {
             return false;
         }
         try {
-            restClient.get()
-                    .uri("/health")
-                    .retrieve()
-                    .toBodilessEntity();
+            restTemplate.getForEntity(healthUrl, String.class);
             return true;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    private static final class NamedByteArrayResource extends ByteArrayResource {
+        private final String filename;
+
+        private NamedByteArrayResource(byte[] bytes, String filename) {
+            super(bytes);
+            this.filename = filename;
+        }
+
+        @Override
+        public String getFilename() {
+            return filename;
         }
     }
 }
