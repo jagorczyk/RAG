@@ -349,11 +349,12 @@ public class IngestionService {
 
             if (!mentionIds.isEmpty()) {
                 suggestionRepo.deleteByMentionIds(mentionIds);
+                faceEmbeddingRepository.deleteByMentionIdIn(mentionIds);
             }
 
             factRepo.deleteByFilePath(path);
-            mentionRepo.deleteByFilePath(path);
             faceEmbeddingRepository.deleteByFilePath(path);
+            mentionRepo.deleteByFilePath(path);
             jdbcTemplate.update("DELETE FROM embeddings WHERE metadata->>'path' = ?", path);
             fileRepository.findByPath(path).ifPresent(fileRepository::delete);
 
@@ -365,8 +366,8 @@ public class IngestionService {
     public void clearAllData() {
         suggestionRepo.deleteAllInBatch();
         factRepo.deleteAllInBatch();
-        mentionRepo.deleteAllInBatch();
         faceEmbeddingRepository.deleteAllInBatch();
+        mentionRepo.deleteAllInBatch();
         aliasRepo.deleteAllInBatch();
         knowledgeEntityRepo.deleteAllInBatch();
         jdbcTemplate.execute("TRUNCATE TABLE embeddings");

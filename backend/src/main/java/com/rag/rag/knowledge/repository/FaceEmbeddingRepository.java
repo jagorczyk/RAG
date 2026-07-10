@@ -23,6 +23,10 @@ public interface FaceEmbeddingRepository extends JpaRepository<FaceEmbedding, UU
     @Query("DELETE FROM FaceEmbedding fe WHERE fe.filePath = :filePath")
     void deleteByFilePath(@Param("filePath") String filePath);
 
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("DELETE FROM FaceEmbedding fe WHERE fe.mention.id IN :mentionIds")
+    void deleteByMentionIdIn(@Param("mentionIds") List<UUID> mentionIds);
+
     @Query("SELECT fe FROM FaceEmbedding fe WHERE fe.filePath <> :filePath")
     List<FaceEmbedding> findAllExceptFilePath(@Param("filePath") String filePath);
 }
