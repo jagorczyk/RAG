@@ -1,9 +1,17 @@
 const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
+export interface SuggestionMention {
+  id: string;
+  label: string;
+  filePath: string;
+  fileName: string;
+  faceCropBase64?: string | null;
+}
+
 export interface IdentitySuggestion {
   id: string;
-  mentionA: EntityMention;
-  mentionB: EntityMention;
+  mentionA: SuggestionMention;
+  mentionB: SuggestionMention;
   similarityScore: number;
   status: string;
 }

@@ -5,10 +5,13 @@ import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.dto.EntityMentionViewDto;
 import com.rag.rag.knowledge.dto.EntityPhotoDto;
 import com.rag.rag.knowledge.dto.EntitySummaryDto;
+import com.rag.rag.knowledge.dto.IdentitySuggestionViewDto;
+import com.rag.rag.knowledge.dto.SuggestionMentionViewDto;
 import com.rag.rag.knowledge.entity.EntityAlias;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.face.FaceCropService;
 import com.rag.rag.knowledge.face.FaceEmbedding;
 import com.rag.rag.knowledge.face.FaceIdentityService;
 import com.rag.rag.knowledge.identity.IdentitySuggestion;
@@ -26,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashSet;
@@ -49,16 +53,73 @@ public class KnowledgeApiController {
     private final FileRepository fileRepository;
     private final FaceEmbeddingRepository faceEmbeddingRepository;
     private final FaceIdentityService faceIdentityService;
+    private final FaceCropService faceCropService;
 
     private static final int MAX_PHOTOS_PER_ENTITY = 4;
 
     @GetMapping("/review/pending")
-    public ResponseEntity<List<IdentitySuggestion>> getPendingSuggestions() {
-        // Just for MVP, returning all. In real app, filter by PENDING.
+    @Transactional
+    public ResponseEntity<List<IdentitySuggestionViewDto>> getPendingSuggestions() {
         List<IdentitySuggestion> pending = suggestionRepository.findAll().stream()
                 .filter(s -> s.getStatus() == SuggestionStatus.PENDING)
                 .toList();
-        return ResponseEntity.ok(pending);
+
+        Set<String> ensuredFiles = new HashSet<>();
+        for (IdentitySuggestion suggestion : pending) {
+            ensureFaceEmbeddingsForFile(suggestion.getMentionA().getFilePath(), ensuredFiles);
+            ensureFaceEmbeddingsForFile(suggestion.getMentionB().getFilePath(), ensuredFiles);
+        }
+
+        List<IdentitySuggestionViewDto> result = pending.stream()
+                .map(this::toSuggestionViewDto)
+                .toList();
+        return ResponseEntity.ok(result);
+    }
+
+    private void ensureFaceEmbeddingsForFile(String filePath, Set<String> ensuredFiles) {
+        if (filePath == null || filePath.isBlank() || !ensuredFiles.add(filePath)) {
+            return;
+        }
+        if (!faceEmbeddingRepository.findByFilePath(filePath).isEmpty()) {
+            return;
+        }
+
+        fileRepository.findByPath(filePath).ifPresent(file -> {
+            if (file.getImageData() == null || file.getImageData().length == 0) {
+                return;
+            }
+            List<EntityMention> mentions = mentionRepository.findByFilePath(filePath);
+            if (mentions.isEmpty()) {
+                return;
+            }
+            faceIdentityService.processImageFaces(file.getImageData(), filePath, file.getFileName(), mentions);
+        });
+    }
+
+    private IdentitySuggestionViewDto toSuggestionViewDto(IdentitySuggestion suggestion) {
+        return new IdentitySuggestionViewDto(
+                suggestion.getId(),
+                toSuggestionMentionViewDto(suggestion.getMentionA()),
+                toSuggestionMentionViewDto(suggestion.getMentionB()),
+                suggestion.getSimilarityScore(),
+                suggestion.getStatus() != null ? suggestion.getStatus().name() : null
+        );
+    }
+
+    private SuggestionMentionViewDto toSuggestionMentionViewDto(EntityMention mention) {
+        String fileName = fileRepository.findByPath(mention.getFilePath())
+                .map(FileEntity::getFileName)
+                .orElse(mention.getFilePath());
+
+        String faceCropBase64 = faceCropService.cropFaceBase64ForMention(mention.getId()).orElse(null);
+
+        return new SuggestionMentionViewDto(
+                mention.getId(),
+                mention.getLabel(),
+                mention.getFilePath(),
+                fileName,
+                faceCropBase64
+        );
     }
 
     @PostMapping("/mentions/{id}/confirm")
