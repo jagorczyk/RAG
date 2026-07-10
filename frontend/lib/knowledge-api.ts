@@ -18,10 +18,18 @@ export interface EntityMention {
   entity?: KnowledgeEntity;
 }
 
+export interface EntityPhoto {
+  path: string;
+  fileName: string;
+  imageBase64: string;
+  fileType: string;
+}
+
 export interface KnowledgeEntity {
   id: string;
   displayName: string;
   type: string;
+  photos?: EntityPhoto[];
 }
 
 export async function getPendingSuggestions(): Promise<IdentitySuggestion[]> {

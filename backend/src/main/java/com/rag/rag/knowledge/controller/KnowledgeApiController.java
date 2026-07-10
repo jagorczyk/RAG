@@ -1,5 +1,9 @@
 package com.rag.rag.knowledge.controller;
 
+import com.rag.rag.folder.entity.FileEntity;
+import com.rag.rag.folder.repository.FileRepository;
+import com.rag.rag.knowledge.dto.EntityPhotoDto;
+import com.rag.rag.knowledge.dto.EntitySummaryDto;
 import com.rag.rag.knowledge.entity.EntityAlias;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
@@ -16,8 +20,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
@@ -31,6 +40,9 @@ public class KnowledgeApiController {
     private final KnowledgeEntityRepository entityRepository;
     private final EntityAliasRepository aliasRepository;
     private final IdentityResolutionService identityResolutionService;
+    private final FileRepository fileRepository;
+
+    private static final int MAX_PHOTOS_PER_ENTITY = 4;
 
     @GetMapping("/review/pending")
     public ResponseEntity<List<IdentitySuggestion>> getPendingSuggestions() {
@@ -110,9 +122,59 @@ public class KnowledgeApiController {
     }
 
     @GetMapping("/entities")
-    public ResponseEntity<List<KnowledgeEntity>> getAllEntities() {
+    public ResponseEntity<List<EntitySummaryDto>> getAllEntities() {
         identityResolutionService.consolidateDuplicateEntities();
-        return ResponseEntity.ok(entityRepository.findAll());
+        List<EntitySummaryDto> entities = entityRepository.findAll().stream()
+                .map(entity -> new EntitySummaryDto(
+                        entity.getId(),
+                        entity.getDisplayName(),
+                        entity.getType(),
+                        loadPhotosForEntity(entity.getId())
+                ))
+                .toList();
+        return ResponseEntity.ok(entities);
+    }
+
+    private List<EntityPhotoDto> loadPhotosForEntity(UUID entityId) {
+        Set<String> filePaths = new LinkedHashSet<>();
+        for (EntityMention mention : mentionRepository.findByEntityId(entityId)) {
+            if (mention.getFilePath() != null && !mention.getFilePath().isBlank()) {
+                filePaths.add(mention.getFilePath());
+            }
+        }
+
+        List<EntityPhotoDto> photos = new ArrayList<>();
+        for (String path : filePaths) {
+            if (photos.size() >= MAX_PHOTOS_PER_ENTITY) {
+                break;
+            }
+            toEntityPhoto(path).ifPresent(photos::add);
+        }
+        return photos;
+    }
+
+    private Optional<EntityPhotoDto> toEntityPhoto(String path) {
+        Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
+        if (fileOpt.isEmpty()) {
+            return Optional.empty();
+        }
+
+        FileEntity file = fileOpt.get();
+        if (file.getImageData() == null || file.getImageData().length == 0) {
+            return Optional.empty();
+        }
+
+        String mimeType = file.getFileType() != null ? file.getFileType() : "image/jpeg";
+        if (!mimeType.toLowerCase().contains("image")) {
+            return Optional.empty();
+        }
+
+        return Optional.of(new EntityPhotoDto(
+                file.getPath(),
+                file.getFileName(),
+                Base64.getEncoder().encodeToString(file.getImageData()),
+                mimeType
+        ));
     }
 
     @PutMapping("/entities/{id}/rename")
