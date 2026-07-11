@@ -67,6 +67,22 @@ class ChatInteractionServiceTest {
         when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.DOCUMENT);
         lenient().when(graphQueryService.buildContextForQuestion(any())).thenReturn("");
         lenient().when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.empty());
+        lenient().when(ingestionService.createGraphFactSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0),
+                        invocation.getArgument(1),
+                        invocation.getArgument(2),
+                        null,
+                        "GRAPH_FACT"
+                ));
+        lenient().when(ingestionService.createSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0),
+                        invocation.getArgument(1),
+                        invocation.getArgument(2),
+                        null,
+                        "IMAGE"
+                ));
     }
 
     @Test
@@ -144,9 +160,9 @@ class ChatInteractionServiceTest {
         when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
         when(ingestionService.getSources(aiResult)).thenReturn(List.of());
 
-        when(ingestionService.createSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
                 .thenReturn(new SourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0, null, null));
-        when(ingestionService.createSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
                 .thenReturn(new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0, null, null));
 
         MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
@@ -174,11 +190,11 @@ class ChatInteractionServiceTest {
         SourceDto gymPhoto1 = new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 0.9, null, "IMAGE");
         SourceDto gymPhoto2 = new SourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 0.8, null, "IMAGE");
         when(ingestionService.getSources(aiResult)).thenReturn(List.of(gymPhoto1, gymPhoto2));
-        when(ingestionService.createSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
                 .thenReturn(new SourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0, null, null));
-        when(ingestionService.createSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
                 .thenReturn(gymPhoto1);
-        when(ingestionService.createSourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 1.0))
                 .thenReturn(gymPhoto2);
 
         MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
@@ -211,11 +227,11 @@ class ChatInteractionServiceTest {
         SourceDto gymPhoto1 = new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 0.9, null, "IMAGE");
         SourceDto gymPhoto2 = new SourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 0.8, null, "IMAGE");
         when(ingestionService.getSources(aiResult)).thenReturn(List.of(gymPhoto1, gymPhoto2));
-        when(ingestionService.createSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
                 .thenReturn(new SourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0, null, null));
-        when(ingestionService.createSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
                 .thenReturn(new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0, null, null));
-        when(ingestionService.createSourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 1.0))
                 .thenReturn(new SourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 1.0, null, null));
 
         MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
@@ -257,13 +273,6 @@ class ChatInteractionServiceTest {
         SourceDto gymPhoto2 = new SourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 0.85, null, "IMAGE");
         SourceDto gymPhoto3 = new SourceDto("dir://test123/20230502_094428.jpg", "20230502_094428.jpg", 0.8, null, "IMAGE");
         when(ingestionService.getSources(aiResult)).thenReturn(List.of(homePhoto, gymPhoto1, gymPhoto2, gymPhoto3));
-        when(ingestionService.createSourceDto(any(), any(), anyDouble())).thenAnswer(invocation -> new SourceDto(
-                invocation.getArgument(0),
-                invocation.getArgument(1),
-                invocation.getArgument(2),
-                null,
-                "IMAGE"
-        ));
 
         MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
 
@@ -291,9 +300,9 @@ class ChatInteractionServiceTest {
 
         SourceDto photo1 = new SourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 0.9, null, "IMAGE");
         when(ingestionService.getSources(aiResult)).thenReturn(List.of(photo1));
-        when(ingestionService.createSourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 1.0))
                 .thenReturn(photo1);
-        when(ingestionService.createSourceDto("dir://pati/20230601_193903.jpg", "20230601_193903.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://pati/20230601_193903.jpg", "20230601_193903.jpg", 1.0))
                 .thenReturn(new SourceDto("dir://pati/20230601_193903.jpg", "20230601_193903.jpg", 1.0, null, "IMAGE"));
 
         MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
@@ -323,7 +332,7 @@ class ChatInteractionServiceTest {
 
         SourceDto photo = new SourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 0.9, null, "IMAGE");
         when(ingestionService.getSources(aiResult)).thenReturn(List.of(photo));
-        when(ingestionService.createSourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 1.0))
                 .thenReturn(photo);
 
         MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
@@ -358,7 +367,7 @@ class ChatInteractionServiceTest {
                 "dir://pati/20220513_165118.jpg", "20220513_165118.jpg", 0.9, null, "IMAGE"
         );
         when(ingestionService.getSources(aiResult)).thenReturn(List.of(irrelevantPhoto));
-        when(ingestionService.createSourceDto("dir://pati/20230526_232510.jpg", "20230526_232510.jpg", 1.0))
+        when(ingestionService.createGraphFactSourceDto("dir://pati/20230526_232510.jpg", "20230526_232510.jpg", 1.0))
                 .thenReturn(bathroomPhoto);
 
         MessageResponse response = chatInteractionService.processChatMessage(chatId, request);

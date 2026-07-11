@@ -27,6 +27,7 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  uncertain?: boolean;
 }
 
 export interface Source {
@@ -34,7 +35,7 @@ export interface Source {
   fileName: string;
   score: number;
   base64?: string;
-  type: "PDF" | "TEXT" | "IMAGE" | "OTHER";
+  type: "PDF" | "TEXT" | "IMAGE" | "OTHER" | "GRAPH_FACT";
 }
 
 export interface FilePreview {
@@ -306,7 +307,8 @@ export async function sendMessage(chatId: string, content: string): Promise<Mess
     id: `resp-${Date.now()}`,
     role: "assistant",
     content: data.response,
-    sources: data.sources
+    sources: data.sources,
+    uncertain: data.uncertain ?? false,
   };
 }
 

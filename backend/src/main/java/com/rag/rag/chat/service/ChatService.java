@@ -37,6 +37,8 @@ public interface ChatService {
     8. For "kto siedzi obok X" questions, list every named person from the relations section.
     9. When [Osoby z grafu wiedzy na pliku] lists named people, use those names to identify
        who appears in the image. A signed person like Igor must be named, not described only as "mężczyzna".
+    10. For questions with @file reference, answer from graph sections first. Use document fragments
+       only to supplement scene details missing from the graph.
 
     FORMATTING RULES:
     - Go straight to the answer, no intro phrases.

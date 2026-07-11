@@ -402,6 +402,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
                 key={msg.id}
                 message={msg}
                 sources={msg.sources}
+                uncertain={msg.uncertain}
                 onSourceClick={openSourcePreview}
               >
                 {msg.content

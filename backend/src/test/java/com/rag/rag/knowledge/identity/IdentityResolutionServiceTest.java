@@ -143,4 +143,28 @@ class IdentityResolutionServiceTest {
         assertEquals(MentionStatus.CONFIRMED, captor.getValue().getStatus());
         assertTrue(service.looksLikePersonName("Bartek"));
     }
+
+    @Test
+    void shouldConfirmFaceMatchAndAddVisionLabelAlias() {
+        KnowledgeEntity igor = KnowledgeEntity.builder()
+                .id(UUID.randomUUID())
+                .displayName("Igor")
+                .type("PERSON")
+                .build();
+        EntityMention mention = EntityMention.builder()
+                .id(UUID.randomUUID())
+                .label("mężczyzna")
+                .build();
+
+        when(aliasRepository.findFirstByAliasIgnoreCase("mężczyzna")).thenReturn(Optional.empty());
+        when(aliasRepository.save(any())).thenReturn(null);
+
+        service.confirmFaceMatch(mention, igor, mention.getLabel());
+
+        ArgumentCaptor<EntityMention> mentionCaptor = ArgumentCaptor.forClass(EntityMention.class);
+        verify(mentionRepository).save(mentionCaptor.capture());
+        assertEquals(MentionStatus.CONFIRMED, mentionCaptor.getValue().getStatus());
+        assertEquals(igor, mentionCaptor.getValue().getEntity());
+        verify(aliasRepository).save(any());
+    }
 }

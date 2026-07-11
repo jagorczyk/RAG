@@ -28,6 +28,7 @@ class QueryRouterTest {
     void setUp() {
         queryRouter = new QueryRouter(graphQueryService);
         lenient().when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.empty());
+        lenient().when(graphQueryService.resolveFilePathFromQuestion(any())).thenReturn(Optional.empty());
     }
 
     @ParameterizedTest
@@ -63,7 +64,9 @@ class QueryRouterTest {
             "kto jest na zdjęciach?, ENTITY_LIST",
             "wymień osoby na zdjęciu, ENTITY_LIST",
             "ilu ludzi widać na foto?, ENTITY_LIST",
-            "jakie osoby występują na zdjęciach?, ENTITY_LIST"
+            "jakie osoby występują na zdjęciach?, ENTITY_LIST",
+            "@received_20230526.jpg kto na nim jest?, FILE_SCOPED",
+            "@router.txt jakie ma IP?, FILE_SCOPED"
     })
     void shouldClassifyExpandedPhrases(String question, QueryRouter.QueryRoute expectedRoute) {
         assertEquals(expectedRoute, queryRouter.classify(question));

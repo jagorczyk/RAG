@@ -70,6 +70,11 @@ public class GraphQueryService {
 
     @Transactional(readOnly = true)
     public String buildContextForFile(String filePath) {
+        return buildFullContextForFile(filePath);
+    }
+
+    @Transactional(readOnly = true)
+    public String buildFullContextForFile(String filePath) {
         if (filePath == null || filePath.isBlank()) {
             return "";
         }
@@ -79,30 +84,92 @@ public class GraphQueryService {
                         || mention.getStatus() == MentionStatus.SUGGESTED)
                 .toList();
 
-        if (mentions.isEmpty()) {
-            return "";
-        }
+        StringBuilder contextBuilder = new StringBuilder();
+        boolean hasContent = false;
 
-        StringBuilder contextBuilder = new StringBuilder("[Osoby z grafu wiedzy na pliku]\n");
-        Set<String> seenNames = new LinkedHashSet<>();
+        if (!mentions.isEmpty()) {
+            contextBuilder.append("[Osoby z grafu wiedzy na pliku]\n");
+            Set<String> seenNames = new LinkedHashSet<>();
 
-        for (EntityMention mention : mentions) {
-            String displayName = resolveMentionName(mention);
-            if (displayName.isBlank() || !seenNames.add(displayName.toLowerCase(Locale.ROOT))) {
-                continue;
+            for (EntityMention mention : mentions) {
+                String displayName = resolveMentionName(mention);
+                if (displayName.isBlank() || !seenNames.add(displayName.toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                contextBuilder.append("- ")
+                        .append(displayName)
+                        .append(" (etykieta: ")
+                        .append(mention.getLabel())
+                        .append(", status: ")
+                        .append(mention.getStatus())
+                        .append(", pewność: ")
+                        .append(mention.getConfidence())
+                        .append(") | plik: ")
+                        .append(filePath)
+                        .append("\n");
             }
-            contextBuilder.append("- ")
-                    .append(displayName)
-                    .append(" (etykieta: ")
-                    .append(mention.getLabel())
-                    .append(", pewność: ")
-                    .append(mention.getConfidence())
-                    .append(") | plik: ")
-                    .append(filePath)
-                    .append("\n");
+            hasContent = true;
         }
 
-        return contextBuilder.toString();
+        List<Fact> fileFacts = getFactsForFile(filePath);
+        List<Fact> activityFacts = fileFacts.stream()
+                .filter(fact -> fact.getAction() != null && !fact.getAction().startsWith("REL_"))
+                .toList();
+        if (!activityFacts.isEmpty()) {
+            if (hasContent) {
+                contextBuilder.append("\n");
+            }
+            contextBuilder.append("[Fakty z grafu wiedzy]\n");
+            for (Fact fact : activityFacts) {
+                appendFactLine(contextBuilder, fact);
+            }
+            hasContent = true;
+        }
+
+        List<Fact> relationFacts = fileFacts.stream()
+                .filter(fact -> fact.getAction() != null && fact.getAction().startsWith("REL_"))
+                .toList();
+        if (!relationFacts.isEmpty()) {
+            if (hasContent) {
+                contextBuilder.append("\n");
+            }
+            contextBuilder.append("[Relacje z grafu wiedzy]\n");
+            Set<String> seenLines = new LinkedHashSet<>();
+            for (Fact fact : relationFacts) {
+                String subjectName = resolveMentionName(fact.getMention());
+                String objectName = resolveObjectName(fact);
+                String line = "- "
+                        + subjectName
+                        + " "
+                        + RelationConstants.prettyAction(fact.getAction())
+                        + " "
+                        + objectName
+                        + " | plik: "
+                        + fact.getFilePath()
+                        + "\n";
+                if (seenLines.add(line)) {
+                    contextBuilder.append(line);
+                }
+            }
+            hasContent = true;
+        }
+
+        return hasContent ? contextBuilder.toString() : "";
+    }
+
+    @Transactional(readOnly = true)
+    public List<Fact> getFactsForFile(String filePath) {
+        String sql = """
+            SELECT f.* FROM facts f
+            JOIN entity_mentions em ON f.mention_id = em.id
+            WHERE f.file_path = :filePath
+              AND em.status IN ('CONFIRMED', 'SUGGESTED')
+            ORDER BY f.created_at
+            """;
+
+        return entityManager.createNativeQuery(sql, Fact.class)
+                .setParameter("filePath", filePath)
+                .getResultList();
     }
 
     @Transactional(readOnly = true)

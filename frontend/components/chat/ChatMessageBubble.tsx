@@ -6,6 +6,7 @@ interface ChatMessageBubbleProps {
   message: Message;
   children: React.ReactNode;
   sources?: Source[];
+  uncertain?: boolean;
   onSourceClick?: (source: Source) => void;
 }
 
@@ -13,6 +14,7 @@ export function ChatMessageBubble({
   message,
   children,
   sources,
+  uncertain = false,
   onSourceClick,
 }: ChatMessageBubbleProps) {
   const isUser = message.role === "user";
@@ -25,6 +27,8 @@ export function ChatMessageBubble({
         return "PDF";
       case "TEXT":
         return "TXT";
+      case "GRAPH_FACT":
+        return "GRF";
       default:
         return "SRC";
     }
@@ -56,6 +60,11 @@ export function ChatMessageBubble({
         <div className="max-w-[65ch] whitespace-pre-wrap text-sm leading-relaxed text-ink text-pretty">
           {children}
         </div>
+        {!isUser && uncertain && (
+          <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-200">
+            Odpowiedź może być niepełna — tożsamość lub pewność danych z grafu jest niska.
+          </p>
+        )}
       </div>
 
       {sources && sources.length > 0 && (

@@ -60,9 +60,11 @@ public class ChatInteractionService {
 
         String fullQuestion = question;
         String graphContext = buildGraphContext(chatId, question, route);
-        String fileGraphContext = buildFileScopedGraphContext(chatId, question);
-        if (fileGraphContext != null && !fileGraphContext.isBlank()) {
-            graphContext = fileGraphContext + (graphContext.isBlank() ? "" : "\n" + graphContext);
+        if (route != QueryRouter.QueryRoute.FILE_SCOPED) {
+            String fileGraphContext = buildFileScopedGraphContext(chatId, question);
+            if (fileGraphContext != null && !fileGraphContext.isBlank()) {
+                graphContext = fileGraphContext + (graphContext.isBlank() ? "" : "\n" + graphContext);
+            }
         }
         if (graphContext != null && !graphContext.isEmpty()) {
             fullQuestion = graphContext + "\n\nPytanie użytkownika: " + question;
@@ -78,12 +80,13 @@ public class ChatInteractionService {
         }
 
         List<SourceDto> filteredSources = extractSourcesFromResponse(result, aiResponse, graphContext, route, question);
+        boolean uncertain = isUncertainGraphAnswer(graphContext);
         
         String cleanedResponse = cleanUpAiResponse(aiResponse, filteredSources);
 
         saveAiMessage(chatId, cleanedResponse, filteredSources);
 
-        return new MessageResponse(cleanedResponse, filteredSources);
+        return new MessageResponse(cleanedResponse, filteredSources, uncertain);
     }
 
     private String buildGraphContext(UUID chatId, String question, QueryRouter.QueryRoute route) {
@@ -96,6 +99,7 @@ public class ChatInteractionService {
             case ENTITY_DESCRIPTION -> buildDescriptionContext(chatId, question);
             case ENTITY_ACTIVITY -> buildEntityContext(question);
             case HYBRID -> buildEntityContext(question);
+            case FILE_SCOPED -> buildFileScopedGraphContext(chatId, question);
             case DOCUMENT -> "";
         };
     }
@@ -134,7 +138,7 @@ public class ChatInteractionService {
         if (filePath.isEmpty()) {
             filePath = chatEntityReferenceService.resolveRecentSourceFilePath(chatId);
         }
-        return filePath.map(graphQueryService::buildContextForFile).orElse("");
+        return filePath.map(graphQueryService::buildFullContextForFile).orElse("");
     }
 
     private List<SourceDto> extractSourcesFromResponse(
@@ -161,8 +165,11 @@ public class ChatInteractionService {
             List<SourceDto> retrievalPool = !contextRetrieval.isEmpty() ? contextRetrieval : retrievalSources;
 
             List<SourceDto> candidates;
-            if (isGraphOnlySourceRoute(route, contextKeywords)) {
-                candidates = dedupeSources(graphSources);
+            if (isGraphOnlySourceRoute(route, contextKeywords) || route == QueryRouter.QueryRoute.FILE_SCOPED) {
+                candidates = prioritizeGraphSources(graphSources, retrievalPool, route);
+                if (candidates.isEmpty()) {
+                    candidates = dedupeSources(graphSources);
+                }
             } else if (isPureFileListQuestion(route, contextKeywords)) {
                 candidates = dedupeSources(graphSources);
             } else {
@@ -337,7 +344,62 @@ public class ChatInteractionService {
                 || route == QueryRouter.QueryRoute.ENTITY_DESCRIPTION
                 || route == QueryRouter.QueryRoute.ENTITY_NEIGHBOR
                 || route == QueryRouter.QueryRoute.ENTITY_SPATIAL_LEFT
-                || route == QueryRouter.QueryRoute.ENTITY_SPATIAL_RIGHT;
+                || route == QueryRouter.QueryRoute.ENTITY_SPATIAL_RIGHT
+                || route == QueryRouter.QueryRoute.FILE_SCOPED;
+    }
+
+    private List<SourceDto> prioritizeGraphSources(
+            List<SourceDto> graphSources,
+            List<SourceDto> retrievalSources,
+            QueryRouter.QueryRoute route
+    ) {
+        List<SourceDto> graphFirst = dedupeSources(graphSources);
+        if (route != QueryRouter.QueryRoute.FILE_SCOPED || retrievalSources.isEmpty()) {
+            return graphFirst;
+        }
+
+        Set<String> graphPaths = new LinkedHashSet<>();
+        for (SourceDto source : graphFirst) {
+            if (source.path() != null) {
+                graphPaths.add(source.path());
+            }
+        }
+
+        List<SourceDto> supplements = retrievalSources.stream()
+                .filter(source -> source.path() != null && graphPaths.contains(source.path()))
+                .toList();
+        if (supplements.isEmpty()) {
+            return graphFirst;
+        }
+
+        Map<String, SourceDto> merged = new LinkedHashMap<>();
+        for (SourceDto source : graphFirst) {
+            merged.put(source.path(), source);
+        }
+        for (SourceDto source : supplements) {
+            merged.putIfAbsent(source.path(), source);
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    private boolean isUncertainGraphAnswer(String graphContext) {
+        if (graphContext == null || graphContext.isBlank()) {
+            return false;
+        }
+        if (graphContext.contains("status: SUGGESTED")) {
+            return true;
+        }
+        Matcher matcher = Pattern.compile("pewność:\\s*([0-9.]+)").matcher(graphContext);
+        double minConfidence = 1.0;
+        boolean found = false;
+        while (matcher.find()) {
+            found = true;
+            try {
+                minConfidence = Math.min(minConfidence, Double.parseDouble(matcher.group(1)));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return found && minConfidence < 0.75;
     }
 
     private List<SourceDto> narrowWithRetrieval(List<SourceDto> graphSources, List<SourceDto> retrievalSources) {
@@ -426,7 +488,7 @@ public class ChatInteractionService {
         while (matcher.find()) {
             String path = matcher.group(1).trim();
             String fileName = fileNameFromPath(path);
-            uniqueSources.putIfAbsent(path, ingestionService.createSourceDto(path, fileName, 1.0));
+            uniqueSources.putIfAbsent(path, ingestionService.createGraphFactSourceDto(path, fileName, 1.0));
         }
 
         return new ArrayList<>(uniqueSources.values());

@@ -196,6 +196,15 @@ public class IdentityResolutionService {
         suggestionRepository.save(suggestion);
     }
 
+    @Transactional
+    public void confirmFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, String visionLabel) {
+        if (mention == null || matchedEntity == null) {
+            return;
+        }
+        linkMention(mention, matchedEntity, MentionStatus.CONFIRMED);
+        addAliasIfMissing(matchedEntity, visionLabel);
+    }
+
     public void suggestFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, double score) {
         if (mention == null || matchedEntity == null) {
             return;
@@ -222,6 +231,27 @@ public class IdentityResolutionService {
         }
 
         saveSuggestion(mention, candidateMention.get(), score);
+    }
+
+    private void addAliasIfMissing(KnowledgeEntity entity, String aliasLabel) {
+        String normalized = normalizeLabel(aliasLabel);
+        if (normalized == null || isGenericLabel(normalized)) {
+            return;
+        }
+        if (normalized.equalsIgnoreCase(entity.getDisplayName())) {
+            return;
+        }
+        boolean exists = aliasRepository.findFirstByAliasIgnoreCase(normalized)
+                .filter(alias -> alias.getEntity().getId().equals(entity.getId()))
+                .isPresent();
+        if (exists) {
+            return;
+        }
+        aliasRepository.save(EntityAlias.builder()
+                .entity(entity)
+                .alias(normalized)
+                .source(AliasSource.FACE)
+                .build());
     }
 
     public boolean isGenericPersonLabel(String label) {

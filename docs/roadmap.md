@@ -48,9 +48,9 @@ Cel: każda podpisana osoba w grafie jest widoczna w czacie, nie tylko jako „m
 | A.1 | `entityTag` przy uploadzie działa end-to-end | 🔴 | #22 | ✅ Done |
 | A.2 | Auto-merge tylko z potwierdzeniem twarzy / bez agresywnego label-match | 🔴 | #6 | ✅ Done |
 | A.3 | Kontekst `[Osoby z grafu wiedzy na pliku]` dla `@plik` i follow-up | 🔴 | — | ✅ Done |
-| A.4 | Face-match → CONFIRMED + alias przy ingestii | 🔴 | #24 | ⬜ Todo |
+| A.4 | Face-match → CONFIRMED + alias przy ingestii | 🔴 | #24 | ✅ Done |
 | A.5 | UI: wymuszony tag lub potwierdzenie twarzy przy uploadzie | 🟠 | #25 | ⬜ Todo |
-| A.6 | Banner niepewności + typ źródła `GRAPH_FACT` | 🟠 | #18 | ⬜ Todo |
+| A.6 | Banner niepewności + typ źródła `GRAPH_FACT` | 🟠 | #18 | ✅ Done |
 
 ### Faza B — Routing i kontekst (graf first)
 
@@ -58,7 +58,7 @@ Cel: pytania o osoby/fakty idą do grafu, nie do vector RAG.
 
 | # | Zadanie | Priorytet | Issue | Status |
 |---|---------|-----------|-------|--------|
-| B.1 | Pytania z `@plik` → **graf first**, vector jako uzupełnienie | 🔴 | #23 | ⬜ Todo |
+| B.1 | Pytania z `@plik` → **graf first**, vector jako uzupełnienie | 🔴 | #23 | ✅ Done |
 | B.2 | Router LLM jako fallback gdy regex → DOCUMENT | 🟠 | #3 | ⬜ Todo |
 | B.3 | Fallback gdy encja nie znaleziona w grafie | 🟠 | #12 | ⬜ Todo |
 | B.4 | Filtrowanie HYBRID po folderze/ścieżce | 🟡 | #20 | ⬜ Todo |

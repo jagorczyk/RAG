@@ -115,6 +115,10 @@ public class QueryRouter {
 
     private final GraphQueryService graphQueryService;
 
+    private static final Pattern FILE_REFERENCE_PATTERN = Pattern.compile(
+            "(?i)@([\\w\\-]+(?:\\.[a-zA-Z0-9]+)?)"
+    );
+
     public enum QueryRoute {
         ENTITY_NEIGHBOR,
         ENTITY_SPATIAL_LEFT,
@@ -124,6 +128,7 @@ public class QueryRouter {
         ENTITY_DESCRIPTION,
         ENTITY_ACTIVITY,
         ENTITY_LIST,
+        FILE_SCOPED,
         DOCUMENT,
         HYBRID
     }
@@ -161,6 +166,10 @@ public class QueryRouter {
         }
         if (ENTITY_LIST_PATTERN.matcher(question).matches()) {
             return QueryRoute.ENTITY_LIST;
+        }
+        if (FILE_REFERENCE_PATTERN.matcher(question).find()
+                || graphQueryService.resolveFilePathFromQuestion(question).isPresent()) {
+            return QueryRoute.FILE_SCOPED;
         }
         if (graphQueryService.findEntityNameInQuestion(question).isPresent()) {
             return QueryRoute.HYBRID;

@@ -88,7 +88,8 @@ public class RetrievalConfiguration {
 
                 searchRequestBuilder.filter(pathFilter.or(filenameFilter).or(folderFilter));
                 searchRequestBuilder.minScore(0.01);
-                searchRequestBuilder.maxResults(15);
+                boolean graphFirst = extractGraphContext(queryText).contains("[Osoby z grafu wiedzy na pliku]");
+                searchRequestBuilder.maxResults(graphFirst ? 5 : 15);
             }
 
             EmbeddingSearchResult<TextSegment> vectorResults = embeddingStore.search(searchRequestBuilder.build());
@@ -168,8 +169,8 @@ public class RetrievalConfiguration {
             if (!graphContext.isEmpty()) {
                 promptBuilder.append(graphContext).append("\n\n");
             }
-            promptBuilder.append("Odpowiedz na pytanie na podstawie faktów z grafu wiedzy (jeśli podane) ")
-                    .append("oraz fragmentów dokumentów poniżej. Odpowiadaj po polsku. ")
+            promptBuilder.append("Odpowiedz na pytanie. Graf wiedzy (jeśli podany) jest źródłem prawdy — ")
+                    .append("fragmenty dokumentów służą tylko jako uzupełnienie opisu. Odpowiadaj po polsku. ")
                     .append("Nie wypisuj nazw plików, identyfikatorów zdjęć ani list plików w odpowiedzi.\n\n")
                     .append("Pytanie: ").append(actualQuestion).append("\n\n")
                     .append("Dokumenty:\n").append(contextJoined);

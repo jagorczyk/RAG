@@ -422,6 +422,11 @@ public class IngestionService {
         return new SourceDto(path, finalFileName, score, base64, type);
     }
 
+    public SourceDto createGraphFactSourceDto(String path, String metadataFileName, Double score) {
+        SourceDto source = createSourceDto(path, metadataFileName, score);
+        return new SourceDto(source.path(), source.fileName(), source.score(), source.base64(), "GRAPH_FACT");
+    }
+
     public List<SourceDto> getSources(Result<String> result) {
         if (result.sources() == null) {
             return List.of();

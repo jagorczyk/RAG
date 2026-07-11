@@ -83,12 +83,32 @@ public class FaceIdentityService {
 
             Optional<EntityMatch> existingMatch = findBestEntityMatch(embedding, filePath, suggestionThreshold);
             EntityMention mention = i < sortedMentions.size() ? sortedMentions.get(i) : null;
-
             KnowledgeEntity entity;
-            if (mention != null && mention.getEntity() != null) {
+
+            if (existingMatch.isPresent() && existingMatch.get().score() >= matchThreshold) {
+                entity = existingMatch.get().entity();
+                if (mention != null) {
+                    identityResolutionService.confirmFaceMatch(mention, entity, mention.getLabel());
+                }
+            } else if (mention != null && mention.getEntity() != null) {
                 entity = mention.getEntity();
             } else if (mention != null) {
-                entity = identityResolutionService.findOrCreateEntityByName(mention.getLabel());
+                if (existingMatch.isPresent()) {
+                    identityResolutionService.suggestFaceMatch(mention, existingMatch.get().entity(), existingMatch.get().score());
+                }
+                if (mention.getEntity() != null) {
+                    entity = mention.getEntity();
+                } else if (identityResolutionService.looksLikePersonName(mention.getLabel())) {
+                    entity = identityResolutionService.findOrCreateEntityByName(mention.getLabel());
+                    mention.setEntity(entity);
+                    mention.setStatus(MentionStatus.SUGGESTED);
+                    mentionRepository.save(mention);
+                } else {
+                    entity = identityResolutionService.findOrCreateEntityByName("Nieznana osoba " + (i + 1));
+                    mention.setEntity(entity);
+                    mention.setStatus(MentionStatus.SUGGESTED);
+                    mentionRepository.save(mention);
+                }
             } else if (existingMatch.isPresent() && existingMatch.get().score() >= matchThreshold) {
                 entity = existingMatch.get().entity();
             } else {
@@ -97,22 +117,14 @@ public class FaceIdentityService {
                         .filePath(filePath)
                         .label(entity.getDisplayName())
                         .confidence(BigDecimal.valueOf(face.detScore()))
-                        .status(MentionStatus.CONFIRMED)
+                        .status(MentionStatus.SUGGESTED)
                         .entity(entity)
                         .build();
                 mention = mentionRepository.save(mention);
             }
 
-            if (mention != null && existingMatch.isPresent()) {
-                KnowledgeEntity matchedEntity = existingMatch.get().entity();
-                if (!matchedEntity.getId().equals(entity.getId())) {
-                    identityResolutionService.suggestFaceMatch(mention, matchedEntity, existingMatch.get().score());
-                }
-            }
-
-            if (mention != null) {
+            if (mention != null && mention.getEntity() == null) {
                 mention.setEntity(entity);
-                mention.setStatus(MentionStatus.CONFIRMED);
                 mentionRepository.save(mention);
             }
 
