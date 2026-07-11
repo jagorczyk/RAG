@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Roadmap GraphRAG
+    url: https://github.com/jagorczyk/RAG/blob/feature/graphrag/docs/roadmap.md
+    about: Fazy A–E, sprinty, metryki sukcesu
   - name: Backlog GraphRAG
     url: https://github.com/jagorczyk/RAG/blob/feature/graphrag/docs/issues-backlog.md
     about: Pełny plan zadań ADD / IMPROVE / REMOVE

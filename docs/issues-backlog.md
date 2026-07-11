@@ -2,7 +2,35 @@
 
 Plan zadań pogrupowany na **DODAJ** (nowe funkcje), **POPRAW** (bugi i usprawnienia), **USUŃ** (sprzątanie).
 
-Stan na podstawie kodu i `docs/graphrag-plan.md`. Większość faz GraphRAG (1–5) jest wdrożona; największe luki to tag encji przy uploadzie, testy, README i sprzątanie techniczne.
+**Roadmap:** [`docs/roadmap.md`](roadmap.md) — fazy A–E, sprinty, metryki sukcesu.
+
+Stan na podstawie kodu i `docs/graphrag-plan.md`. Większość faz GraphRAG (1–5) jest wdrożona.
+
+---
+
+## Zrobione (2026-07-11)
+
+| Issue | Opis | Commit |
+|-------|------|--------|
+| #22 | `entityTag` przy uploadzie | `70a3d84` |
+| #6 | Auto-merge po labelu | `70a3d84` |
+| #5 | GET `/entities` side-effect | `70a3d84` |
+| #13, #14 | Martwy kod IngestionService | `70a3d84` |
+| #16 | `.gitignore` | `70a3d84` |
+| — | Relacje „obok” + źródła z grafu | `617552e` |
+| — | Odmiany imion PL (Bartka→Bartek) | `037f762` |
+| — | Kontekst osób na pliku + follow-up Igor | `09b9b0d` |
+| — | Rozszerzone zwroty QueryRouter | `9f1584a` |
+
+---
+
+## NOWE — Roadmap Faza A/B
+
+| Issue | Tytuł | Priorytet | Opis |
+|-------|-------|-----------|------|
+| #23 | Graf first dla pytań z `@plik` | **Wysoki** | Pytanie `@zdjęcie` idzie przez graf (osoby, fakty) + vector jako uzupełnienie, nie sam vector RAG. |
+| #24 | Face-match → CONFIRMED przy ingestii | **Wysoki** | Po rozpoznaniu twarzy auto-link do encji ze statusem CONFIRMED i aliasem. |
+| #25 | UI wymuszonego tagu/twarzy przy uploadzie | Średni | Upload bez tożsamości → prompt „kto to?" lub auto-sugestia z face-service. |
 
 ---
 
@@ -24,10 +52,10 @@ Stan na podstawie kodu i `docs/graphrag-plan.md`. Większość faz GraphRAG (1�
 
 | # | Tytuł | Priorytet | Opis |
 |---|-------|-----------|------|
-| P1 | **BUG: `entityTag` przy uploadzie nie działa** | **Wysoki** | Frontend wysyła `?entityTag=`, UI ma pole, ale `FolderController` nie odbiera parametru, `IngestionService` nie ustawia `FileEntity.entityTag`. Ścieżka L1 w `IdentityResolutionService` nigdy się nie wykonuje. |
+| P1 | **BUG: `entityTag` przy uploadzie nie działa** | **Wysoki** | ✅ Done `70a3d84` |
 | P2 | Wydajność `IdentityResolutionService` (O(n²) + LLM) | Wysoki | `findAll()` mentions + LLM per para. Dodać pre-filtr kandydatów i cache wyników matchera (plan Faza 3). |
-| P3 | Efekt uboczny na GET `/api/knowledge/entities` | Średni | `consolidateDuplicateEntities()` przy każdym odczycie + N+1. Przenieść merge tylko do `/entities/consolidate-duplicates`. |
-| P4 | Ryzyko błędnego auto-merge po samym labelu | Wysoki | Identyczny label → score 0.95 bez weryfikacji twarzy. Narusza kryterium akceptacyjne #2 planu. Wymagać potwierdzenia gdy brak zgodności twarzy. |
+| P3 | Efekt uboczny na GET `/api/knowledge/entities` | Średni | ✅ Done `70a3d84` |
+| P4 | Ryzyko błędnego auto-merge po samym labelu | Wysoki | ✅ Done `70a3d84` |
 | P5 | Ujednolicić progi face-service i dokumentację | Niski | `face-service/README.md` vs `application.properties` (`0.42` vs `0.55`). |
 | P6 | Brakujące testy jednostkowe (Faza 7) | Wysoki | Brak testów: `StructuredVisionExtractor`, `IdentityResolutionService`, `GraphQueryService`, `ChatEntityReferenceService`, `PolishNameMatcher`. E2E: delete pliku → cascade. |
 | P7 | Zaktualizować `README.md` | Średni | Rozjazdy: modele (Groq vs Ollama), brak GraphRAG/face-service/knowledge API, błędny endpoint `clear` vs `clear-all`. |
@@ -42,10 +70,10 @@ Stan na podstawie kodu i `docs/graphrag-plan.md`. Większość faz GraphRAG (1�
 
 | # | Tytuł | Priorytet | Opis |
 |---|-------|-----------|------|
-| R1 | Martwy kod w `IngestionService` | Średni | Nieużywane `VISION_PROMPT`, `visionModel` — zastąpione przez `StructuredVisionExtractor`. Usunąć pole, import, property `vision.prompt`. |
-| R2 | Zdublowane importy w `IngestionService` | Niski | Duplikaty importów (~linie 45–71). |
+| R1 | Martwy kod w `IngestionService` | Średni | ✅ Done `70a3d84` |
+| R2 | Zdublowane importy w `IngestionService` | Niski | ✅ Done `70a3d84` |
 | R3 | Ujednolicić endpoint `DELETE /api/data/clear` | Średni | Tylko `TRUNCATE embeddings`, zostawia osierocone `files` i graf. Realne czyszczenie: `/api/data/clear-all`. Usunąć lub rozgraniczyć. |
-| R4 | Rozszerzyć `.gitignore` | Wysoki | `backend/target/`, `frontend/.next/`, artefakty LaTeX, PDF-y lokalne, `.impeccable/`. |
+| R4 | Rozszerzyć `.gitignore` | Wysoki | ✅ Done `70a3d84` |
 | R5 | Usunąć przypadkowe pliki z repo | Średni | `fix_listings.py`, `revert_listings.py`, `test-data/img.b64`, duplikaty PDF — zweryfikować i wyrzucić lub przenieść poza repo. |
 | R6 | `FaceRecognitionClient.isHealthy()` — użyć lub usunąć | Niski | Martwa metoda; powiązać z A3. |
 
@@ -53,11 +81,23 @@ Stan na podstawie kodu i `docs/graphrag-plan.md`. Większość faz GraphRAG (1�
 
 ## Sugerowana kolejność (sprinty)
 
-### Sprint 1 — krytyczne bugi
-- P1 entityTag
-- P4 auto-merge
-- P6 testy krytycznej ścieżki
-- R4 .gitignore
+### Sprint 5 — graf first (następny, patrz roadmap.md)
+- #23 graf first dla `@plik`
+- #24 face-match → CONFIRMED
+- A1 GRAPH_FACT w UI (#18)
+- P2 wydajność identity (#4)
+
+### Sprint 6 — pewność danych
+- #25 UI tag/twarz przy uploadzie
+- P6 testy GraphQueryService + E2E
+- A4 osierocone encje (#2)
+- P7 README (#9)
+
+### Sprint 1 — krytyczne bugi ✅ DONE
+- P1 entityTag ✅
+- P4 auto-merge ✅
+- P6 testy krytycznej ścieżki (częściowo)
+- R4 .gitignore ✅
 
 ### Sprint 2 — jakość GraphRAG
 - P2 wydajność identity
@@ -90,3 +130,11 @@ gh auth login
 ```
 
 Skrypt tworzy etykiety (`add`, `improve`, `remove`, `graphrag`, `bug`, `tech-debt`) i wszystkie issue z tego backlogu.
+
+Dla zadań roadmap Sprint 5–6:
+
+```powershell
+.\scripts\create-roadmap-issues.ps1
+```
+
+(Utworzone: #23, #24, #25)
