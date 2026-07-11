@@ -33,6 +33,7 @@ class QueryRouterTest {
     @ParameterizedTest
     @CsvSource({
             "kto siedzi obok Igora?, ENTITY_NEIGHBOR",
+            "kto siedzi obok Bartka?, ENTITY_NEIGHBOR",
             "kto stoi przy Bartku?, ENTITY_NEIGHBOR",
             "kto jest po lewej od Pati?, ENTITY_SPATIAL_LEFT",
             "kto jest z lewej Igora?, ENTITY_SPATIAL_LEFT",

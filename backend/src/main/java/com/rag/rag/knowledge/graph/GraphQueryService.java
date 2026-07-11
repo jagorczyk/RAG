@@ -373,10 +373,9 @@ public class GraphQueryService {
         }
 
         String token = matcher.group(1);
+        String canonicalAnchor = findEntityNameInQuestion(question).orElse(token);
         Set<String> anchorVariants = new LinkedHashSet<>();
-        findEntityNameInQuestion(question).ifPresent(name ->
-                anchorVariants.addAll(PolishNameMatcher.generateVariants(name))
-        );
+        anchorVariants.addAll(PolishNameMatcher.generateVariants(canonicalAnchor));
         anchorVariants.addAll(PolishNameMatcher.generateVariants(token));
 
         StringBuilder contextBuilder = new StringBuilder("[Relacje z grafu wiedzy]\n");
@@ -386,21 +385,21 @@ public class GraphQueryService {
         for (String variant : anchorVariants) {
             for (Fact fact : getRelationFactsForEntity(variant, relationAction)) {
                 String neighborName = resolveObjectName(fact);
-                if (neighborName.isBlank() || isSamePersonAsAnchor(variant, neighborName, fact.getObject())) {
+                if (neighborName.isBlank() || isSamePersonAsAnchor(canonicalAnchor, neighborName, fact.getObject())) {
                     continue;
                 }
                 foundFacts |= appendRelationLine(
-                        contextBuilder, seenLines, neighborName, relationPhrase, variant, fact.getFilePath()
+                        contextBuilder, seenLines, neighborName, relationPhrase, canonicalAnchor, fact.getFilePath()
                 );
             }
 
             for (Fact fact : getRelationFactsWhereObjectMatches(variant, relationAction)) {
                 String neighborName = resolveMentionName(fact.getMention());
-                if (neighborName.isBlank() || isSamePersonAsAnchor(variant, neighborName, fact.getMention().getLabel())) {
+                if (neighborName.isBlank() || isSamePersonAsAnchor(canonicalAnchor, neighborName, fact.getMention().getLabel())) {
                     continue;
                 }
                 foundFacts |= appendRelationLine(
-                        contextBuilder, seenLines, neighborName, relationPhrase, variant, fact.getFilePath()
+                        contextBuilder, seenLines, neighborName, relationPhrase, canonicalAnchor, fact.getFilePath()
                 );
             }
         }

@@ -53,6 +53,7 @@ public final class PolishNameMatcher {
             return variants;
         }
         variants.add(normalized);
+        addPolishNameInflections(normalized, variants);
 
         for (String suffix : SUFFIXES) {
             if (normalized.endsWith(suffix) && normalized.length() > suffix.length() + 2) {
@@ -60,6 +61,40 @@ public final class PolishNameMatcher {
             }
         }
         return variants;
+    }
+
+    private static void addPolishNameInflections(String normalized, Set<String> variants) {
+        if (normalized.endsWith("ek") && normalized.length() > 4) {
+            String stem = normalized.substring(0, normalized.length() - 2);
+            variants.add(stem + "ka");
+            variants.add(stem + "ku");
+            variants.add(stem + "kiem");
+            variants.add(stem + "kowi");
+            variants.add(stem + "ki");
+            return;
+        }
+
+        if (normalized.endsWith("ka") && normalized.length() > 4) {
+            variants.add(normalized.substring(0, normalized.length() - 2) + "ek");
+        }
+        if (normalized.endsWith("ku") && normalized.length() > 4) {
+            variants.add(normalized.substring(0, normalized.length() - 2) + "ek");
+        }
+        if (normalized.endsWith("kiem") && normalized.length() > 5) {
+            variants.add(normalized.substring(0, normalized.length() - 4) + "ek");
+        }
+        if (normalized.endsWith("kowi") && normalized.length() > 5) {
+            variants.add(normalized.substring(0, normalized.length() - 4) + "ek");
+        }
+
+        if (normalized.endsWith("a") && normalized.length() > 3 && !normalized.endsWith("ka")) {
+            variants.add(normalized.substring(0, normalized.length() - 1));
+        }
+        if (!normalized.endsWith("a") && !normalized.endsWith("ek") && normalized.length() > 3) {
+            variants.add(normalized + "a");
+            variants.add(normalized + "em");
+            variants.add(normalized + "u");
+        }
     }
 
     public static List<String> extractTokens(String question) {
