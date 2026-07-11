@@ -26,9 +26,11 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class GraphQueryService {
 
-    private static final Pattern NEXT_TO_ENTITY_PATTERN = Pattern.compile("(?i).*obok\\s+([\\p{L}0-9_-]+).*");
+    private static final Pattern NEXT_TO_ENTITY_PATTERN = Pattern.compile(
+            "(?i).*(?:obok|przy)\\s+([\\p{L}0-9_-]+).*"
+    );
     private static final Pattern SPATIAL_ENTITY_PATTERN = Pattern.compile(
-            "(?i).*(?:po lewej|po lewej stronie|po prawej|po prawej stronie)\\s+(?:od|strony)?\\s*([\\p{L}0-9_-]+).*"
+            "(?i).*(?:po lewej|po lewej stronie|z lewej(?: strony)?|na lewo|po prawej|po prawej stronie|z prawej(?: strony)?|na prawo)\\s*(?:od|strony)?\\s*([\\p{L}0-9_-]+).*"
     );
 
     private final EntityManager entityManager;
@@ -295,7 +297,8 @@ public class GraphQueryService {
     @Transactional(readOnly = true)
     public List<CoOccurrenceRow> getCoOccurringPeopleForEntity(String entityNameOrAlias) {
         String sql = """
-            SELECT DISTINCT em2.file_path, em2.label, e2.display_name
+            SELECT DISTINCT em2.file_path, em2.label, e2.display_name,
+                   COALESCE(e2.display_name, em2.label) AS sort_name
             FROM entity_mentions em1
             LEFT JOIN entities e1 ON em1.entity_id = e1.id
             LEFT JOIN entity_aliases ea1 ON ea1.entity_id = e1.id
@@ -304,7 +307,7 @@ public class GraphQueryService {
             WHERE em1.status IN ('CONFIRMED', 'SUGGESTED')
               AND em2.status IN ('CONFIRMED', 'SUGGESTED')
               AND (e1.display_name ILIKE :name OR ea1.alias ILIKE :name OR em1.label ILIKE :name)
-            ORDER BY em2.file_path, COALESCE(e2.display_name, em2.label)
+            ORDER BY em2.file_path, sort_name
             """;
 
         @SuppressWarnings("unchecked")

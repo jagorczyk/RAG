@@ -17,15 +17,26 @@ public final class PolishNameMatcher {
     private static final Pattern WORD_PATTERN = Pattern.compile("[\\p{L}0-9_-]+");
 
     private static final Set<String> STOP_WORDS = Set.of(
-            "kto", "jest", "kim", "co", "robi", "robił", "robiła", "gdzie", "w", "na", "których", "ktorych",
+            "kto", "jest", "kim", "co", "robi", "robił", "robiła", "robią", "robia", "gdzie", "w", "na", "których", "ktorych",
             "zdjęciach", "zdjeciach", "zdjęciu", "zdjeciu", "zdjęcie", "zdjecie", "zdjęci", "zdjeci",
-            "osoba", "postać", "postac", "kobieta", "mężczyzna", "mezczyzna", "ten", "ta", "to", "za",
-            "obok", "lewej", "prawej", "stronie", "od", "siedzi", "stoi", "występuje", "wystepuje",
-            "jakich", "plik", "plikach", "foto", "obraz", "obrazach", "powiedz", "opisz", "wiesz",
-            "dokumentach", "oraz", "i", "a", "czy", "jak", "jaka", "jaki", "jakie", "która", "ktory",
+            "osoba", "osoby", "osób", "osob", "postać", "postac", "postaci", "kobieta", "mężczyzna", "mezczyzna",
+            "dziewczyna", "chłopak", "chlopak", "pan", "pani", "gość", "gosc", "twarz", "twarze",
+            "ten", "ta", "to", "za", "obok", "przy", "lewej", "prawej", "stronie", "od", "siedzi", "stoi",
+            "występuje", "wystepuje", "pojawia", "widać", "widac", "jakich", "plik", "plikach", "foto", "obraz", "obrazach",
+            "powiedz", "opisz", "wiesz", "opowiedz", "przedstaw", "scharakteryzuj", "dokumentach", "materiałach", "materialach",
+            "folderach", "katalogach", "oraz", "i", "a", "czy", "jak", "jaka", "jaki", "jakie", "która", "ktory",
             "które", "ktore", "się", "sie", "mnie", "mi", "ci", "nie", "tak", "tej", "tego", "tym",
-            "tych", "jego", "jej", "ich", "nas", "was", "być", "byc", "był", "była", "bylo", "było",
-            "lista", "znajduje", "znajdują", "znajduja", "którym", "ktorym", "którego", "ktorego"
+            "tych", "jego", "jej", "ich", "nas", "was", "być", "byc", "był", "była", "byli", "były", "bylo", "było",
+            "lista", "znajduje", "znajdują", "znajduja", "którym", "ktorym", "którego", "ktorego",
+            "razem", "wspólnie", "wspolnie", "towarzystwie", "towarzyszy", "jeszcze", "poza", "oprócz", "oprocz",
+            "wymień", "wymien", "ilu", "ile", "ludzi", "pokaż", "pokaz", "wyświetl", "wyswietl",
+            "informacje", "informacja", "dane", "charakterystyka", "wygląda", "wyglada", "znajdę", "znajde",
+            "można", "mozna", "zobaczyć", "zobaczyc", "rozpoznaj", "zidentyfikuj", "identyfikuj", "imię", "imie", "imiona",
+            "nazwisko", "nazwiska", "ludzie", "człowiek", "czlowiek", "znajomy", "znajomi", "kolega", "koleżanka",
+            "goście", "gosci", "sąsiad", "sasiad", "najbliżej", "najblizej", "pobliżu", "poblizu", "lewo", "prawo",
+            "porabia", "wykonuje", "wykonywał", "wykonywala", "zajmuje", "zajmował", "zajmowal", "zajmowała", "zajmowala",
+            "aktywności", "aktywnosci", "czynności", "czynnosci", "aktualnie", "pracuje", "fotografuje", "pozuje",
+            "widzian", "widziana", "widziany", "parze", "parach", "wszyscy", "którymi", "ktorymi", "nazywają", "nazywaja"
     );
 
     private PolishNameMatcher() {

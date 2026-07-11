@@ -24,10 +24,10 @@ import java.util.regex.Pattern;
 public class ChatEntityReferenceService {
 
     private static final Pattern REFERENCE_PATTERN = Pattern.compile(
-            "(?i).*(ta kobieta|ta kobietę|ten mężczyzna|ten mezczyzna|ta osoba|ta postać|ta postac|ten mężczyznę|ten mezczyzne).*"
+            "(?i).*(ta kobieta|ta kobietę|ta kobiete|ten mężczyzna|ten mezczyzna|ten mężczyznę|ten mezczyzne|ta osoba|ta postać|ta postac|ta dziewczyna|ten chłopak|ten chlopak|ta pani|ten pan|ten gość|ten gosc|ta twarz|ta osoba na zdjęciu|ta osoba na zdjeciu|ten na zdjęciu|ten na zdjeciu|ta po lewej|ten po prawej).*"
     );
-    private static final Pattern FEMALE_HINT = Pattern.compile("(?i).*(kobieta|kobietę|kobiete|dziewczyna).*");
-    private static final Pattern MALE_HINT = Pattern.compile("(?i).*(mężczyzna|mezczyzna|mężczyznę|mezczyzne|chłopak|chlopak).*");
+    private static final Pattern FEMALE_HINT = Pattern.compile("(?i).*(kobieta|kobietę|kobiete|dziewczyna|pani).*");
+    private static final Pattern MALE_HINT = Pattern.compile("(?i).*(mężczyzna|mezczyzna|mężczyznę|mezczyzne|chłopak|chlopak|pan|gość|gosc).*");
 
     private final ChatMessageRepository chatMessageRepository;
     private final EntityMentionRepository mentionRepository;

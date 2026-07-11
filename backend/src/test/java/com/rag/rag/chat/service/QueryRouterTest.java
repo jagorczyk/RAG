@@ -4,6 +4,8 @@ import com.rag.rag.knowledge.graph.GraphQueryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -28,76 +30,42 @@ class QueryRouterTest {
         lenient().when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.empty());
     }
 
-    @Test
-    void shouldClassifyNeighborQuestion() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_NEIGHBOR,
-                queryRouter.classify("kto siedzi obok Igora?")
-        );
-    }
-
-    @Test
-    void shouldClassifySpatialLeftQuestion() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_SPATIAL_LEFT,
-                queryRouter.classify("kto jest po lewej od Pati?")
-        );
-    }
-
-    @Test
-    void shouldClassifySpatialRightQuestion() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_SPATIAL_RIGHT,
-                queryRouter.classify("kto jest po prawej od Igora?")
-        );
-    }
-
-    @Test
-    void shouldClassifyCoOccurrenceQuestionWithWhom() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE,
-                queryRouter.classify("z kim Bartek jest na zdjęciach?")
-        );
-    }
-
-    @Test
-    void shouldClassifyCoOccurrenceQuestionWithNames() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE,
-                queryRouter.classify("jak mają na imie osoby z którymi Bartek jest na zdjęciach?")
-        );
-    }
-
-    @Test
-    void shouldClassifyFileListQuestion() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_FILES,
-                queryRouter.classify("na których zdjęciach jest Igor?")
-        );
-    }
-
-    @Test
-    void shouldClassifyReferenceQuestion() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_DESCRIPTION,
-                queryRouter.classify("co to za kobieta?")
-        );
-    }
-
-    @Test
-    void shouldClassifyNamedActivityQuestion() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_ACTIVITY,
-                queryRouter.classify("co robi Igor?")
-        );
-    }
-
-    @Test
-    void shouldClassifyNamedIdentityQuestion() {
-        assertEquals(
-                QueryRouter.QueryRoute.ENTITY_DESCRIPTION,
-                queryRouter.classify("kim jest Olek?")
-        );
+    @ParameterizedTest
+    @CsvSource({
+            "kto siedzi obok Igora?, ENTITY_NEIGHBOR",
+            "kto stoi przy Bartku?, ENTITY_NEIGHBOR",
+            "kto jest po lewej od Pati?, ENTITY_SPATIAL_LEFT",
+            "kto jest z lewej Igora?, ENTITY_SPATIAL_LEFT",
+            "kto na lewo od Bartka?, ENTITY_SPATIAL_LEFT",
+            "kto jest po prawej od Igora?, ENTITY_SPATIAL_RIGHT",
+            "kto jest z prawej Bartka?, ENTITY_SPATIAL_RIGHT",
+            "kto na prawo od Pati?, ENTITY_SPATIAL_RIGHT",
+            "z kim Bartek jest na zdjęciach?, ENTITY_CO_OCCURRENCE",
+            "z kim Bartek znajduje się na zdjęciach?, ENTITY_CO_OCCURRENCE",
+            "jak mają na imie osoby z którymi Bartek jest na zdjęciach?, ENTITY_CO_OCCURRENCE",
+            "kto jeszcze jest na zdjęciu z Igorem?, ENTITY_CO_OCCURRENCE",
+            "w towarzystwie kogo jest Olek?, ENTITY_CO_OCCURRENCE",
+            "razem z kim występuje Pati?, ENTITY_CO_OCCURRENCE",
+            "obok kogo jest Bartek na zdjęciach?, ENTITY_CO_OCCURRENCE",
+            "na których zdjęciach jest Igor?, ENTITY_FILES",
+            "gdzie się pojawia Bartek?, ENTITY_FILES",
+            "w jakich dokumentach jest Pati?, ENTITY_FILES",
+            "na ilu zdjęciach jest Olek?, ENTITY_FILES",
+            "co to za kobieta?, ENTITY_DESCRIPTION",
+            "kim jest Olek?, ENTITY_DESCRIPTION",
+            "opowiedz mi o Igorze, ENTITY_DESCRIPTION",
+            "scharakteryzuj postać Bartka, ENTITY_DESCRIPTION",
+            "ta dziewczyna po lewej, ENTITY_DESCRIPTION",
+            "co robi Igor?, ENTITY_ACTIVITY",
+            "czym się zajmował Bartek?, ENTITY_ACTIVITY",
+            "co porabia Pati?, ENTITY_ACTIVITY",
+            "kto jest na zdjęciach?, ENTITY_LIST",
+            "wymień osoby na zdjęciu, ENTITY_LIST",
+            "ilu ludzi widać na foto?, ENTITY_LIST",
+            "jakie osoby występują na zdjęciach?, ENTITY_LIST"
+    })
+    void shouldClassifyExpandedPhrases(String question, QueryRouter.QueryRoute expectedRoute) {
+        assertEquals(expectedRoute, queryRouter.classify(question));
     }
 
     @Test
@@ -108,6 +76,14 @@ class QueryRouterTest {
         assertEquals(
                 QueryRouter.QueryRoute.HYBRID,
                 queryRouter.classify("gdzie był Pati?")
+        );
+    }
+
+    @Test
+    void shouldClassifyGraphRelatedQuestionAsHybrid() {
+        assertEquals(
+                QueryRouter.QueryRoute.HYBRID,
+                queryRouter.classify("rozpoznaj twarze na zdjęciu")
         );
     }
 }
