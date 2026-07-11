@@ -333,6 +333,42 @@ class ChatInteractionServiceTest {
         verify(graphQueryService).buildCoOccurrenceContextForQuestion(request.message());
     }
 
+    @Test
+    void shouldUseGraphOnlySourcesForNeighborQuestion() {
+        MessageRequest request = new MessageRequest("kto siedzi obok Bartka na zdjęciu");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_NEIGHBOR);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Bartek"));
+        String graphContext = """
+                [Relacje z grafu wiedzy]
+                - Olek siedzi obok Bartek | plik: dir://pati/20230526_232510.jpg
+                - Pati siedzi obok Bartek | plik: dir://pati/20230526_232510.jpg
+                """;
+        when(graphQueryService.buildNeighborContextForQuestion(any())).thenReturn(graphContext);
+
+        Result<String> aiResult = Result.<String>builder()
+                .content("Obok Bartka siedzą Olek i Pati.")
+                .build();
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
+
+        SourceDto bathroomPhoto = new SourceDto(
+                "dir://pati/20230526_232510.jpg", "20230526_232510.jpg", 1.0, null, "IMAGE"
+        );
+        SourceDto irrelevantPhoto = new SourceDto(
+                "dir://pati/20220513_165118.jpg", "20220513_165118.jpg", 0.9, null, "IMAGE"
+        );
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(irrelevantPhoto));
+        when(ingestionService.createSourceDto("dir://pati/20230526_232510.jpg", "20230526_232510.jpg", 1.0))
+                .thenReturn(bathroomPhoto);
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Obok Bartka siedzą Olek i Pati.", response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals("20230526_232510.jpg", response.sources().get(0).fileName());
+        verify(graphQueryService).buildNeighborContextForQuestion(request.message());
+    }
+
     private static Content retrievalContent(String path, String filename, double score, String text) {
         return Content.from(TextSegment.from(text, Metadata.from(Map.of(
                 "path", path,

@@ -183,7 +183,13 @@ public class GraphQueryService {
 
     @Transactional(readOnly = true)
     public String buildNeighborContextForQuestion(String question) {
-        return buildDirectedRelationContext(question, NEXT_TO_ENTITY_PATTERN, RelationConstants.NEXT_TO, "siedzi obok");
+        String relationContext = buildDirectedRelationContext(
+                question, NEXT_TO_ENTITY_PATTERN, RelationConstants.NEXT_TO, "siedzi obok"
+        );
+        if (!relationContext.isEmpty()) {
+            return relationContext;
+        }
+        return buildCoOccurrenceAsNeighborContext(question);
     }
 
     @Transactional(readOnly = true)
@@ -367,27 +373,139 @@ public class GraphQueryService {
         }
 
         String token = matcher.group(1);
+        Set<String> anchorVariants = new LinkedHashSet<>();
+        findEntityNameInQuestion(question).ifPresent(name ->
+                anchorVariants.addAll(PolishNameMatcher.generateVariants(name))
+        );
+        anchorVariants.addAll(PolishNameMatcher.generateVariants(token));
+
         StringBuilder contextBuilder = new StringBuilder("[Relacje z grafu wiedzy]\n");
+        Set<String> seenLines = new LinkedHashSet<>();
         boolean foundFacts = false;
 
-        for (String variant : PolishNameMatcher.generateVariants(token)) {
-            List<Fact> relationFacts = getRelationFactsForEntity(variant, relationAction);
-            for (Fact fact : relationFacts) {
-                foundFacts = true;
-                String subjectName = resolveMentionName(fact.getMention());
-                contextBuilder.append("- ")
-                        .append(subjectName)
-                        .append(" ")
-                        .append(relationPhrase)
-                        .append(" ")
-                        .append(fact.getObject())
-                        .append(" | plik: ")
-                        .append(fact.getFilePath())
-                        .append("\n");
+        for (String variant : anchorVariants) {
+            for (Fact fact : getRelationFactsForEntity(variant, relationAction)) {
+                String neighborName = resolveObjectName(fact);
+                if (neighborName.isBlank() || isSamePersonAsAnchor(variant, neighborName, fact.getObject())) {
+                    continue;
+                }
+                foundFacts |= appendRelationLine(
+                        contextBuilder, seenLines, neighborName, relationPhrase, variant, fact.getFilePath()
+                );
+            }
+
+            for (Fact fact : getRelationFactsWhereObjectMatches(variant, relationAction)) {
+                String neighborName = resolveMentionName(fact.getMention());
+                if (neighborName.isBlank() || isSamePersonAsAnchor(variant, neighborName, fact.getMention().getLabel())) {
+                    continue;
+                }
+                foundFacts |= appendRelationLine(
+                        contextBuilder, seenLines, neighborName, relationPhrase, variant, fact.getFilePath()
+                );
             }
         }
 
         return foundFacts ? contextBuilder.toString() : "";
+    }
+
+    private boolean appendRelationLine(
+            StringBuilder contextBuilder,
+            Set<String> seenLines,
+            String neighborName,
+            String relationPhrase,
+            String anchorVariant,
+            String filePath
+    ) {
+        String line = "- "
+                + neighborName
+                + " "
+                + relationPhrase
+                + " "
+                + anchorVariant
+                + " | plik: "
+                + filePath
+                + "\n";
+        if (!seenLines.add(line)) {
+            return false;
+        }
+        contextBuilder.append(line);
+        return true;
+    }
+
+    private String buildCoOccurrenceAsNeighborContext(String question) {
+        Optional<String> entityName = findEntityNameInQuestion(question);
+        if (entityName.isEmpty()) {
+            entityName = resolveEntityNameFromQuestion(question);
+        }
+        if (entityName.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder contextBuilder = new StringBuilder("[Relacje z grafu wiedzy]\n");
+        Map<String, Set<String>> peopleByFile = new LinkedHashMap<>();
+        Set<String> processedRows = new LinkedHashSet<>();
+
+        for (String variant : PolishNameMatcher.generateVariants(entityName.get())) {
+            for (CoOccurrenceRow row : getCoOccurringPeopleForEntity(variant)) {
+                String personName = resolveCoOccurrenceName(row);
+                if (isSamePersonAsAnchor(entityName.get(), personName, row.label())) {
+                    continue;
+                }
+                String rowKey = row.filePath() + "|" + personName.toLowerCase(Locale.ROOT);
+                if (!processedRows.add(rowKey)) {
+                    continue;
+                }
+                peopleByFile.computeIfAbsent(row.filePath(), ignored -> new LinkedHashSet<>()).add(personName);
+            }
+        }
+
+        if (peopleByFile.isEmpty()) {
+            return "";
+        }
+
+        for (Map.Entry<String, Set<String>> entry : peopleByFile.entrySet()) {
+            for (String personName : entry.getValue()) {
+                contextBuilder.append("- ")
+                        .append(personName)
+                        .append(" siedzi obok ")
+                        .append(entityName.get())
+                        .append(" | plik: ")
+                        .append(entry.getKey())
+                        .append("\n");
+            }
+        }
+
+        return contextBuilder.toString();
+    }
+
+    private String resolveObjectName(Fact fact) {
+        if (fact.getObject() == null || fact.getObject().isBlank()) {
+            return "";
+        }
+        String objectLabel = fact.getObject().trim();
+
+        String sql = """
+            SELECT COALESCE(e.display_name, em.label)
+            FROM entity_mentions em
+            LEFT JOIN entities e ON em.entity_id = e.id
+            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+            WHERE em.file_path = :filePath
+              AND em.status IN ('CONFIRMED', 'SUGGESTED')
+              AND (em.label ILIKE :label OR e.display_name ILIKE :label OR ea.alias ILIKE :label)
+            ORDER BY CASE WHEN e.id IS NOT NULL THEN 0 ELSE 1 END
+            LIMIT 1
+            """;
+
+        @SuppressWarnings("unchecked")
+        List<String> rows = entityManager.createNativeQuery(sql)
+                .setParameter("filePath", fact.getFilePath())
+                .setParameter("label", objectLabel)
+                .getResultList();
+
+        if (!rows.isEmpty() && rows.get(0) != null && !rows.get(0).isBlank()) {
+            return rows.get(0);
+        }
+        return objectLabel;
     }
 
     private String buildSpatialSideContext(String anchorName, boolean leftSideQuestion) {

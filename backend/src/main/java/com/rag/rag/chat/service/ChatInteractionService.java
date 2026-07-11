@@ -149,7 +149,9 @@ public class ChatInteractionService {
             List<SourceDto> retrievalPool = !contextRetrieval.isEmpty() ? contextRetrieval : retrievalSources;
 
             List<SourceDto> candidates;
-            if (isPureFileListQuestion(route, contextKeywords)) {
+            if (isGraphOnlySourceRoute(route, contextKeywords)) {
+                candidates = dedupeSources(graphSources);
+            } else if (isPureFileListQuestion(route, contextKeywords)) {
                 candidates = dedupeSources(graphSources);
             } else {
                 candidates = narrowWithRetrieval(graphSources, retrievalPool);
@@ -368,6 +370,16 @@ public class ChatInteractionService {
 
     private boolean isFileListRoute(QueryRouter.QueryRoute route) {
         return route == QueryRouter.QueryRoute.ENTITY_FILES || route == QueryRouter.QueryRoute.ENTITY_LIST;
+    }
+
+    private boolean isGraphOnlySourceRoute(QueryRouter.QueryRoute route, List<String> contextKeywords) {
+        if (route == QueryRouter.QueryRoute.ENTITY_NEIGHBOR
+                || route == QueryRouter.QueryRoute.ENTITY_SPATIAL_LEFT
+                || route == QueryRouter.QueryRoute.ENTITY_SPATIAL_RIGHT
+                || route == QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE) {
+            return true;
+        }
+        return isPureFileListQuestion(route, contextKeywords);
     }
 
     private boolean isPureFileListQuestion(QueryRouter.QueryRoute route, List<String> contextKeywords) {

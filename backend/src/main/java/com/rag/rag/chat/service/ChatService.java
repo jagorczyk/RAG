@@ -32,6 +32,9 @@ public interface ChatService {
        "Nie znaleziono informacji w dokumentach."
     5. Be concise and to the point.
     6. If identity is uncertain, state it clearly.
+    7. When [Relacje z grafu wiedzy] lists people by name, answer with those exact names.
+       Never use vague phrases like "inna osoba", "ktoś" or "druga osoba" when names are provided.
+    8. For "kto siedzi obok X" questions, list every named person from the relations section.
 
     FORMATTING RULES:
     - Go straight to the answer, no intro phrases.
