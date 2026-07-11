@@ -35,6 +35,12 @@ import { LoadingBar } from "@/components/ui/LoadingBar";
 import { ViewModeToggle } from "@/components/ui/ViewModeToggle";
 import { FileItemActions } from "@/components/folders/FileItemActions";
 import { useViewMode } from "@/hooks/useViewMode";
+import {
+  UploadIdentityPrompt,
+  type IdentityReviewFile,
+} from "@/components/knowledge/UploadIdentityPrompt";
+import { buildIdentityReviewQueue } from "@/lib/upload-identity";
+import type { UploadResult } from "@/lib/api";
 
 interface FolderDetailPageProps {
   params: Promise<{ id: string }>;
@@ -54,6 +60,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
   const [previewFile, setPreviewFile] = useState<FilePreview | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showMoveModal, setShowMoveModal] = useState(false);
+  const [identityReviewFiles, setIdentityReviewFiles] = useState<IdentityReviewFile[]>([]);
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -125,8 +132,11 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
     });
 
     try {
+      const uploadResults: UploadResult[] = [];
+      const skipIdentityPrompt = entityTag.trim().length > 0;
+
       for (let i = 0; i < filesToUpload.length; i++) {
-        await uploadFileToFolderWithProgress(
+        const result = await uploadFileToFolderWithProgress(
           id,
           filesToUpload[i],
           i,
@@ -134,6 +144,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
           setIngestionProgress,
           entityTag
         );
+        uploadResults.push(result);
       }
 
       setIngestionProgress({
@@ -146,6 +157,21 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
 
       const folderFiles = await getFilesInFolder(folder.name);
       setFiles(folderFiles);
+
+      if (!skipIdentityPrompt) {
+        const imageUrlByPath = new Map(
+          folderFiles
+            .filter((file) => file.type.includes("image") && file.url)
+            .map((file) => [file.id, file.url] as const)
+        );
+        const reviewQueue = await buildIdentityReviewQueue(
+          uploadResults,
+          imageUrlByPath
+        );
+        if (reviewQueue.length > 0) {
+          setIdentityReviewFiles(reviewQueue);
+        }
+      }
     } catch (error) {
       console.error("Upload failed", error);
       alert("Wystąpił błąd podczas wgrywania pliku.");
@@ -325,7 +351,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
               <ViewModeToggle value={viewMode} onChange={setViewMode} />
               <input
                 type="text"
-                placeholder="Tag (np. Osoba A)"
+                placeholder="Tag osoby (np. Igor) — pomiń potwierdzenie"
                 value={entityTag}
                 onChange={(e) => setEntityTag(e.target.value)}
                 className="rounded-[6px] border border-border bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-accent"
@@ -665,6 +691,14 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
 
       {previewFile && (
         <ImagePreview preview={previewFile} onClose={() => setPreviewFile(null)} />
+      )}
+
+      {identityReviewFiles.length > 0 && (
+        <UploadIdentityPrompt
+          files={identityReviewFiles}
+          onClose={() => setIdentityReviewFiles([])}
+          onComplete={() => setIdentityReviewFiles([])}
+        />
       )}
     </div>
   );

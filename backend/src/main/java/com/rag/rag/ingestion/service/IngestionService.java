@@ -351,7 +351,7 @@ public class IngestionService {
     }
 
     @Transactional
-    public void ingestMultipartFile(MultipartFile file, FolderEntity folder, String entityTag) throws IOException {
+    public String ingestMultipartFile(MultipartFile file, FolderEntity folder, String entityTag) throws IOException {
         String fileName = file.getOriginalFilename();
         String extension = StringUtils.getFilenameExtension(fileName);
         String group = folder.getName();
@@ -371,6 +371,7 @@ public class IngestionService {
             ingestor.ingest(parsedDocument);
             log.info("Successfully ingested file: {}", path);
         }
+        return path;
     }
 
     private void storeEntityTag(String path, String fileName, String entityTag) {

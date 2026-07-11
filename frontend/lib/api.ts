@@ -175,6 +175,12 @@ export type UploadProgress = {
   phase: "uploading" | "processing";
 };
 
+export interface UploadResult {
+  path: string;
+  fileName: string;
+  image: boolean;
+}
+
 export function uploadFileToFolderWithProgress(
   folderId: string,
   file: File,
@@ -182,7 +188,7 @@ export function uploadFileToFolderWithProgress(
   fileTotal: number,
   onProgress?: (progress: UploadProgress) => void,
   entityTag?: string
-): Promise<void> {
+): Promise<UploadResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
@@ -213,7 +219,16 @@ export function uploadFileToFolderWithProgress(
     xhr.addEventListener("load", () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         report(1, "processing");
-        resolve();
+        try {
+          const parsed = JSON.parse(xhr.responseText) as UploadResult;
+          resolve(parsed);
+        } catch {
+          resolve({
+            path: "",
+            fileName: file.name,
+            image: file.type.startsWith("image/"),
+          });
+        }
         return;
       }
       reject(new Error("Failed to upload file"));

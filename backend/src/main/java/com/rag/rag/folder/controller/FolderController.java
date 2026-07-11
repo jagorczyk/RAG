@@ -1,5 +1,6 @@
 package com.rag.rag.folder.controller;
 
+import com.rag.rag.folder.dto.UploadResultDto;
 import com.rag.rag.folder.dto.FolderDto;
 import com.rag.rag.folder.entity.FolderEntity;
 import com.rag.rag.folder.repository.FolderRepository;
@@ -46,7 +47,7 @@ public class FolderController {
     }
 
     @PostMapping("/{id}/upload")
-    public void upload(
+    public UploadResultDto upload(
             @PathVariable UUID id,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "entityTag", required = false) String entityTag
@@ -57,12 +58,27 @@ public class FolderController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found."));
 
         try {
-            ingestionService.ingestMultipartFile(file, folder, entityTag);
+            String path = ingestionService.ingestMultipartFile(file, folder, entityTag);
             folder.setUpdatedAt(LocalDateTime.now());
             folderRepository.save(folder);
+            String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
+            boolean image = isImageFile(fileName, file.getContentType());
+            return new UploadResultDto(path, fileName, image);
         } catch (IOException e) {
             log.error("Failed to upload file to folder {}", folder.getName(), e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to process the uploaded file.");
         }
+    }
+
+    private boolean isImageFile(String fileName, String contentType) {
+        if (contentType != null && contentType.toLowerCase().startsWith("image/")) {
+            return true;
+        }
+        String lower = fileName.toLowerCase();
+        return lower.endsWith(".jpg")
+                || lower.endsWith(".jpeg")
+                || lower.endsWith(".png")
+                || lower.endsWith(".gif")
+                || lower.endsWith(".webp");
     }
 }

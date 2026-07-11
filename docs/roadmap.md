@@ -49,7 +49,7 @@ Cel: każda podpisana osoba w grafie jest widoczna w czacie, nie tylko jako „m
 | A.2 | Auto-merge tylko z potwierdzeniem twarzy / bez agresywnego label-match | 🔴 | #6 | ✅ Done |
 | A.3 | Kontekst `[Osoby z grafu wiedzy na pliku]` dla `@plik` i follow-up | 🔴 | — | ✅ Done |
 | A.4 | Face-match → CONFIRMED + alias przy ingestii | 🔴 | #24 | ✅ Done |
-| A.5 | UI: wymuszony tag lub potwierdzenie twarzy przy uploadzie | 🟠 | #25 | ⬜ Todo |
+| A.5 | UI: wymuszony tag lub potwierdzenie twarzy przy uploadzie | 🟠 | #25 | ✅ Done |
 | A.6 | Banner niepewności + typ źródła `GRAPH_FACT` | 🟠 | #18 | ✅ Done |
 
 ### Faza B — Routing i kontekst (graf first)
