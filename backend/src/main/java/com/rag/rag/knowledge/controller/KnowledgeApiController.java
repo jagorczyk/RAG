@@ -196,8 +196,6 @@ public class KnowledgeApiController {
     @GetMapping("/entities")
     @Transactional
     public ResponseEntity<List<EntitySummaryDto>> getAllEntities() {
-        identityResolutionService.consolidateDuplicateEntities();
-
         Map<String, EntitySummaryDto> entitiesByKey = new LinkedHashMap<>();
         for (KnowledgeEntity entity : entityRepository.findAll()) {
             String key = entityKey(entity.getDisplayName());

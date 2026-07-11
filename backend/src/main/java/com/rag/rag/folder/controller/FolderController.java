@@ -46,14 +46,18 @@ public class FolderController {
     }
 
     @PostMapping("/{id}/upload")
-    public void upload(@PathVariable UUID id, @RequestParam("file") MultipartFile file) {
-        log.info("Uploading file {} to folder id: {}", file.getOriginalFilename(), id);
+    public void upload(
+            @PathVariable UUID id,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "entityTag", required = false) String entityTag
+    ) {
+        log.info("Uploading file {} to folder id: {} (entityTag={})", file.getOriginalFilename(), id, entityTag);
         FolderEntity folder = folderRepository
                 .findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found."));
 
         try {
-            ingestionService.ingestMultipartFile(file, folder);
+            ingestionService.ingestMultipartFile(file, folder, entityTag);
             folder.setUpdatedAt(LocalDateTime.now());
             folderRepository.save(folder);
         } catch (IOException e) {

@@ -48,9 +48,40 @@ frontend/yarn-error.log*
 frontend/.pnp.*
 
 # =========================
+# Thesis / local docs (not part of app)
+# =========================
+*.aux
+*.bbl
+*.blg
+*.loa
+*.lof
+*.lot
+*.out
+*.toc
+licencjat.tex
+licencjat.pdf
+licencjat-backup.pdf
+licencjat_redag.txt
+odpowiedzi_licencjat.*
+mgr.bib
+pytania.licencjat.informatyka.pdf
+WMP-*.pdf
+logo_rag.png
+figures/
+fix_listings.py
+revert_listings.py
+.impeccable/
+
+# =========================
+# Test data binaries
+# =========================
+test-data/img.b64
+
+# =========================
 # Environment Variables
 # =========================
 .env
 .env.*
 *.env
 *.env.local
+

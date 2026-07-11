@@ -8,15 +8,10 @@ import com.rag.rag.ingestion.dto.SourceDto;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.parser.TextDocumentParser;
 import dev.langchain4j.data.document.parser.apache.tika.ApacheTikaDocumentParser;
-import dev.langchain4j.data.message.ImageContent;
-import dev.langchain4j.data.message.TextContent;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.service.Result;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
 import lombok.extern.slf4j.Slf4j;
 import net.coobird.thumbnailator.Thumbnails;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -48,34 +43,16 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.Locale;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import net.coobird.thumbnailator.Thumbnails;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Base64;
-import java.util.List;
 import java.util.UUID;
 
 @Slf4j
 @Service
 public class IngestionService {
-
-    @Value("${vision.prompt}")
-    private String VISION_PROMPT;
 
     @Value("${vision.image.max-width:800}")
     private int MAX_WIDTH;
@@ -83,7 +60,6 @@ public class IngestionService {
     @Value("${vision.image.max-height:800}")
     private int MAX_HEIGHT;
 
-    private final ChatLanguageModel visionModel;
     private final EmbeddingStoreIngestor ingestor;
     private final FileRepository fileRepository;
     private final FolderRepository folderRepository;
@@ -100,7 +76,6 @@ public class IngestionService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionService(
-            @Qualifier("visionModel") ChatLanguageModel visionModel,
             EmbeddingStoreIngestor ingestor,
             FileRepository fileRepository,
             FolderRepository folderRepository,
@@ -115,7 +90,6 @@ public class IngestionService {
             IdentityResolutionService identityResolutionService,
             JdbcTemplate jdbcTemplate
     ) {
-        this.visionModel = visionModel;
         this.ingestor = ingestor;
         this.fileRepository = fileRepository;
         this.folderRepository = folderRepository;
@@ -377,12 +351,15 @@ public class IngestionService {
     }
 
     @Transactional
-    public void ingestMultipartFile(MultipartFile file, FolderEntity folder) throws IOException {
+    public void ingestMultipartFile(MultipartFile file, FolderEntity folder, String entityTag) throws IOException {
         String fileName = file.getOriginalFilename();
         String extension = StringUtils.getFilenameExtension(fileName);
         String group = folder.getName();
 
         String path = "dir://" + folder.getName() + "/" + fileName;
+        if (entityTag != null && !entityTag.isBlank()) {
+            storeEntityTag(path, fileName, entityTag.trim());
+        }
         byte[] data = file.getBytes();
 
         Document parsedDocument = chooseParser(data, path, fileName, extension);
@@ -394,6 +371,20 @@ public class IngestionService {
             ingestor.ingest(parsedDocument);
             log.info("Successfully ingested file: {}", path);
         }
+    }
+
+    private void storeEntityTag(String path, String fileName, String entityTag) {
+        fileRepository.findByPath(path).ifPresentOrElse(
+                existing -> {
+                    existing.setEntityTag(entityTag);
+                    fileRepository.save(existing);
+                },
+                () -> fileRepository.save(FileEntity.builder()
+                        .path(path)
+                        .fileName(fileName)
+                        .entityTag(entityTag)
+                        .build())
+        );
     }
 
     public SourceDto createSourceDto(String path, String metadataFileName, Double score) {

@@ -76,9 +76,18 @@ public class IdentityResolutionService {
             }
         }
 
-        Optional<KnowledgeEntity> existing = findEntityByNameOrAlias(label);
-        KnowledgeEntity entity = existing.orElseGet(() -> findOrCreateEntityByName(label));
-        linkMention(mention, entity, MentionStatus.CONFIRMED);
+        Optional<KnowledgeEntity> existing = looksLikePersonName(label)
+                ? findEntityByNameOrAlias(label)
+                : Optional.empty();
+        if (existing.isPresent()) {
+            linkMention(mention, existing.get(), MentionStatus.CONFIRMED);
+            return;
+        }
+
+        KnowledgeEntity entity = looksLikePersonName(label)
+                ? findOrCreateEntityByName(label)
+                : createSuggestedEntity(label);
+        linkMention(mention, entity, looksLikePersonName(label) ? MentionStatus.CONFIRMED : MentionStatus.SUGGESTED);
     }
 
     @Transactional
@@ -219,13 +228,40 @@ public class IdentityResolutionService {
         return isGenericLabel(label);
     }
 
+    public boolean looksLikePersonName(String label) {
+        if (isGenericLabel(label)) {
+            return false;
+        }
+        String lower = label.toLowerCase(Locale.ROOT);
+        if (lower.contains("mężczyzna") || lower.contains("mezczyzna")
+                || lower.contains("kobieta") || lower.contains("koszul")
+                || lower.contains("spodn") || lower.contains("włos") || lower.contains("wlos")
+                || lower.contains("chłopak") || lower.contains("chlopak")
+                || lower.contains("dziewczyn") || lower.contains("osoba ")) {
+            return false;
+        }
+        return label.trim().split("\\s+").length <= 2;
+    }
+
+    private KnowledgeEntity createSuggestedEntity(String label) {
+        KnowledgeEntity entity = KnowledgeEntity.builder()
+                .displayName(label)
+                .type("PERSON")
+                .build();
+        entity = entityRepository.save(entity);
+        EntityAlias alias = EntityAlias.builder()
+                .entity(entity)
+                .alias(label)
+                .source(AliasSource.AUTO)
+                .build();
+        aliasRepository.save(alias);
+        return entity;
+    }
+
     private double computeSimilarity(EntityMention a, EntityMention b) {
         String labelA = normalizeLabel(a.getLabel());
         String labelB = normalizeLabel(b.getLabel());
         if (labelA != null && labelA.equalsIgnoreCase(labelB)) {
-            if (!isGenericLabel(labelA)) {
-                return 0.95;
-            }
             return 0.0;
         }
 
