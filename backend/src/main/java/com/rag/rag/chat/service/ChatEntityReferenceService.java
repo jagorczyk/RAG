@@ -4,6 +4,7 @@ import com.rag.rag.chat.entity.ChatMessageEntity;
 import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
+import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +25,7 @@ import java.util.regex.Pattern;
 public class ChatEntityReferenceService {
 
     private static final Pattern REFERENCE_PATTERN = Pattern.compile(
-            "(?i).*(ta kobieta|ta kobietę|ta kobiete|ten mężczyzna|ten mezczyzna|ten mężczyznę|ten mezczyzne|ta osoba|ta postać|ta postac|ta dziewczyna|ten chłopak|ten chlopak|ta pani|ten pan|ten gość|ten gosc|ta twarz|ta osoba na zdjęciu|ta osoba na zdjeciu|ten na zdjęciu|ten na zdjeciu|ta po lewej|ten po prawej).*"
+            "(?i).*(ta kobieta|ta kobietę|ta kobiete|ten mężczyzna|ten mezczyzna|ten mężczyznę|ten mezczyzne|ta osoba|ta postać|ta postac|ta dziewczyna|ten chłopak|ten chlopak|ta pani|ten pan|ten gość|ten gosc|ta twarz|ta osoba na zdjęciu|ta osoba na zdjeciu|ten na zdjęciu|ten na zdjeciu|ta po lewej|ten po prawej|co to za|kim jest|kim ona jest|kim on jest).*"
     );
     private static final Pattern FEMALE_HINT = Pattern.compile("(?i).*(kobieta|kobietę|kobiete|dziewczyna|pani).*");
     private static final Pattern MALE_HINT = Pattern.compile("(?i).*(mężczyzna|mezczyzna|mężczyznę|mezczyzne|chłopak|chlopak|pan|gość|gosc).*");
@@ -37,14 +38,41 @@ public class ChatEntityReferenceService {
         return REFERENCE_PATTERN.matcher(question).matches();
     }
 
+    public Optional<String> resolveRecentSourceFilePath(UUID chatId) {
+        List<ChatMessageEntity> messages = chatMessageRepository.findAllByChatIdOrderByCreatedAtAsc(chatId);
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatMessageEntity message = messages.get(i);
+            if (message.getImagePaths() == null || message.getImagePaths().isEmpty()) {
+                continue;
+            }
+            String path = message.getImagePaths().get(0);
+            if (path != null && !path.isBlank()) {
+                return Optional.of(path);
+            }
+        }
+        return Optional.empty();
+    }
+
     public Optional<String> resolveReference(UUID chatId, String question) {
         if (!isReferenceQuestion(question)) {
             return Optional.empty();
         }
 
+        Optional<String> recentFile = resolveRecentSourceFilePath(chatId);
+        if (recentFile.isPresent()) {
+            Optional<String> fromFile = resolveNamedEntityOnFile(recentFile.get(), question);
+            if (fromFile.isPresent()) {
+                return fromFile;
+            }
+        }
+
         List<String> recentTexts = loadRecentMessageTexts(chatId, 12);
         Set<String> knownNames = loadKnownEntityNames();
         List<String> recentlyMentioned = findRecentlyMentionedNames(recentTexts, knownNames);
+
+        if (recentlyMentioned.isEmpty() && recentFile.isPresent()) {
+            recentlyMentioned = findNamesFromFile(recentFile.get());
+        }
 
         if (recentlyMentioned.isEmpty()) {
             recentlyMentioned = findNamesFromRecentSources(chatId, knownNames);
@@ -67,6 +95,31 @@ public class ChatEntityReferenceService {
                 }
             }
             for (String name : recentlyMentioned) {
+                if (looksLikePersonName(name)) {
+                    if (femaleQuestion && !looksMale(name)) {
+                        return Optional.of(name);
+                    }
+                    if (maleQuestion && !looksFemale(name)) {
+                        return Optional.of(name);
+                    }
+                }
+            }
+        }
+
+        return Optional.of(recentlyMentioned.get(0));
+    }
+
+    public Optional<String> resolveNamedEntityOnFile(String filePath, String question) {
+        List<String> names = findNamesFromFile(filePath);
+        if (names.isEmpty()) {
+            return Optional.empty();
+        }
+
+        boolean femaleQuestion = FEMALE_HINT.matcher(question).matches();
+        boolean maleQuestion = MALE_HINT.matcher(question).matches();
+
+        if (femaleQuestion || maleQuestion) {
+            for (String name : names) {
                 if (femaleQuestion && !looksMale(name)) {
                     return Optional.of(name);
                 }
@@ -76,7 +129,51 @@ public class ChatEntityReferenceService {
             }
         }
 
-        return Optional.of(recentlyMentioned.get(0));
+        return Optional.of(names.get(0));
+    }
+
+    private List<String> findNamesFromFile(String filePath) {
+        List<String> result = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+
+        for (EntityMention mention : mentionRepository.findByFilePath(filePath)) {
+            if (mention.getStatus() != MentionStatus.CONFIRMED
+                    && mention.getStatus() != MentionStatus.SUGGESTED) {
+                continue;
+            }
+            String name = resolveMentionDisplayName(mention);
+            if (name == null || name.isBlank() || !looksLikePersonName(name)) {
+                continue;
+            }
+            if (seen.add(name.toLowerCase(Locale.ROOT))) {
+                result.add(name);
+            }
+        }
+
+        result.sort(Comparator.naturalOrder());
+        return result;
+    }
+
+    private String resolveMentionDisplayName(EntityMention mention) {
+        KnowledgeEntity entity = mention.getEntity();
+        if (entity != null && entity.getDisplayName() != null && !entity.getDisplayName().isBlank()) {
+            return entity.getDisplayName();
+        }
+        return mention.getLabel();
+    }
+
+    private boolean looksLikePersonName(String name) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        return !lower.contains("mężczyzna")
+                && !lower.contains("mezczyzna")
+                && !lower.contains("kobieta")
+                && !lower.contains("osoba ")
+                && !lower.contains("nieznana")
+                && !lower.contains("nieznany")
+                && !lower.matches("osoba\\s+\\d+");
     }
 
     private List<String> loadRecentMessageTexts(UUID chatId, int limit) {
@@ -93,11 +190,6 @@ public class ChatEntityReferenceService {
         for (KnowledgeEntity entity : entityRepository.findAll()) {
             if (entity.getDisplayName() != null) {
                 names.add(entity.getDisplayName());
-            }
-        }
-        for (EntityMention mention : mentionRepository.findAll()) {
-            if (mention.getLabel() != null) {
-                names.add(mention.getLabel());
             }
         }
         return names;
@@ -122,29 +214,14 @@ public class ChatEntityReferenceService {
     }
 
     private List<String> findNamesFromRecentSources(UUID chatId, Set<String> knownNames) {
-        List<ChatMessageEntity> messages = chatMessageRepository.findAllByChatIdOrderByCreatedAtAsc(chatId);
-        List<String> result = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            ChatMessageEntity message = messages.get(i);
-            if (message.getImagePaths() == null) {
-                continue;
-            }
-            for (String path : message.getImagePaths()) {
-                for (EntityMention mention : mentionRepository.findAll()) {
-                    if (!path.equals(mention.getFilePath()) || mention.getLabel() == null) {
-                        continue;
-                    }
-                    if (knownNames.contains(mention.getLabel()) && seen.add(mention.getLabel())) {
-                        result.add(mention.getLabel());
-                    }
-                }
+        Optional<String> recentFile = resolveRecentSourceFilePath(chatId);
+        if (recentFile.isPresent()) {
+            List<String> fromFile = findNamesFromFile(recentFile.get());
+            if (!fromFile.isEmpty()) {
+                return fromFile;
             }
         }
-
-        result.sort(Comparator.naturalOrder());
-        return result;
+        return List.of();
     }
 
     private boolean looksFemale(String name) {

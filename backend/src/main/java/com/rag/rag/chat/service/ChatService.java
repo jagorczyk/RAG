@@ -35,6 +35,8 @@ public interface ChatService {
     7. When [Relacje z grafu wiedzy] lists people by name, answer with those exact names.
        Never use vague phrases like "inna osoba", "ktoś" or "druga osoba" when names are provided.
     8. For "kto siedzi obok X" questions, list every named person from the relations section.
+    9. When [Osoby z grafu wiedzy na pliku] lists named people, use those names to identify
+       who appears in the image. A signed person like Igor must be named, not described only as "mężczyzna".
 
     FORMATTING RULES:
     - Go straight to the answer, no intro phrases.

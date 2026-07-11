@@ -60,6 +60,10 @@ public class ChatInteractionService {
 
         String fullQuestion = question;
         String graphContext = buildGraphContext(chatId, question, route);
+        String fileGraphContext = buildFileScopedGraphContext(chatId, question);
+        if (fileGraphContext != null && !fileGraphContext.isBlank()) {
+            graphContext = fileGraphContext + (graphContext.isBlank() ? "" : "\n" + graphContext);
+        }
         if (graphContext != null && !graphContext.isEmpty()) {
             fullQuestion = graphContext + "\n\nPytanie użytkownika: " + question;
         }
@@ -123,6 +127,14 @@ public class ChatInteractionService {
             }
         }
         return graphQueryService.buildContextForQuestion(question);
+    }
+
+    private String buildFileScopedGraphContext(UUID chatId, String question) {
+        Optional<String> filePath = graphQueryService.resolveFilePathFromQuestion(question);
+        if (filePath.isEmpty()) {
+            filePath = chatEntityReferenceService.resolveRecentSourceFilePath(chatId);
+        }
+        return filePath.map(graphQueryService::buildContextForFile).orElse("");
     }
 
     private List<SourceDto> extractSourcesFromResponse(
@@ -318,6 +330,7 @@ public class ChatInteractionService {
                 || graphContext.startsWith("[Relacje z grafu wiedzy]")
                 || graphContext.startsWith("[Współwystępowania z grafu wiedzy]")
                 || graphContext.startsWith("[Fakty z grafu wiedzy]")
+                || graphContext.startsWith("[Osoby z grafu wiedzy na pliku]")
                 || route == QueryRouter.QueryRoute.HYBRID
                 || route == QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE
                 || route == QueryRouter.QueryRoute.ENTITY_ACTIVITY

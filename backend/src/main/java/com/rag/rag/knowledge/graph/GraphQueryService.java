@@ -1,9 +1,13 @@
 package com.rag.rag.knowledge.graph;
 
+import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityAlias;
+import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
+import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.fact.Fact;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
+import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
@@ -33,9 +37,73 @@ public class GraphQueryService {
             "(?i).*(?:po lewej|po lewej stronie|z lewej(?: strony)?|na lewo|po prawej|po prawej stronie|z prawej(?: strony)?|na prawo)\\s*(?:od|strony)?\\s*([\\p{L}0-9_-]+).*"
     );
 
+    private static final Pattern FILE_REFERENCE_PATTERN = Pattern.compile(
+            "(?i)@([\\w\\-]+(?:\\.[a-zA-Z0-9]+)?)"
+    );
+
     private final EntityManager entityManager;
     private final KnowledgeEntityRepository entityRepository;
     private final EntityAliasRepository aliasRepository;
+    private final EntityMentionRepository mentionRepository;
+    private final FileRepository fileRepository;
+
+    @Transactional(readOnly = true)
+    public Optional<String> resolveFilePathFromQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return Optional.empty();
+        }
+        Matcher matcher = FILE_REFERENCE_PATTERN.matcher(question);
+        if (matcher.find()) {
+            return resolveFilePathByFileName(matcher.group(1));
+        }
+        return Optional.empty();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<String> resolveFilePathByFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return Optional.empty();
+        }
+        return fileRepository.findFirstByFileNameIgnoreCase(fileName.trim())
+                .map(file -> file.getPath());
+    }
+
+    @Transactional(readOnly = true)
+    public String buildContextForFile(String filePath) {
+        if (filePath == null || filePath.isBlank()) {
+            return "";
+        }
+
+        List<EntityMention> mentions = mentionRepository.findByFilePath(filePath).stream()
+                .filter(mention -> mention.getStatus() == MentionStatus.CONFIRMED
+                        || mention.getStatus() == MentionStatus.SUGGESTED)
+                .toList();
+
+        if (mentions.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder contextBuilder = new StringBuilder("[Osoby z grafu wiedzy na pliku]\n");
+        Set<String> seenNames = new LinkedHashSet<>();
+
+        for (EntityMention mention : mentions) {
+            String displayName = resolveMentionName(mention);
+            if (displayName.isBlank() || !seenNames.add(displayName.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            contextBuilder.append("- ")
+                    .append(displayName)
+                    .append(" (etykieta: ")
+                    .append(mention.getLabel())
+                    .append(", pewność: ")
+                    .append(mention.getConfidence())
+                    .append(") | plik: ")
+                    .append(filePath)
+                    .append("\n");
+        }
+
+        return contextBuilder.toString();
+    }
 
     @Transactional(readOnly = true)
     public List<Fact> getActivitiesForEntity(String entityNameOrAlias) {
