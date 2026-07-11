@@ -27,8 +27,14 @@ function New-GhIssue {
         [string]$Body,
         [string[]]$Labels
     )
-    $labelArgs = $Labels | ForEach-Object { "--label", $_ }
-    gh issue create --title $Title --body $Body @labelArgs
+    $bodyFile = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText($bodyFile, $Body, [System.Text.UTF8Encoding]::new($false))
+        $labelArgs = $Labels | ForEach-Object { "--label", $_ }
+        gh issue create --title $Title --body-file $bodyFile @labelArgs
+    } finally {
+        Remove-Item $bodyFile -ErrorAction SilentlyContinue
+    }
 }
 
 Ensure-GhAuth
