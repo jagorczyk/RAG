@@ -48,7 +48,7 @@ export default function PersonGraphPage() {
               <div>
                 <h1 className="page-title">Mapa relacji</h1>
                 <p className="mt-0.5 text-sm text-ink-muted">
-                  Relacje między osobami — przeciągaj węzły, podwójne kliknięcie otwiera album
+                  Klik w osobę powiększa linie do sąsiadów · zoom kółkiem / +− · 2× klik otwiera album
                 </p>
               </div>
             </div>
