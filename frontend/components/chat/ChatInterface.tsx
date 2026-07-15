@@ -41,6 +41,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
   const [inputValue, setInputValue] = useState("");
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<FilePreview | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -266,6 +267,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     setHistoryIndex(-1);
     if (inputRef.current) inputRef.current.innerText = "";
     setIsSending(true);
+    setSendError(null);
 
     try {
       const response = await sendMessage(chatId, userMsg);
@@ -276,6 +278,8 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
       ]);
     } catch (error) {
       console.error("Failed to send message", error);
+      setMessages((prev) => prev.filter((message) => message.id !== optimisticMsg.id));
+      setSendError(error instanceof Error ? error.message : "Nie udało się wysłać wiadomości.");
     } finally {
       setIsSending(false);
     }
@@ -396,6 +400,11 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
         {!isInitialLoading && (
           <div className="mx-auto max-w-4xl space-y-5">
+            {sendError && (
+              <p role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-800 dark:text-red-200">
+                {sendError}
+              </p>
+            )}
             {messages.map((msg) => (
               <ChatMessageBubble
                 key={msg.id}

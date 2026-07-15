@@ -10,7 +10,7 @@ The project consists of two main parts: the backend (Spring Boot) and the fronte
 *   **Language:** Java 17
 *   **Framework:** Spring Boot 4.0.2
 *   **Database:** PostgreSQL with PGVector extension (for vector storage)
-*   **AI/LLM:** LangChain4j, Ollama, OpenAI API (compatible with Groq)
+*   **AI/LLM:** LangChain4j with the OpenAI-compatible DeepInfra API; Ollama remains available as an optional local provider.
 *   **Models:** 
     *   Llama 3.1 (chat)
     *   MiniCPM-V (vision)
@@ -34,7 +34,7 @@ The project consists of two main parts: the backend (Spring Boot) and the fronte
 *   Java 17 (for the backend)
 *   Maven
 *   Node.js 20+ (for the frontend)
-*   Ollama (installed locally or via container)
+*   DeepInfra API token (or Ollama when using the optional local configuration)
 
 ### Step 1: Database Setup
 The main project directory contains a `docker-compose.yml` file which defines a PostgreSQL database container with the PGVector extension.
@@ -57,11 +57,15 @@ The server source code is located in the `backend/` directory.
 1.  **Environment Variables:**
     The backend can be configured using a `backend/.env` file (optional) or directly within `backend/src/main/resources/application.properties`. 
 
-    **For OpenAI / Groq:**
+    **For DeepInfra (default):**
     ```properties
-    llm.provider=openai
-    OPENAI_API_KEY=your_api_key
+    DEEPINFRA_API_KEY=your_deepinfra_token
     ```
+
+    The default configuration sends chat, vision and embeddings through
+    `https://api.deepinfra.com/v1/openai`. It uses `deepseek-ai/DeepSeek-V3`
+    for language tasks and `Qwen/Qwen3-VL-30B-A3B-Instruct` for image analysis.
+    The vision request contains the image as an OpenAI-format Base64 data URL.
 
     **For Ollama (Local):**
     ```properties

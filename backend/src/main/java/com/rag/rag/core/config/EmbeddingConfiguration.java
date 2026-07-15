@@ -24,14 +24,14 @@ public class EmbeddingConfiguration {
     @Value("${embedding.model}")
     private String embeddingModel;
 
-    @Value("${openai.api.key}")
-    private String openaiApiKey;
+    @Value("${llm.deepinfra.base-url}")
+    private String deepInfraBaseUrl;
 
-    @Value("${llm.openai.embedding-base-url:${llm.openai.base-url}}")
-    private String openaiEmbeddingBaseUrl;
+    @Value("${llm.deepinfra.api-key}")
+    private String deepInfraApiKey;
 
-    @Value("${llm.openai.embedding-model:text-embedding-3-small}")
-    private String openaiEmbeddingModel;
+    @Value("${llm.deepinfra.embedding-model:Qwen/Qwen3-Embedding-8B}")
+    private String deepInfraEmbeddingModel;
 
     @Value("${spring.datasource.username}")
     private String dbUser;
@@ -61,12 +61,12 @@ public class EmbeddingConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(name = "llm.embedding.provider", havingValue = "openai")
-    EmbeddingModel openAiEmbeddingModel() {
+    @ConditionalOnProperty(name = "llm.embedding.provider", havingValue = "deepinfra")
+    EmbeddingModel deepInfraEmbeddingModel() {
         return OpenAiEmbeddingModel.builder()
-                .baseUrl(openaiEmbeddingBaseUrl)
-                .apiKey(openaiApiKey)
-                .modelName(openaiEmbeddingModel)
+                .baseUrl(deepInfraBaseUrl)
+                .apiKey(deepInfraApiKey)
+                .modelName(deepInfraEmbeddingModel)
                 .build();
     }
 

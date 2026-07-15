@@ -93,7 +93,27 @@ Sprint 6.4  konfiguracja progów i retrieval
 Sprint 7.1  fallback bez encji + HYBRID path
 Sprint 7.2  aliasy, health face-service i README
 Backlog    wizualizacja, LLM router, face embeddings
+
 ```
+
+## Etap H - trafnosc zrodel dla ogolnych zapytan
+
+Cel: poprawic precision zrodel dla otwartych pytan, bez zamknietego slownika domenowego.
+
+- `QueryPlanner` wyodrebnia encje, zakres plikow, relacje, warunek wizualny i oczekiwana liczbe wynikow; niejednoznaczne plany moga korzystac z fallbacku LLM.
+- Recall jest oddzielony od wyboru koncowego: graf i vector RAG dostarczaja szeroka pule kandydatow, a `DynamicVisualMatcher` rozstrzyga `MATCH`, `NO_MATCH` lub `UNCERTAIN`.
+- Pytania typu „na ktorym zdjeciu”, „gdzie widac” i „spelnia warunek” trafiaja do walidacji semantycznej zamiast do zwyklego `ENTITY_FILES`.
+- Pelny structured vision context jest zapisywany w `FileEntity` i dostepny w kontekscie grafu obok wygladu, obiektow, czynnosci, sceny, napisow i relacji.
+- Dowody rozrozniaja status dopasowania oraz confidence warunku; zrodla nie sa tworzone wylacznie na podstawie wzmianki nazwy pliku w odpowiedzi modelu.
+- Progi recall, liczby kandydatow i analiz vision sa konfigurowalne w `application.properties`.
+
+Kryteria akceptacji etapu:
+
+1. Pytanie o dowolna ceche wizualna nie potwierdza niezwiÄ…zanych zdjec.
+2. Inna encja i cecha, ktora nie wystepuje w kodowym slowniku, dziala przez ten sam planner.
+3. Pytania dokumentowe i relacyjne zachowuja odpowiednio vector RAG i grafowe dowody.
+4. Brak wystarczajacego dowodu zwraca `UNCERTAIN`, a nie przypadkowe top-k.
+5. Testy regresyjne obejmuja routing, planner, walidacje wizualna i brak promocji niepewnosci do `MATCH`.
 
 ## Dokumenty powiązane
 

@@ -54,4 +54,9 @@ public class FileEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String visibleTexts;
+
+    /** Complete structured vision payload retained for graph-side validation. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private String structuredVisionContext;
 }

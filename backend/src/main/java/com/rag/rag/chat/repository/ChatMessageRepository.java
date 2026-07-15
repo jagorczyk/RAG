@@ -8,4 +8,6 @@ import java.util.UUID;
 
 public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, UUID> {
     List<ChatMessageEntity> findAllByChatIdOrderByCreatedAtAsc(UUID chatId);
+
+    List<ChatMessageEntity> findTop6ByChatIdOrderByCreatedAtDesc(UUID chatId);
 }

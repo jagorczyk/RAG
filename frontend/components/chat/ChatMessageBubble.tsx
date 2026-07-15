@@ -44,11 +44,8 @@ export function ChatMessageBubble({
     return null;
   };
 
-  const suggestedPaths = new Set(
-    (message.evidence ?? [])
-      .filter((item) => item.matchStatus === "SUGGESTED")
-      .map((item) => item.path),
-  );
+  // Visual sources are emitted only after confirmation; no provisional group is rendered.
+  const suggestedPaths = new Set<string>();
 
   const renderSources = (items: Source[], label?: string) => {
     if (items.length === 0) return null;

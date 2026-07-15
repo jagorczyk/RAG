@@ -1,6 +1,8 @@
 package com.rag.rag.core.config;
 
 import com.rag.rag.core.rerank.LlmDocumentReranker;
+import com.rag.rag.core.retrieval.HybridRetrievalMerger;
+import com.rag.rag.core.retrieval.LexicalEmbeddingSearch;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
@@ -48,11 +50,24 @@ public class RetrievalConfiguration {
     @Value("${rag.retrieval.photo-max-results:20}")
     private int photoMaxResults;
 
+    @Value("${rag.retrieval.recall-max-results:40}")
+    private int recallMaxResults;
+
+    @Value("${rag.retrieval.graph-max-results:15}")
+    private int graphMaxResults;
+
+    @Value("${rag.retrieval.lexical-enabled:true}")
+    private boolean lexicalEnabled;
+
+    @Value("${rag.retrieval.lexical-max-results:40}")
+    private int lexicalMaxResults;
+
     @Bean
     ContentRetriever contentRetriever(
             EmbeddingStore<TextSegment> embeddingStore,
             EmbeddingModel embeddingModel,
-            LlmDocumentReranker reranker
+            LlmDocumentReranker reranker,
+            LexicalEmbeddingSearch lexicalEmbeddingSearch
     ) {
 
         return query -> {
@@ -72,7 +87,7 @@ public class RetrievalConfiguration {
             var queryEmbedding = embeddingModel.embed(cleanQuery).content();
             EmbeddingSearchRequest.EmbeddingSearchRequestBuilder searchRequestBuilder = EmbeddingSearchRequest.builder()
                     .queryEmbedding(queryEmbedding)
-                    .maxResults(40)
+                    .maxResults(recallMaxResults)
                     .minScore(minScore);
 
             List<String> mentions = new ArrayList<>();
@@ -83,18 +98,20 @@ public class RetrievalConfiguration {
                 mentions.add(mention.toLowerCase());
             }
 
+            List<String> pathFilter = new ArrayList<>();
             if (!mentions.isEmpty()) {
                 logger.info("DETECTED MENTIONS: {}", mentions);
-                Filter pathFilter = metadataKey("path").isIn(mentions);
+                Filter pathMetaFilter = metadataKey("path").isIn(mentions);
                 Filter filenameFilter = metadataKey("filename").isIn(mentions);
                 Filter folderFilter = metadataKey("document_id").isIn(mentions);
 
-                searchRequestBuilder.filter(pathFilter.or(filenameFilter).or(folderFilter));
+                searchRequestBuilder.filter(pathMetaFilter.or(filenameFilter).or(folderFilter));
                 searchRequestBuilder.minScore(0.01);
                 boolean graphFirst = extractGraphContext(queryText).contains("[Osoby z grafu wiedzy na pliku]");
                 long distinctMentions = mentions.stream().distinct().count();
                 boolean combinedDocAndGraph = graphFirst && distinctMentions >= 2;
-                searchRequestBuilder.maxResults(graphFirst && !combinedDocAndGraph ? 5 : 15);
+                searchRequestBuilder.maxResults(graphFirst && !combinedDocAndGraph ? graphMaxResults : recallMaxResults);
+                pathFilter.addAll(mentions);
             }
 
             List<String> graphPaths = extractGraphPaths(queryText);
@@ -103,7 +120,9 @@ public class RetrievalConfiguration {
             if (!graphPaths.isEmpty()) {
                 searchRequestBuilder.filter(metadataKey("path").isIn(graphPaths));
                 searchRequestBuilder.minScore(0.01);
-                searchRequestBuilder.maxResults(photoSearch ? photoMaxResults : 15);
+                searchRequestBuilder.maxResults(photoSearch ? photoMaxResults : recallMaxResults);
+                pathFilter.clear();
+                pathFilter.addAll(graphPaths);
             }
 
             EmbeddingSearchResult<TextSegment> vectorResults = embeddingStore.search(searchRequestBuilder.build());
@@ -115,7 +134,7 @@ public class RetrievalConfiguration {
                     match.score()
             ));
 
-            List<Content> contents = vectorResults.matches().stream()
+            List<Content> vectorContents = vectorResults.matches().stream()
                     .map(match -> {
                         TextSegment segment = match.embedded();
                         Map<String, Object> metadata = new HashMap<>(segment.metadata().toMap());
@@ -124,15 +143,32 @@ public class RetrievalConfiguration {
                     })
                     .collect(Collectors.toList());
 
-            List<Content> rerankedContents = reranker.rerank(cleanQuery, contents);
+            List<Content> hybridContents = vectorContents;
+            if (lexicalEnabled && lexicalEmbeddingSearch != null) {
+                List<LexicalEmbeddingSearch.LexicalHit> lexicalHits = lexicalEmbeddingSearch.search(
+                        cleanQuery,
+                        lexicalMaxResults,
+                        pathFilter.isEmpty() ? List.of() : pathFilter
+                );
+                logger.info("LEXICAL RESULTS COUNT: {}", lexicalHits.size());
+                hybridContents = HybridRetrievalMerger.merge(
+                        vectorContents,
+                        lexicalHits,
+                        Math.max(recallMaxResults, lexicalMaxResults)
+                );
+                logger.info("HYBRID MERGED COUNT: {}", hybridContents.size());
+            }
+
+            List<Content> rerankedContents = reranker.rerank(cleanQuery, hybridContents);
             rerankedContents.forEach(content -> {
                 TextSegment segment = content.textSegment();
                 logger.info(
-                        "FINAL MATCH: {} FROM {} RETRIEVAL_SCORE: {} RERANK_SCORE: {}",
+                        "FINAL MATCH: {} FROM {} RETRIEVAL_SCORE: {} RERANK_SCORE: {} HYBRID_RRF: {}",
                         segment.metadata().getString("filename"),
                         segment.metadata().getString("document_id"),
                         segment.metadata().getString("retrieval_score"),
-                        segment.metadata().getString("rerank_score")
+                        segment.metadata().getString("rerank_score"),
+                        segment.metadata().getString("hybrid_rrf")
                 );
             });
 
@@ -183,10 +219,13 @@ public class RetrievalConfiguration {
             if (!graphContext.isEmpty()) {
                 promptBuilder.append(graphContext).append("\n\n");
             }
-            promptBuilder.append("Odpowiedz na pytanie. Graf wiedzy (jeśli podany) jest źródłem prawdy dla osób i relacji — ")
-                    .append("fragmenty dokumentów uzupełniają opis. Gdy pytanie ma dwie części (np. opis dokumentu i kto jest na zdjęciu), ")
-                    .append("odpowiedz na obie części osobno. Odpowiadaj po polsku. ")
-                    .append("Nie wypisuj nazw plików, identyfikatorów zdjęć ani list plików w odpowiedzi.\n\n")
+            promptBuilder.append("Odpowiedz na pytanie po polsku, zwięźle i prosto. ")
+                    .append("Graf wiedzy (jeśli podany) jest źródłem prawdy dla osób i relacji — ")
+                    .append("fragmenty dokumentów uzupełniają opis. Gdy pytanie ma dwie części ")
+                    .append("(np. opis dokumentu i kto jest na zdjęciu), odpowiedz na obie części osobno. ")
+                    .append("Używaj wyłącznie dostarczonych dowodów. ")
+                    .append("Nie wypisuj nazw plików, ścieżek, identyfikatorów zdjęć ani list źródeł w odpowiedzi — ")
+                    .append("źródła są prezentowane osobno w interfejsie.\n\n")
                     .append("Pytanie: ").append(actualQuestion).append("\n\n")
                     .append("Dokumenty:\n").append(contextJoined);
 

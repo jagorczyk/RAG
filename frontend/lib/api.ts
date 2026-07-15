@@ -1,6 +1,10 @@
-// Use the Next.js API proxy by default. This keeps mobile clients on the
-// frontend origin and avoids localhost/CORS/mixed-content issues.
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
+// When both applications run locally, call Spring directly. This avoids a
+// stale reverse-proxy socket after the backend is restarted. Deployed and
+// mobile clients retain the configured backend URL or same-origin proxy.
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL
+  ?? (typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "http://localhost:8080"
+    : "");
 
 export interface ReanalysisStatus {
   jobId: string;
@@ -51,14 +55,17 @@ export interface Message {
   sources?: Source[];
   uncertain?: boolean;
   evidence?: QueryEvidence[];
-  answerKind?: "GRAPH_QUERY" | "DOCUMENT" | "HYBRID" | "NO_EVIDENCE";
+  answerKind?: "GRAPH_QUERY" | "DOCUMENT" | "HYBRID" | "VISUAL_VALIDATION" | "NO_EVIDENCE";
 }
 
 export interface QueryEvidence {
   path: string;
   confidence: number;
   reasons: string[];
-  matchStatus?: "CONFIRMED" | "SUGGESTED";
+  matchStatus?: "MATCH" | "CONFIRMED";
+  retrievalScore?: number;
+  entityConfidence?: number;
+  conditionConfidence?: number;
 }
 
 export interface Source {
@@ -352,7 +359,10 @@ export async function sendMessage(chatId: string, content: string): Promise<Mess
     body: JSON.stringify({ message: content })
   });
   
-  if (!response.ok) throw new Error("Failed to send message");
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || error?.error || `Failed to send message (${response.status})`);
+  }
   const data = await response.json();
   
     return {

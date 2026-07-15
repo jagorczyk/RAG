@@ -23,20 +23,26 @@ public class LlmConfiguration {
     @Value("${vision.language.model}")
     private String VISION_MODEL;
 
-    @Value("${openai.api.key}")
-    private String OPENAI_API_KEY;
+    @Value("${llm.deepinfra.base-url}")
+    private String deepInfraBaseUrl;
 
-    @Value("${llm.openai.base-url}")
-    private String OPENAI_BASE_URL;
+    @Value("${llm.deepinfra.api-key}")
+    private String deepInfraApiKey;
 
-    @Value("${llm.openai.chat-model}")
-    private String OPENAI_CHAT_MODEL;
+    @Value("${llm.deepinfra.chat-model}")
+    private String deepInfraChatModel;
 
-    @Value("${llm.openai.vision-base-url}")
-    private String OPENAI_VISION_BASE_URL;
+    @Value("${llm.deepinfra.vision-model}")
+    private String deepInfraVisionModel;
 
-    @Value("${llm.openai.vision-model}")
-    private String OPENAI_VISION_MODEL;
+    @Value("${llm.chat.max-tokens:512}")
+    private Integer chatMaxTokens;
+
+    @Value("${llm.vision.max-tokens:2048}")
+    private Integer visionMaxTokens;
+
+    @Value("${llm.log-requests:false}")
+    private boolean logRequests;
 
     @Value("${llm.timeout-minutes:2}")
     private int TIMEOUT_MINUTES;
@@ -71,27 +77,30 @@ public class LlmConfiguration {
 
     @Bean("chatLanguageModel")
     @Primary
-    @ConditionalOnProperty(name = "llm.provider", havingValue = "openai")
-    public ChatLanguageModel openAiChatModel() {
+    @ConditionalOnProperty(name = "llm.provider", havingValue = "deepinfra")
+    public ChatLanguageModel deepInfraChatModel() {
         return OpenAiChatModel.builder()
-                .baseUrl(OPENAI_BASE_URL)
-                .apiKey(OPENAI_API_KEY)
-                .modelName(OPENAI_CHAT_MODEL)
+                .baseUrl(deepInfraBaseUrl)
+                .apiKey(deepInfraApiKey)
+                .modelName(deepInfraChatModel)
                 .temperature(TEMPERATURE)
-                .maxTokens(512)
+                .maxTokens(chatMaxTokens)
                 .timeout(Duration.ofMinutes(TIMEOUT_MINUTES))
+                .logRequests(logRequests)
                 .build();
     }
 
     @Bean("visionModel")
-    @ConditionalOnProperty(name = "llm.provider", havingValue = "openai")
-    public ChatLanguageModel openAiVisionModel() {
+    @ConditionalOnProperty(name = "llm.provider", havingValue = "deepinfra")
+    public ChatLanguageModel deepInfraVisionModel() {
         return OpenAiChatModel.builder()
-                .baseUrl(OPENAI_VISION_BASE_URL)
-                .apiKey(OPENAI_API_KEY)
-                .modelName(OPENAI_VISION_MODEL)
+                .baseUrl(deepInfraBaseUrl)
+                .apiKey(deepInfraApiKey)
+                .modelName(deepInfraVisionModel)
                 .timeout(Duration.ofMinutes(TIMEOUT_MINUTES))
                 .temperature(0.0)
+                .maxTokens(visionMaxTokens)
+                .logRequests(logRequests)
                 .build();
     }
 }

@@ -36,7 +36,6 @@ import com.rag.rag.knowledge.face.FaceEmbedding;
 import com.rag.rag.knowledge.face.FaceIdentityService;
 import com.rag.rag.knowledge.face.FaceAnalyzeResponse;
 import com.rag.rag.knowledge.face.FaceRecognitionClient;
-import com.rag.rag.knowledge.graph.RelationConstants;
 import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
@@ -190,7 +189,7 @@ public class IngestionService {
     public Document processImage(byte[] imageData, String path, String fileName) {
         try {
             String format = fileName.toLowerCase().endsWith(".png") ? "png" : "jpg";
-            String mimeType = "image/" + format;
+            String mimeType = "png".equals(format) ? "image/png" : "image/jpeg";
 
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             Thumbnails.of(new ByteArrayInputStream(imageData))
@@ -237,13 +236,13 @@ public class IngestionService {
                     file.setImageScene(dto.getScene());
                     file.setImageSummary(dto.getSceneSummary());
                     file.setVisibleTexts(writeJson(dto.getVisibleTexts()));
+                    file.setStructuredVisionContext(writeJson(dto));
                     fileRepository.save(file);
                 });
 
                 if (dto.getEntities() != null) {
                     List<ExtractedEntityDto> livingEntities = dto.getEntities().stream()
-                            .filter(entity -> entity != null
-                                    && LivingEntityTypes.PERSON.equals(LivingEntityTypes.normalize(entity.getType())))
+                            .filter(entity -> entity != null && LivingEntityTypes.isSupported(entity.getType()))
                             .toList();
                     Map<String, EntityMention> existingPendingByLabel = mentionRepo.findByFilePath(path).stream()
                             .filter(existing -> existing.getStatus() != MentionStatus.REJECTED
@@ -271,7 +270,7 @@ public class IngestionService {
                                 unnamedPersonIndex++;
                                 label = "Osoba " + unnamedPersonIndex;
                             } else {
-                                unnamedPersonIndex++;
+                                unnamedAnimalIndex++;
                                 label = "Zwierzę " + unnamedAnimalIndex;
                             }
                         }
@@ -286,7 +285,7 @@ public class IngestionService {
                             mention = EntityMention.builder()
                                 .filePath(path)
                                 .label(label)
-                                .entityType("PERSON")
+                                .entityType(entityType == null ? LivingEntityTypes.PERSON : entityType)
                                 .confidence(new BigDecimal("0.900"))
                                 .status(MentionStatus.SUGGESTED)
                                 .build();
@@ -346,15 +345,15 @@ public class IngestionService {
                             personMentions.add(mention);
                         }
 
-                        canonicalText.append("Postać: ").append(label).append(". ");
-                        if (p.getActions() != null) {
+                        canonicalText.append("Uczestnik: ").append(label)
+                                .append(" (typ: ").append(entityType).append("). ");
+                        if (p.getActions() != null && !p.getActions().isEmpty()) {
                             canonicalText.append("Czynności: ").append(String.join(", ", p.getActions())).append(". ");
                         }
                         if (!objects.isEmpty()) {
                             canonicalText.append("Obiekty i otoczenie: ").append(String.join(", ", objects)).append(". ");
                             for (String objectValue : objects) {
-                                String objectAction = objectActionFor(p.getActions(), objectValue);
-                                factRepo.save(Fact.builder().mention(mention).action(objectAction)
+                                factRepo.save(Fact.builder().mention(mention).action("RELATED_OBJECT")
                                         .object(objectValue).filePath(path).confidence(new BigDecimal("0.850")).build());
                             }
                         }
@@ -368,6 +367,9 @@ public class IngestionService {
                         if (p.getVisualCues() != null && !p.getVisualCues().isEmpty()) {
                             canonicalText.append("Wygląd: ").append(String.join(", ", p.getVisualCues())).append(". ");
                         }
+                        if (p.getBbox() != null && !p.getBbox().isEmpty()) {
+                            canonicalText.append("Położenie bbox: ").append(p.getBbox()).append(". ");
+                        }
                     }
 
                     if (dto.getRelations() != null) {
@@ -375,43 +377,53 @@ public class IngestionService {
                             if (relation == null || relation.getSubjectLabel() == null || relation.getObjectLabel() == null) {
                                 continue;
                             }
-                            String factAction = RelationConstants.toFactAction(relation.getRelation());
-                            if (factAction == null) {
+                            String factAction = relation.getRelation() == null ? "" : relation.getRelation().trim();
+                            if (factAction.isBlank()) {
                                 continue;
                             }
 
-                            EntityMention subject = mentionsByLabel.get(relation.getSubjectLabel().toLowerCase(Locale.ROOT).trim());
-                            EntityMention object = mentionsByLabel.get(relation.getObjectLabel().toLowerCase(Locale.ROOT).trim());
-                            if (subject == null || object == null) {
-                                continue;
-                            }
+                            String subjectKey = relation.getSubjectLabel().toLowerCase(Locale.ROOT).trim();
+                            String objectKey = relation.getObjectLabel().toLowerCase(Locale.ROOT).trim();
+                            EntityMention subject = mentionsByLabel.get(subjectKey);
+                            EntityMention object = mentionsByLabel.get(objectKey);
+                            String objectLabel = object != null ? object.getLabel() : relation.getObjectLabel().trim();
 
-                            factRepo.save(Fact.builder()
-                                    .mention(subject)
-                                    .action(factAction)
-                                    .object(object.getLabel())
-                                    .filePath(path)
-                                    .confidence(new BigDecimal("0.900"))
-                                    .build());
-
-                            if (RelationConstants.isSymmetric(factAction)) {
+                            // Persist spatial/participant relations even when the object is not a living mention
+                            // (e.g. person 1 left of person 2, person 1 next to table).
+                            if (subject != null) {
                                 factRepo.save(Fact.builder()
-                                        .mention(object)
+                                        .mention(subject)
                                         .action(factAction)
-                                        .object(subject.getLabel())
+                                        .object(objectLabel)
                                         .filePath(path)
                                         .confidence(new BigDecimal("0.900"))
                                         .build());
                             }
 
                             canonicalText.append("Relacja: ")
-                                    .append(subject.getLabel())
+                                    .append(subject != null ? subject.getLabel() : relation.getSubjectLabel())
                                     .append(" ")
-                                    .append(RelationConstants.prettyRelation(factAction))
+                                    .append(factAction)
                                     .append(" ")
-                                    .append(object.getLabel())
+                                    .append(objectLabel)
                                     .append(". ");
                         }
+                    }
+
+                    if (dto.getVisibleTexts() != null && !dto.getVisibleTexts().isEmpty()) {
+                        List<String> allTexts = dto.getVisibleTexts().stream()
+                                .filter(vt -> vt != null && vt.getText() != null && !vt.getText().isBlank())
+                                .map(VisibleTextDto::getText)
+                                .toList();
+                        if (!allTexts.isEmpty()) {
+                            canonicalText.append("Widoczne napisy: ").append(String.join(", ", allTexts)).append(". ");
+                        }
+                    }
+
+                    // Full structured JSON is also embedded so every detail remains searchable.
+                    String structuredJson = writeJson(dto);
+                    if (structuredJson != null && !structuredJson.isBlank()) {
+                        canonicalText.append("Opis strukturalny JSON: ").append(structuredJson).append(" ");
                     }
 
                 }
@@ -446,24 +458,6 @@ public class IngestionService {
         }
     }
 
-    private String objectActionFor(List<String> actions, String objectValue) {
-        if (actions == null) {
-            return "NEAR_OBJECT";
-        }
-        for (String action : actions) {
-            if (action == null) continue;
-            String normalized = action.toLowerCase(Locale.ROOT)
-                    .replace('ą', 'a').replace('ć', 'c').replace('ę', 'e')
-                    .replace('ł', 'l').replace('ń', 'n').replace('ó', 'o')
-                    .replace('ś', 's').replace('ź', 'z').replace('ż', 'z');
-            if (normalized.contains("trzyma") || normalized.contains("holding")) return "HOLDING";
-            if (normalized.contains("ubiera") || normalized.contains("wearing")
-                    || normalized.contains("ma na sobie")) return "WEARING";
-            if (normalized.contains("uzywa") || normalized.contains("korzysta")) return "INTERACTING_WITH";
-        }
-        return "NEAR_OBJECT";
-    }
-
     @Transactional
     public void reanalyzeExistingImage(FileEntity file) {
         if (file == null || file.getImageData() == null || file.getImageData().length == 0) {
@@ -472,6 +466,7 @@ public class IngestionService {
         Document document = processImage(file.getImageData(), file.getPath(), file.getFileName());
         document.metadata().put("path", file.getPath());
         document.metadata().put("filename", file.getFileName());
+        document.metadata().put("source_type", "IMAGE");
         String folder = file.getPath();
         int slash = folder.indexOf('/', "dir://".length());
         document.metadata().put("document_id", slash > 0 ? folder.substring("dir://".length(), slash) : "");
@@ -647,11 +642,23 @@ public class IngestionService {
             parsedDocument.metadata()
                     .put("document_id", group)
                     .put("filename", fileName)
-                    .put("path", path);
+                    .put("path", path)
+                    .put("source_type", sourceType(fileName));
             ingestor.ingest(parsedDocument);
             log.info("Successfully ingested file: {}", path);
         }
         return path;
+    }
+
+    private String sourceType(String fileName) {
+        String extension = StringUtils.getFilenameExtension(fileName);
+        if (extension == null) return "OTHER";
+        return switch (extension.toLowerCase(Locale.ROOT)) {
+            case "png", "jpg", "jpeg", "gif", "webp" -> "IMAGE";
+            case "pdf" -> "PDF";
+            case "txt" -> "TEXT";
+            default -> "OTHER";
+        };
     }
 
     private void storeEntityTag(String path, String fileName, String entityTag) {

@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // The backend is run locally during development and can be restarted while
+  // Next.js stays up. Do not reuse a socket opened by the previous JVM.
+  httpAgentOptions: {
+    keepAlive: false,
+  },
   async rewrites() {
     return [
       {

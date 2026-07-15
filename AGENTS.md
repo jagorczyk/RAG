@@ -173,13 +173,17 @@ Nie wolno wymyślać szczegółów niewidocznych na obrazie.
 
 ---
 
-## Luki względem kodu (jawnie)
+## Stan implementacji zasad
 
-Agenci nie mogą udawać, że poniższe jest już w pełni domknięte:
+1. **Hybrid retrieval** — `LexicalEmbeddingSearch` + RRF w `RetrievalConfiguration`
+   oraz hybrydowy recall w `ImageCandidateRetriever` (`rag.retrieval.lexical-enabled`).
+2. **Pewne źródła GraphRAG** — `GraphQueryService` eksponuje tylko wzmianki
+   `CONFIRMED` z `rag.graph.min-mention-confidence`; źródła grafu w czacie tylko
+   przy `hasCertainEvidenceForFile`.
+3–5. **JSON vision + szczegółowe embeddingi** — structured vision, relacje
+   przestrzenne, tekst kanoniczny z uczestnikami, relacjami i pełnym JSON.
+6–7. **PL, proste odpowiedzi, źródła poza treścią** — `ANSWER_INSTRUCTIONS` +
+   czyszczenie ścieżek w `ChatInteractionService`.
 
-1. **Lexical retrieval** — zasada 1 wymaga hybrydy; dziś silniejsza jest ścieżka wektorowa.
-2. **Pewność wzmianek w grafie** — zasada 2 preferuje wyłącznie pewne źródła;
-   `isUsableMention` nadal może uwzględniać `SUGGESTED`. Kolejne zmiany mają
-   zaostrzać, nie rozluźniać.
-
-Przy implementacji luk zachowaj regułę dynamicznej interpretacji i zasady 3–7.
+Przy dalszych zmianach **nie rozluźniaj** progów pewności ani nie usuwaj ścieżki
+leksykalnej bez uzasadnienia.

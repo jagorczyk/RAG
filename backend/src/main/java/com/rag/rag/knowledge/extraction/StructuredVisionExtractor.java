@@ -11,6 +11,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
+
 @Slf4j
 @Service
 public class StructuredVisionExtractor {
@@ -28,7 +30,7 @@ public class StructuredVisionExtractor {
     public ExtractionResult extract(String base64Image, String mimeType) {
         UserMessage message = UserMessage.from(
                 TextContent.from(structuredPrompt),
-                ImageContent.from(base64Image, mimeType)
+                ImageContent.from(base64Image, normalizeImageMimeType(mimeType))
         );
 
         String responseText = visionModel.generate(message).content().text();
@@ -60,6 +62,12 @@ public class StructuredVisionExtractor {
             log.warn("Failed to parse vision response to JSON: {}", e.getMessage());
             return new ExtractionResult(null, text, false);
         }
+    }
+
+    private String normalizeImageMimeType(String mimeType) {
+        if (mimeType == null || mimeType.isBlank()) return "image/jpeg";
+        String normalized = mimeType.toLowerCase(Locale.ROOT).trim();
+        return "image/jpg".equals(normalized) ? "image/jpeg" : normalized;
     }
 
     public record ExtractionResult(VisionResultDto resultDto, String rawText, boolean isStructured) {}

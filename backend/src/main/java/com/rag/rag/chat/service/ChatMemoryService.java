@@ -5,6 +5,7 @@ import com.rag.rag.chat.repository.ChatMemoryRepository;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ChatMessageSerializer;
+import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import jakarta.transaction.Transactional;
@@ -31,6 +32,9 @@ public class ChatMemoryService implements ChatMemoryStore {
             return repository.findById(chatId)
                     .map(ChatMemoryEntity::getMessages)
                     .map(ChatMessageDeserializer::messagesFromJson)
+                    .map(messages -> messages.stream()
+                            .filter(message -> !(message instanceof SystemMessage))
+                            .toList())
                     .orElseGet(ArrayList::new);
         }
         return new ArrayList<>();

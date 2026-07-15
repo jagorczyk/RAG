@@ -90,8 +90,16 @@ public class ChatController {
         if (messageRequest.message() == null || messageRequest.message().trim().isEmpty()) {
             return ResponseEntity.badRequest().body("Message content cannot be empty");
         }
-        
-        return ResponseEntity.ok(chatInteractionService.processChatMessage(chatId, messageRequest));
+
+        try {
+            return ResponseEntity.ok(chatInteractionService.processChatMessage(chatId, messageRequest));
+        } catch (Exception e) {
+            log.error("Chat processing failed for {}", chatId, e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "error", "Chat processing failed",
+                    "detail", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()
+            ));
+        }
     }
 
     @PostMapping("/{chatId}/rename")
