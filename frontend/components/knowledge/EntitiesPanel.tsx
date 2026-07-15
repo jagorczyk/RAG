@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { getAllEntities, KnowledgeEntity, renameEntity } from "@/lib/knowledge-api";
 import { Check, Edit2, X } from "lucide-react";
 
@@ -55,6 +56,7 @@ function EntityPhotoCollage({ photos }: { photos: NonNullable<KnowledgeEntity["p
 }
 
 export function EntitiesPanel() {
+  const router = useRouter();
   const [entities, setEntities] = useState<KnowledgeEntity[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -95,6 +97,10 @@ export function EntitiesPanel() {
     }
   };
 
+  const openEntityAlbum = (entityId: string) => {
+    router.push(`/knowledge/${entityId}`);
+  };
+
   return (
     <section className="rounded-[10px] border border-border bg-surface p-4 sm:p-5">
       <div className="mb-4 flex items-end justify-between gap-3">
@@ -104,7 +110,7 @@ export function EntitiesPanel() {
           </h3>
           <p className="mt-0.5 text-sm text-ink-muted">
             {visibleEntities.length > 0
-              ? `${visibleEntities.length} ${visibleEntities.length === 1 ? "wpis" : visibleEntities.length < 5 ? "wpisy" : "wpisów"}`
+              ? `${visibleEntities.length} ${visibleEntities.length === 1 ? "wpis" : visibleEntities.length < 5 ? "wpisy" : "wpisów"} · kliknij osobę, aby zobaczyć wszystkie zdjęcia`
               : "Encje wykryte na zdjęciach"}
           </p>
         </div>
@@ -120,9 +126,34 @@ export function EntitiesPanel() {
 
             return (
               <li key={entity.id}>
-                <article className="entity-card flex h-full flex-col rounded-[10px] border border-border bg-surface-raised p-3">
+                <article
+                  className={`entity-card flex h-full flex-col rounded-[10px] border border-border bg-surface-raised p-3 transition-colors ${
+                    editingId === entity.id
+                      ? ""
+                      : "cursor-pointer hover:border-border-strong hover:bg-surface"
+                  }`}
+                  onClick={() => {
+                    if (editingId !== entity.id) {
+                      openEntityAlbum(entity.id);
+                    }
+                  }}
+                  onKeyDown={(ev) => {
+                    if (editingId === entity.id) return;
+                    if (ev.key === "Enter" || ev.key === " ") {
+                      ev.preventDefault();
+                      openEntityAlbum(entity.id);
+                    }
+                  }}
+                  role={editingId === entity.id ? undefined : "link"}
+                  tabIndex={editingId === entity.id ? undefined : 0}
+                  aria-label={
+                    editingId === entity.id
+                      ? undefined
+                      : `Otwórz album: ${entity.displayName}`
+                  }
+                >
                   {editingId === entity.id ? (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="text"
                         value={editValue}
@@ -173,7 +204,10 @@ export function EntitiesPanel() {
                         </div>
                         <button
                           type="button"
-                          onClick={() => startEdit(entity)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startEdit(entity);
+                          }}
                           className="btn-ghost h-8 w-8 shrink-0 p-0 text-ink-muted hover:text-ink"
                           aria-label={`Edytuj ${entity.displayName}`}
                         >

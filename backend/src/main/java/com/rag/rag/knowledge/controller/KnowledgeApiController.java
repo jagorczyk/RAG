@@ -3,11 +3,14 @@ package com.rag.rag.knowledge.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
+import com.rag.rag.knowledge.dto.EntityAppearanceDto;
 import com.rag.rag.knowledge.dto.EntityMentionViewDto;
 import com.rag.rag.knowledge.dto.EntityPhotoDto;
 import com.rag.rag.knowledge.dto.EntitySummaryDto;
 import com.rag.rag.knowledge.dto.IdentitySuggestionViewDto;
+import com.rag.rag.knowledge.dto.PersonGraphDto;
 import com.rag.rag.knowledge.dto.SuggestionMentionViewDto;
+import com.rag.rag.knowledge.graph.PersonRelationGraphService;
 import com.rag.rag.knowledge.entity.EntityAlias;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
@@ -65,6 +68,7 @@ public class KnowledgeApiController {
     private final FaceIdentityService faceIdentityService;
     private final FaceCropService faceCropService;
     private final FaceObservationRepository faceObservationRepository;
+    private final PersonRelationGraphService personRelationGraphService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
 
@@ -221,6 +225,82 @@ public class KnowledgeApiController {
                 .sorted(Comparator.comparing(EntitySummaryDto::displayName, String.CASE_INSENSITIVE_ORDER))
                 .toList();
         return ResponseEntity.ok(entities);
+    }
+
+    @GetMapping("/entities/{id}")
+    @Transactional(readOnly = true)
+    public ResponseEntity<EntitySummaryDto> getEntity(@PathVariable UUID id) {
+        KnowledgeEntity entity = requireNamedPersonEntity(id);
+        return ResponseEntity.ok(new EntitySummaryDto(
+                entity.getId(),
+                entity.getDisplayName(),
+                entity.getType(),
+                List.of()
+        ));
+    }
+
+    @GetMapping("/entities/{id}/appearances")
+    @Transactional(readOnly = true)
+    public ResponseEntity<List<EntityAppearanceDto>> getEntityAppearances(@PathVariable UUID id) {
+        requireNamedPersonEntity(id);
+
+        List<EntityAppearanceDto> appearances = new ArrayList<>();
+        Set<String> seenPaths = new LinkedHashSet<>();
+        for (EntityMention mention : mentionRepository.findByEntityId(id)) {
+            if (mention.getStatus() == MentionStatus.REJECTED) {
+                continue;
+            }
+            // Prefer confirmed identity links; still include other non-rejected links
+            // so the album matches photos shown on the entity list.
+            String path = mention.getFilePath();
+            if (path == null || path.isBlank() || !seenPaths.add(path)) {
+                continue;
+            }
+            Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
+            if (fileOpt.isEmpty()) {
+                continue;
+            }
+            FileEntity file = fileOpt.get();
+            if (file.getFileType() == null || !file.getFileType().toLowerCase(Locale.ROOT).startsWith("image/")) {
+                continue;
+            }
+
+            List<Float> bbox = faceEmbeddingRepository.findFirstByMention_Id(mention.getId())
+                    .map(FaceEmbedding::getBbox)
+                    .map(this::bboxToList)
+                    .orElseGet(() -> parseMentionBbox(mention.getBbox(), file));
+
+            appearances.add(new EntityAppearanceDto(
+                    mention.getId(),
+                    path,
+                    file.getFileName() != null ? file.getFileName() : path,
+                    mention.getStatus() != null ? mention.getStatus().name() : null,
+                    mention.getConfidence(),
+                    bbox
+            ));
+        }
+
+        appearances.sort(Comparator.comparing(
+                EntityAppearanceDto::fileName,
+                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)
+        ));
+        return ResponseEntity.ok(appearances);
+    }
+
+    @GetMapping("/graph/person-relations")
+    @Transactional(readOnly = true)
+    public ResponseEntity<PersonGraphDto> getPersonRelationGraph() {
+        return ResponseEntity.ok(personRelationGraphService.buildPersonRelationGraph());
+    }
+
+    private KnowledgeEntity requireNamedPersonEntity(UUID id) {
+        KnowledgeEntity entity = entityRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found"));
+        if (!"PERSON".equalsIgnoreCase(entity.getType())
+                || identityResolutionService.isGenericPersonLabel(entity.getDisplayName())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found");
+        }
+        return entity;
     }
 
     private EntitySummaryDto toEntitySummary(KnowledgeEntity entity) {

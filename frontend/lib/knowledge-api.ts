@@ -44,6 +44,34 @@ export interface KnowledgeEntity {
   photos?: EntityPhoto[];
 }
 
+export interface EntityAppearance {
+  mentionId: string;
+  filePath: string;
+  fileName: string;
+  status: string;
+  confidence: number;
+  bbox?: number[] | null;
+}
+
+export interface PersonGraphNode {
+  id: string;
+  displayName: string;
+  photoCount: number;
+}
+
+export interface PersonGraphEdge {
+  sourceId: string;
+  targetId: string;
+  relation: string;
+  weight: number;
+  kind: "SPATIAL" | "CO_OCCURRENCE" | string;
+}
+
+export interface PersonRelationGraph {
+  nodes: PersonGraphNode[];
+  edges: PersonGraphEdge[];
+}
+
 export async function getPendingSuggestions(): Promise<IdentitySuggestion[]> {
   const res = await fetch(`${API_URL}/api/knowledge/review/pending`);
   if (!res.ok) throw new Error("Failed to fetch pending suggestions");
@@ -73,6 +101,24 @@ export async function splitSuggestion(suggestionId: string): Promise<void> {
 export async function getAllEntities(): Promise<KnowledgeEntity[]> {
   const res = await fetch(`${API_URL}/api/knowledge/entities`);
   if (!res.ok) throw new Error("Failed to fetch entities");
+  return res.json();
+}
+
+export async function getEntity(entityId: string): Promise<KnowledgeEntity> {
+  const res = await fetch(`${API_URL}/api/knowledge/entities/${entityId}`);
+  if (!res.ok) throw new Error("Failed to fetch entity");
+  return res.json();
+}
+
+export async function getEntityAppearances(entityId: string): Promise<EntityAppearance[]> {
+  const res = await fetch(`${API_URL}/api/knowledge/entities/${entityId}/appearances`);
+  if (!res.ok) throw new Error("Failed to fetch entity appearances");
+  return res.json();
+}
+
+export async function getPersonRelationGraph(): Promise<PersonRelationGraph> {
+  const res = await fetch(`${API_URL}/api/knowledge/graph/person-relations`);
+  if (!res.ok) throw new Error("Failed to fetch person relation graph");
   return res.json();
 }
 
