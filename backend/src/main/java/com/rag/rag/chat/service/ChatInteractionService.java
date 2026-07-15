@@ -79,6 +79,7 @@ public class ChatInteractionService {
 
                 [Instrukcja odpowiedzi]
                 %s
+                Odpowiedź: jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
 
                 Pytanie użytkownika: %s
                 """.formatted(graphContext, plan.answerInstruction(), plan.question());
@@ -117,10 +118,10 @@ public class ChatInteractionService {
         }
         boolean uncertain = plan.ambiguous() || matches.stream()
                 .anyMatch(match -> match.decision() == VisualMatchDecision.Decision.UNCERTAIN);
-        String visualContext = visualContext(plan, matches);
-        String answer = verifiedVisualAnswerService.answer(visualContext);
+        // Answer prose stays short; detailed reasons stay only in evidence/sources UI.
+        String answer = verifiedVisualAnswerService.answer(plan.question(), matches.size());
         if (answer == null || answer.isBlank()) {
-            answer = "Znaleziono potwierdzone dowody wizualne dotyczące warunku z pytania.";
+            answer = "Oto potwierdzone zdjęcia.";
         }
         String cleaned = removeTechnicalReferences(answer, visualSources);
         saveAiMessage(chatId, cleaned, visualSources, evidence, QueryPlan.RetrievalMode.VISUAL_VALIDATION.name(), uncertain);
@@ -180,27 +181,13 @@ public class ChatInteractionService {
         unique.putIfAbsent(key, source);
     }
 
-    private String visualContext(QueryPlan plan, List<VisualQueryMatch> matches) {
-        StringBuilder context = new StringBuilder("[Zweryfikowane dowody wizualne]\n");
-        for (VisualQueryMatch match : matches) {
-            context.append("- status=").append(match.decision())
-                    .append(", pewność=").append(match.confidence())
-                    .append(", powody=").append(String.join("; ", match.reasons()))
-                    .append('\n');
-        }
-        context.append("Instrukcja: ").append(plan.answerInstruction()).append('\n')
-                .append("Pytanie użytkownika: ").append(plan.question());
-        boolean hasConfirmedMatch = matches.stream()
-                .anyMatch(match -> match.decision() == VisualMatchDecision.Decision.MATCH);
-        if (!hasConfirmedMatch) {
-            context.append("\nKażdy dostępny element jest niepewny. Nie wskazuj konkretnego pliku ")
-                    .append("i nie twierdź, że warunek jest potwierdzony.");
-        }
-        return context.toString();
-    }
-
     private String answerPrompt(String context) {
-        return ChatService.ANSWER_INSTRUCTIONS + "\n\n" + context;
+        return ChatService.ANSWER_INSTRUCTIONS + """
+
+                [Styl odpowiedzi]
+                Jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
+
+                """ + context;
     }
 
     private String removeTechnicalReferences(String answer, List<SourceDto> sources) {

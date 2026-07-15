@@ -53,7 +53,7 @@ public class QueryPlanner {
                     "retrievalQuery":"standalone semantic query resolved from the conversation",
                     "condition":"full semantic constraint", "visualCondition":false,
                     "ambiguous":false,"retrievalMode":"HYBRID",
-                    "answerInstruction":"how to answer using evidence"}
+                    "answerInstruction":"one short Polish sentence only; never retell appearance or list files"}
                     User request: %s
                     """.formatted(knownEntities, conversationContext == null ? "" : conversationContext, safeQuestion));
             return fromJson(safeQuestion, knownEntities, response, fallback);

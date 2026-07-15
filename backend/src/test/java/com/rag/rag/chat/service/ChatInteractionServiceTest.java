@@ -104,13 +104,15 @@ class ChatInteractionServiceTest {
         when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
         SourceDto source = new SourceDto("dir://michal.jpg", "michal.jpg", 0.8, null, "IMAGE");
         when(ingestionService.createSourceDto(anyString(), any(), anyDouble())).thenReturn(source);
-        when(verifiedVisualAnswerService.answer(anyString())).thenReturn("Tak, na zdjęciu Michał ma blond włosy.");
+        when(verifiedVisualAnswerService.answer(eq(plan.question()), eq(1)))
+                .thenReturn("Tak, Michał ma blond włosy.");
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
 
-        assertTrue(response.response().contains("blond"));
+        assertEquals("Tak, Michał ma blond włosy.", response.response());
         assertEquals(1, response.evidence().size());
         assertFalse(response.uncertain());
+        verify(verifiedVisualAnswerService).answer(eq(plan.question()), eq(1));
     }
 
     @Test

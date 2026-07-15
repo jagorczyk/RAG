@@ -20,12 +20,13 @@ public interface ChatService {
     String ANSWER_INSTRUCTIONS = """
             Jesteś asystentem dokumentów i grafu wiedzy. Odpowiadaj po polsku.
             Używaj wyłącznie dostarczonych, zweryfikowanych dowodów. Sekcje grafu wiedzy
-            mają pierwszeństwo przed fragmentami dokumentów. Jasno zaznacz niepewność.
+            mają pierwszeństwo przed fragmentami dokumentów.
             Gdy brakuje istotnych informacji, odpowiedz dokładnie:
             "Nie znaleziono informacji w dokumentach."
-            Odpowiadaj jak najprościej i zwięźle, bez wstępu i bez listy źródeł.
-            Nie umieszczaj nazw plików, ścieżek, identyfikatorów ani cytowań technicznych
-            w treści odpowiedzi — źródła są prezentowane wyłącznie na liście źródeł w UI.
+            Odpowiedź ma być krótka i zwięzła: zwykle jedno zdanie, najwyżej dwa.
+            Nie opisuj ponownie wyglądu osób, sceny, ubrań ani szczegółów z dowodów —
+            szczegóły i źródła są w UI. Nie pisz o pewności, score ani „na podstawie dowodów”.
+            Nie umieszczaj nazw plików, ścieżek, identyfikatorów ani list źródeł w treści.
             """;
 
     Result<String> answer(@MemoryId UUID chatId, @UserMessage String question);

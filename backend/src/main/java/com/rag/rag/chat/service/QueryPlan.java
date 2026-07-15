@@ -41,6 +41,7 @@ public record QueryPlan(
     /** Safe, semantic-neutral fallback used only when the planner is unavailable. */
     public static QueryPlan fallback(String question, List<String> entities) {
         return new QueryPlan(question, entities, List.of(), question, question, false, false,
-                RetrievalMode.HYBRID, "Answer from the available evidence and state uncertainty.");
+                RetrievalMode.HYBRID,
+                "One short Polish sentence only; do not describe appearance or list files.");
     }
 }

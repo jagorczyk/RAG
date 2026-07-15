@@ -219,13 +219,13 @@ public class RetrievalConfiguration {
             if (!graphContext.isEmpty()) {
                 promptBuilder.append(graphContext).append("\n\n");
             }
-            promptBuilder.append("Odpowiedz na pytanie po polsku, zwięźle i prosto. ")
-                    .append("Graf wiedzy (jeśli podany) jest źródłem prawdy dla osób i relacji — ")
-                    .append("fragmenty dokumentów uzupełniają opis. Gdy pytanie ma dwie części ")
-                    .append("(np. opis dokumentu i kto jest na zdjęciu), odpowiedz na obie części osobno. ")
+            promptBuilder.append("Odpowiedz po polsku jedną krótką zdaniami (max 1–2 zdania). ")
+                    .append("Graf wiedzy (jeśli podany) jest źródłem prawdy dla osób i relacji. ")
+                    .append("Gdy pytanie ma dwie części, odpowiedz na obie krótko. ")
                     .append("Używaj wyłącznie dostarczonych dowodów. ")
-                    .append("Nie wypisuj nazw plików, ścieżek, identyfikatorów zdjęć ani list źródeł w odpowiedzi — ")
-                    .append("źródła są prezentowane osobno w interfejsie.\n\n")
+                    .append("Nie opisuj wyglądu, ubrań, włosów ani sceny, jeśli pytanie prosi tylko o wskazanie zdjęć. ")
+                    .append("Nie pisz o pewności ani „na podstawie dowodów”. ")
+                    .append("Nie wypisuj nazw plików, ścieżek ani list źródeł — źródła są w UI.\n\n")
                     .append("Pytanie: ").append(actualQuestion).append("\n\n")
                     .append("Dokumenty:\n").append(contextJoined);
 
