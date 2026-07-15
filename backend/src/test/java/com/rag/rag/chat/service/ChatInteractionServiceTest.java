@@ -8,6 +8,11 @@ import com.rag.rag.chat.repository.ChatMemoryRepository;
 import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
+import com.rag.rag.knowledge.graph.GraphQueryService;
+import com.rag.rag.knowledge.entity.MentionStatus;
+import dev.langchain4j.data.document.Metadata;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.rag.content.Content;
 import dev.langchain4j.service.Result;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,12 +23,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class ChatInteractionServiceTest {
@@ -40,6 +48,15 @@ class ChatInteractionServiceTest {
     @Mock
     private IngestionService ingestionService;
 
+    @Mock
+    private QueryRouter queryRouter;
+
+    @Mock
+    private GraphQueryService graphQueryService;
+
+    @Mock
+    private ChatEntityReferenceService chatEntityReferenceService;
+
     @InjectMocks
     private ChatInteractionService chatInteractionService;
 
@@ -48,6 +65,25 @@ class ChatInteractionServiceTest {
     @BeforeEach
     void setUp() {
         chatId = UUID.randomUUID();
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.DOCUMENT);
+        lenient().when(graphQueryService.buildContextForQuestion(any())).thenReturn("");
+        lenient().when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.empty());
+        lenient().when(ingestionService.createGraphFactSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0),
+                        invocation.getArgument(1),
+                        invocation.getArgument(2),
+                        null,
+                        "GRAPH_FACT"
+                ));
+        lenient().when(ingestionService.createSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0),
+                        invocation.getArgument(1),
+                        invocation.getArgument(2),
+                        null,
+                        "IMAGE"
+                ));
     }
 
     @Test
@@ -106,6 +142,369 @@ class ChatInteractionServiceTest {
         // Assert
         assertEquals("Przepraszam, model zwrócił pustą odpowiedź.", response.response());
         assertTrue(response.sources().isEmpty());
+    }
+
+    @Test
+    void shouldStripFilePathsFromResponseWhenGraphProvidesSources() {
+        MessageRequest request = new MessageRequest("Na których zdjęciach jest Olek?");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_FILES);
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Olek występuje w pliku: 20230526_232902.jpg (etykieta: Olek) | plik: dir://test123/20230526_232902.jpg
+                - Olek występuje w pliku: 20230505_132630.jpg (etykieta: Olek) | plik: dir://test123/20230505_132630.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+
+        String aiResponseContent = "Olek występuje na 2 zdjęciach.";
+        Result<String> aiResult = Result.<String>builder().content(aiResponseContent).build();
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of());
+
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
+                .thenReturn(new SourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0, null, null));
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
+                .thenReturn(new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0, null, null));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals(2, response.sources().size());
+        assertEquals("Olek występuje na 2 zdjęciach.", response.response());
+    }
+
+    @Test
+    void shouldNarrowGraphSourcesWithRetrievalIntersection() {
+        MessageRequest request = new MessageRequest("Gdzie Olek jest na siłowni?");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_FILES);
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Olek występuje w pliku: 20230526_232902.jpg (etykieta: Olek) | plik: dir://test123/20230526_232902.jpg
+                - Olek występuje w pliku: 20230505_132630.jpg (etykieta: Olek) | plik: dir://test123/20230505_132630.jpg
+                - Olek występuje w pliku: 20230505_132643.jpg (etykieta: Olek) | plik: dir://test123/20230505_132643.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+
+        Result<String> aiResult = Result.<String>builder().content("Olek jest na siłowni na 2 zdjęciach.").build();
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
+
+        SourceDto gymPhoto1 = new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 0.9, null, "IMAGE");
+        SourceDto gymPhoto2 = new SourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 0.8, null, "IMAGE");
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(gymPhoto1, gymPhoto2));
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
+                .thenReturn(new SourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0, null, null));
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
+                .thenReturn(gymPhoto1);
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 1.0))
+                .thenReturn(gymPhoto2);
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals(2, response.sources().size());
+        assertTrue(response.sources().stream().noneMatch(s -> s.fileName().equals("20230526_232902.jpg")));
+    }
+
+    @Test
+    void shouldExcludeGraphSourcesNotMentionedInResponse() {
+        MessageRequest request = new MessageRequest("Gdzie Olek jest na siłowni?");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_FILES);
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Olek występuje w pliku: 20230526_232902.jpg (etykieta: Olek) | plik: dir://test123/20230526_232902.jpg
+                - Olek występuje w pliku: 20230505_132630.jpg (etykieta: Olek) | plik: dir://test123/20230505_132630.jpg
+                - Olek występuje w pliku: 20230505_132643.jpg (etykieta: Olek) | plik: dir://test123/20230505_132643.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+
+        String aiResponseContent = """
+                Olek jest na siłowni na następujących zdjęciach:
+                - 20230505_132643
+                - 20230505_132630
+                """;
+        Result<String> aiResult = Result.<String>builder().content(aiResponseContent).build();
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
+
+        SourceDto gymPhoto1 = new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 0.9, null, "IMAGE");
+        SourceDto gymPhoto2 = new SourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 0.8, null, "IMAGE");
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(gymPhoto1, gymPhoto2));
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0))
+                .thenReturn(new SourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 1.0, null, null));
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0))
+                .thenReturn(new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 1.0, null, null));
+        when(ingestionService.createGraphFactSourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 1.0))
+                .thenReturn(new SourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 1.0, null, null));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals(2, response.sources().size());
+        assertTrue(response.sources().stream().noneMatch(s -> s.fileName().equals("20230526_232902.jpg")));
+        assertFalse(response.response().contains("20230505_132643"));
+        assertFalse(response.response().contains("na następujących"));
+    }
+
+    @Test
+    void shouldLimitSourcesToDeclaredPhotoCount() {
+        MessageRequest request = new MessageRequest("Gdzie Olek jest na siłowni?");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_FILES);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Olek"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Olek występuje w pliku: 20230526_232902.jpg (etykieta: Olek) | plik: dir://test123/20230526_232902.jpg
+                - Olek występuje w pliku: 20230505_132630.jpg (etykieta: Olek) | plik: dir://test123/20230505_132630.jpg
+                - Olek występuje w pliku: 20230505_132643.jpg (etykieta: Olek) | plik: dir://test123/20230505_132643.jpg
+                - Olek występuje w pliku: 20230502_094428.jpg (etykieta: Olek) | plik: dir://test123/20230502_094428.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+
+        Result<String> aiResult = Result.<String>builder()
+                .content("Olek jest na siłowni na 3 zdjęciach.")
+                .sources(List.of(
+                        retrievalContent("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 0.95, "Olek w domu."),
+                        retrievalContent("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 0.9, "Olek na siłowni."),
+                        retrievalContent("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 0.85, "Olek na siłowni."),
+                        retrievalContent("dir://test123/20230502_094428.jpg", "20230502_094428.jpg", 0.8, "Olek na siłowni.")
+                ))
+                .build();
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
+
+        SourceDto homePhoto = new SourceDto("dir://test123/20230526_232902.jpg", "20230526_232902.jpg", 0.95, null, "IMAGE");
+        SourceDto gymPhoto1 = new SourceDto("dir://test123/20230505_132630.jpg", "20230505_132630.jpg", 0.9, null, "IMAGE");
+        SourceDto gymPhoto2 = new SourceDto("dir://test123/20230505_132643.jpg", "20230505_132643.jpg", 0.85, null, "IMAGE");
+        SourceDto gymPhoto3 = new SourceDto("dir://test123/20230502_094428.jpg", "20230502_094428.jpg", 0.8, null, "IMAGE");
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(homePhoto, gymPhoto1, gymPhoto2, gymPhoto3));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals(3, response.sources().size());
+        assertTrue(response.sources().stream().noneMatch(s -> s.fileName().equals("20230526_232902.jpg")));
+    }
+
+    @Test
+    void shouldUseAllGraphSourcesForPureFileListQuestionEvenWhenRetrievalIsPartial() {
+        MessageRequest request = new MessageRequest("na których zdjęciach znajduje się Bartek?");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_FILES);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Bartek"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Bartek występuje w pliku: 20230526_232615.jpg (etykieta: Bartek) | plik: dir://pati/20230526_232615.jpg
+                - Bartek występuje w pliku: 20230601_193903.jpg (etykieta: Bartek) | plik: dir://pati/20230601_193903.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+
+        Result<String> aiResult = Result.<String>builder()
+                .content("Bartek występuje na dwóch zdjęciach.")
+                .build();
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
+
+        SourceDto photo1 = new SourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 0.9, null, "IMAGE");
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(photo1));
+        when(ingestionService.createGraphFactSourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 1.0))
+                .thenReturn(photo1);
+        when(ingestionService.createGraphFactSourceDto("dir://pati/20230601_193903.jpg", "20230601_193903.jpg", 1.0))
+                .thenReturn(new SourceDto("dir://pati/20230601_193903.jpg", "20230601_193903.jpg", 1.0, null, "IMAGE"));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals(2, response.sources().size());
+        assertEquals("Bartek występuje na dwóch zdjęciach.", response.response());
+    }
+
+    @Test
+    void shouldUseCoOccurrenceGraphContextForWithWhomQuestion() {
+        MessageRequest request = new MessageRequest("jak mają na imie osoby z którymi Bartek jest na zdjęciach?");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_CO_OCCURRENCE);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Bartek"));
+        String graphContext = """
+                [Współwystępowania z grafu wiedzy]
+                - Bartek występuje w pliku 20230526_232615.jpg razem z: Olek, Pati | plik: dir://pati/20230526_232615.jpg
+                - Wszystkie osoby współwystępujące z Bartek: Olek, Pati
+                """;
+        when(graphQueryService.buildCoOccurrenceContextForQuestion(any())).thenReturn(graphContext);
+
+        Result<String> aiResult = Result.<String>builder()
+                .content("Osoby współwystępujące z Bartkiem to Olek i Pati.")
+                .build();
+        when(chatAiService.answer(eq(chatId), eq(graphContext + "\n\nPytanie użytkownika: " + request.message())))
+                .thenReturn(aiResult);
+
+        SourceDto photo = new SourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 0.9, null, "IMAGE");
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(photo));
+        when(ingestionService.createGraphFactSourceDto("dir://pati/20230526_232615.jpg", "20230526_232615.jpg", 1.0))
+                .thenReturn(photo);
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Osoby współwystępujące z Bartkiem to Olek i Pati.", response.response());
+        assertEquals(1, response.sources().size());
+        verify(graphQueryService).buildCoOccurrenceContextForQuestion(request.message());
+    }
+
+    @Test
+    void shouldUseGraphOnlySourcesForNeighborQuestion() {
+        MessageRequest request = new MessageRequest("kto siedzi obok Bartka na zdjęciu");
+
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_NEIGHBOR);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Bartek"));
+        String graphContext = """
+                [Relacje z grafu wiedzy]
+                - Olek siedzi obok Bartek | plik: dir://pati/20230526_232510.jpg
+                - Pati siedzi obok Bartek | plik: dir://pati/20230526_232510.jpg
+                """;
+        when(graphQueryService.buildNeighborContextForQuestion(any())).thenReturn(graphContext);
+
+        Result<String> aiResult = Result.<String>builder()
+                .content("Obok Bartka siedzą Olek i Pati.")
+                .build();
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(aiResult);
+
+        SourceDto bathroomPhoto = new SourceDto(
+                "dir://pati/20230526_232510.jpg", "20230526_232510.jpg", 1.0, null, "IMAGE"
+        );
+        SourceDto irrelevantPhoto = new SourceDto(
+                "dir://pati/20220513_165118.jpg", "20220513_165118.jpg", 0.9, null, "IMAGE"
+        );
+        when(ingestionService.getSources(aiResult)).thenReturn(List.of(irrelevantPhoto));
+        when(ingestionService.createGraphFactSourceDto("dir://pati/20230526_232510.jpg", "20230526_232510.jpg", 1.0))
+                .thenReturn(bathroomPhoto);
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Obok Bartka siedzą Olek i Pati.", response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals("20230526_232510.jpg", response.sources().get(0).fileName());
+        verify(graphQueryService).buildNeighborContextForQuestion(request.message());
+    }
+
+    @Test
+    void shouldReturnOnlyMatchingHeadphonesPhoto() {
+        MessageRequest request = new MessageRequest("daj mi zdjęcie Igora w słuchawkach");
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Igor"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Igor występuje w pliku: 20220212_214716.jpg | plik: dir://tes/20220212_214716.jpg
+                - Igor występuje w pliku: 20230608_180000.jpg | plik: dir://awd/20230608_180000.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(
+                Result.<String>builder().content("Nie mam dostępu do zdjęć.").build());
+
+        SourceDto matching = new SourceDto(
+                "dir://tes/20220212_214716.jpg", "20220212_214716.jpg", 0.91, null, "IMAGE");
+        SourceDto irrelevant = new SourceDto(
+                "dir://awd/20230608_180000.jpg", "20230608_180000.jpg", 0.31, null, "IMAGE");
+        when(ingestionService.getSources(any())).thenReturn(List.of(matching, irrelevant));
+        when(ingestionService.createGraphFactSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0), invocation.getArgument(1), 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Znalazłem pasujące zdjęcie.", response.response());
+        assertEquals(List.of(matching.path()), response.sources().stream().map(SourceDto::path).toList());
+    }
+
+    @Test
+    void shouldAnswerExactPhotoListFromGraphWithoutCallingLanguageModel() {
+        MessageRequest request = new MessageRequest("Zdjęcia Igora");
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.HYBRID);
+        when(queryRouter.isExactPhotoListQuestion(anyString(), any())).thenReturn(true);
+        when(graphQueryService.findAllEntityNamesInQuestion(request.message()))
+                .thenReturn(List.of("Igor"));
+        when(graphQueryService.findPhotoMatchesForEntities(List.of("Igor")))
+                .thenReturn(List.of(
+                        new GraphQueryService.PhotoMatch(
+                                "dir://123/a.jpg", List.of("Igor"), MentionStatus.CONFIRMED,
+                                java.math.BigDecimal.valueOf(0.91)),
+                        new GraphQueryService.PhotoMatch(
+                                "dir://123/b.jpg", List.of("Igor"), MentionStatus.CONFIRMED,
+                                java.math.BigDecimal.valueOf(0.82))));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Znaleziono 2 zdjęcia, na których występuje Igor.", response.response());
+        assertEquals(2, response.sources().size());
+        assertEquals("GRAPH_QUERY", response.answerKind());
+        verifyNoInteractions(chatAiService);
+        verify(ingestionService, never()).getSources(any());
+    }
+
+    @Test
+    void shouldReturnOnlyRallyPhotoForQualifiedPhotoSearch() {
+        MessageRequest request = new MessageRequest("daj mi zdjęcie Olka z rajdowcem");
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Olek"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Olek występuje w pliku: 20220320_170940.jpg | plik: dir://tes/20220320_170940.jpg
+                - Olek występuje w pliku: 20230225_212339.jpg | plik: dir://awd/20230225_212339.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(
+                Result.<String>builder().content("Nie mam dostępu do zdjęć.").build());
+
+        SourceDto matching = new SourceDto(
+                "dir://tes/20220320_170940.jpg", "20220320_170940.jpg", 0.88, null, "IMAGE");
+        SourceDto irrelevant = new SourceDto(
+                "dir://awd/20230225_212339.jpg", "20230225_212339.jpg", 0.22, null, "IMAGE");
+        when(ingestionService.getSources(any())).thenReturn(List.of(matching, irrelevant));
+        when(ingestionService.createGraphFactSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0), invocation.getArgument(1), 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Znalazłem pasujące zdjęcie.", response.response());
+        assertEquals(List.of(matching.path()), response.sources().stream().map(SourceDto::path).toList());
+    }
+
+    @Test
+    void shouldReturnAllGraphPhotosForUnqualifiedPhotoList() {
+        MessageRequest request = new MessageRequest("podaj wszystkie zdjęcia na których występuje Olek");
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Olek"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Olek występuje w pliku: 20220320_170940.jpg | plik: dir://tes/20220320_170940.jpg
+                - Olek występuje w pliku: 20230225_212339.jpg | plik: dir://awd/20230225_212339.jpg
+                - Olek występuje w pliku: 20230505_132643.jpg | plik: dir://awd/20230505_132643.jpg
+                - Olek występuje w pliku: 4C Matura-342.jpg | plik: dir://awd/4C Matura-342.jpg
+                - Olek występuje w pliku: 4C Matura-347.jpg | plik: dir://awd/4C Matura-347.jpg
+                - Olek występuje w pliku: received_161894593440046.jpeg | plik: dir://awd/received_161894593440046.jpeg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(
+                Result.<String>builder().content("Olek występuje na zdjęciach.").build());
+
+        SourceDto first = new SourceDto("dir://tes/20220320_170940.jpg", "20220320_170940.jpg", 0.0, null, "IMAGE");
+        SourceDto second = new SourceDto("dir://awd/20230225_212339.jpg", "20230225_212339.jpg", 0.0, null, "IMAGE");
+        SourceDto third = new SourceDto("dir://awd/20230505_132643.jpg", "20230505_132643.jpg", 0.0, null, "IMAGE");
+        SourceDto fourth = new SourceDto("dir://awd/4C Matura-342.jpg", "4C Matura-342.jpg", 0.0, null, "IMAGE");
+        SourceDto fifth = new SourceDto("dir://awd/4C Matura-347.jpg", "4C Matura-347.jpg", 0.0, null, "IMAGE");
+        SourceDto sixth = new SourceDto("dir://awd/received_161894593440046.jpeg", "received_161894593440046.jpeg", 0.0, null, "IMAGE");
+        when(ingestionService.createGraphFactSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0), invocation.getArgument(1), 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Znalazłem 6 zdjęć.", response.response());
+        assertEquals(6, response.sources().size());
+        assertEquals(
+                List.of(first.path(), second.path(), third.path(), fourth.path(), fifth.path(), sixth.path()),
+                response.sources().stream().map(SourceDto::path).toList());
+    }
+
+    private static Content retrievalContent(String path, String filename, double score, String text) {
+        return Content.from(TextSegment.from(text, Metadata.from(Map.of(
+                "path", path,
+                "filename", filename,
+                "score", String.valueOf(score)
+        ))));
     }
 
     @Test

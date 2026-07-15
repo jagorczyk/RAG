@@ -10,5 +10,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  face-service:
+    build: ./face-service
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+
 volumes:
   pgdata:

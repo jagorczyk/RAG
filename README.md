@@ -1,6 +1,6 @@
 # RAG (Retrieval-Augmented Generation) - Document Management System
 
-This project is a RAG (Retrieval-Augmented Generation) application designed for document management, analysis, and interaction through a chat interface powered by language models. The system supports text documents, PDF files, and images, offering advanced object and text detection capabilities on images.
+This project is a RAG (Retrieval-Augmented Generation) application designed for document management, analysis, and interaction through a chat interface powered by language models. The system supports text documents, PDF files, and images.
 
 ## Architecture and Technology Stack
 
@@ -15,9 +15,7 @@ The project consists of two main parts: the backend (Spring Boot) and the fronte
     *   Llama 3.1 (chat)
     *   MiniCPM-V (vision)
     *   bge-m3 (embeddings)
-    *   YOLOv8s (object detection)
-    *   DB_TD500_resnet50 (text detection)
-*   **Document Processing:** Apache PDFBox, Apache Tika, OpenCV
+*   **Document Processing:** Apache PDFBox, Apache Tika
 
 ### Frontend
 *   **Framework:** Next.js 16.2.2, React 19
@@ -45,19 +43,33 @@ Start the database using the following command:
 docker-compose up -d pgvector
 ```
 
-### Step 2: Backend Configuration
+### Step 2: Ollama Models Setup (If using local LLM)
+If you choose to run the language models locally via Ollama, you must pull the required models before starting the application. Open your terminal and run the following commands:
+```bash
+ollama pull llama3.1
+ollama pull minicpm-v
+ollama pull bge-m3
+```
+
+### Step 3: Backend Configuration
 The server source code is located in the `backend/` directory.
 
-1.  **Model Download:**
-    The detection models (YOLO and TextDetector) must be placed in the `backend/models/` directory. Default paths are:
-    *   `models/yolov8s.onnx`
-    *   `models/DB_TD500_resnet50.onnx`
-2.  **Environment Variables:**
-    The backend can be configured using a `backend/.env` file (optional) or directly within `backend/src/main/resources/application.properties`. An API key for OpenAI (or Groq, depending on URL configuration) is required:
+1.  **Environment Variables:**
+    The backend can be configured using a `backend/.env` file (optional) or directly within `backend/src/main/resources/application.properties`. 
+
+    **For OpenAI / Groq:**
     ```properties
+    llm.provider=openai
     OPENAI_API_KEY=your_api_key
     ```
-    Optionally, adjust database parameters if they were changed in the docker-compose setup:
+
+    **For Ollama (Local):**
+    ```properties
+    llm.provider=ollama
+    ollama.base.url=http://localhost:11434
+    ```
+
+    **Database Settings** (Adjust if changed in the docker-compose setup):
     ```properties
     DB_URL=jdbc:postgresql://localhost:5433/vector_db
     DB_USERNAME=user
@@ -69,7 +81,7 @@ The server source code is located in the `backend/` directory.
     ./mvnw spring-boot:run
     ```
 
-### Step 3: Frontend Configuration
+### Step 4: Frontend Configuration
 The client application code is located in the `frontend/` directory.
 
 1.  **Installing Dependencies:**
@@ -136,7 +148,7 @@ The backend exposes the following REST API endpoints:
     *   **Description:** Deletes the folder with the specified identifier.
 
 *   **`POST /api/folders/{id}/upload`**
-    *   **Description:** Uploads and processes (ingestion) a new file, assigning it to the selected folder. Supports text extraction, vectorization, and image detection.
+    *   **Description:** Uploads and processes (ingestion) a new file, assigning it to the selected folder. Supports text extraction, vectorization, and image analysis.
     *   **Request Body:** `multipart/form-data` containing a `file` field.
 
 ### Data and Ingestion Module (`/api/data`)

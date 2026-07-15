@@ -1,4 +1,27 @@
-const BASE_URL = "http://localhost:8080";
+// Use the Next.js API proxy by default. This keeps mobile clients on the
+// frontend origin and avoids localhost/CORS/mixed-content issues.
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
+
+export interface ReanalysisStatus {
+  jobId: string;
+  status: "RUNNING" | "COMPLETED";
+  total: number;
+  completed: number;
+  failed: number;
+  remaining: number;
+}
+
+export async function startContextReanalysis(): Promise<ReanalysisStatus> {
+  const response = await fetch(`${BASE_URL}/api/data/images/reanalyze-context`, { method: "POST" });
+  if (!response.ok) throw new Error("Failed to start context reanalysis");
+  return response.json();
+}
+
+export async function getContextReanalysisStatus(jobId: string): Promise<ReanalysisStatus> {
+  const response = await fetch(`${BASE_URL}/api/data/images/reanalyze-context/${jobId}`);
+  if (!response.ok) throw new Error("Failed to read context reanalysis status");
+  return response.json();
+}
 
 export interface Chat {
   id: string;
@@ -10,13 +33,15 @@ export interface Folder {
   id: string;
   name: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface FileItem {
   id: string;
   name: string;
   type: string;
-  url: string; 
+  url: string;
+  extractedText?: string;
 }
 
 export interface Message {
@@ -24,6 +49,16 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  uncertain?: boolean;
+  evidence?: QueryEvidence[];
+  answerKind?: "GRAPH_QUERY" | "DOCUMENT" | "HYBRID" | "NO_EVIDENCE";
+}
+
+export interface QueryEvidence {
+  path: string;
+  confidence: number;
+  reasons: string[];
+  matchStatus?: "CONFIRMED" | "SUGGESTED";
 }
 
 export interface Source {
@@ -31,12 +66,31 @@ export interface Source {
   fileName: string;
   score: number;
   base64?: string;
-  type: "PDF" | "TEXT" | "IMAGE" | "OTHER";
+  type: "PDF" | "TEXT" | "IMAGE" | "OTHER" | "GRAPH_FACT";
+}
+
+export interface FilePreview {
+  kind: "image" | "pdf" | "text" | "other";
+  title: string;
+  mimeType: string;
+  content: string;
+  path?: string;
 }
 
 interface ApiFolder {
   id: string;
   name: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+function mapFolder(folder: ApiFolder): Folder {
+  return {
+    id: folder.id,
+    name: folder.name,
+    createdAt: folder.createdAt ?? "",
+    updatedAt: folder.updatedAt ?? folder.createdAt ?? "",
+  };
 }
 
 interface ApiFile {
@@ -44,12 +98,16 @@ interface ApiFile {
   name: string;
   fileType: string;
   imageBase64?: string;
+  extractedText?: string;
 }
 
 interface ApiMessage {
-  type: "USER" | "ASSISTANT";
+  type: "USER" | "ASSISTANT" | "AI";
   text: string;
   sources?: Source[];
+  evidence?: QueryEvidence[];
+  uncertain?: boolean;
+  answerKind?: Message["answerKind"];
 }
 
 export async function getChats(): Promise<Chat[]> {
@@ -61,7 +119,7 @@ export async function getChats(): Promise<Chat[]> {
     id,
     title: `Chat ${id.slice(0, 8)}`,
     updatedAt: new Date().toISOString()
-  })).reverse(); 
+  })); 
 }
 
 export async function createChat(): Promise<Chat> {
@@ -84,11 +142,7 @@ export async function getFolders(): Promise<Folder[]> {
   if (!response.ok) throw new Error("Failed to fetch folders");
   const folders: ApiFolder[] = await response.json();
   
-  return folders.map(f => ({
-    id: f.id,
-    name: f.name,
-    createdAt: new Date().toISOString() 
-  }));
+  return folders.map(mapFolder);
 }
 
 export async function createFolder(name: string): Promise<Folder> {
@@ -100,13 +154,9 @@ export async function createFolder(name: string): Promise<Folder> {
     body: JSON.stringify({ name })
   });
   if (!response.ok) throw new Error("Failed to create folder");
-  const folder = await response.json();
+  const folder: ApiFolder = await response.json();
   
-  return {
-    id: folder.id,
-    name: folder.name,
-    createdAt: new Date().toISOString()
-  };
+  return mapFolder(folder);
 }
 
 export async function deleteFolder(id: string): Promise<void> {
@@ -125,7 +175,8 @@ export async function getAllFiles(): Promise<FileItem[]> {
     id: f.path,
     name: f.name,
     type: f.fileType,
-    url: f.imageBase64 ? `data:${f.fileType};base64,${f.imageBase64}` : ""
+    url: f.imageBase64 ? `data:${f.fileType};base64,${f.imageBase64}` : "",
+    extractedText: f.extractedText || undefined,
   }));
 }
 
@@ -141,20 +192,95 @@ export async function getFilesInFolder(folderName: string): Promise<FileItem[]> 
       id: f.path,
       name: f.name,
       type: f.fileType,
-      url: f.imageBase64 ? `data:${f.fileType};base64,${f.imageBase64}` : ""
+      url: f.imageBase64 ? `data:${f.fileType};base64,${f.imageBase64}` : "",
+      extractedText: f.extractedText || undefined,
     }));
 }
 
-export async function uploadFileToFolder(folderId: string, file: File): Promise<void> {
-  const formData = new FormData();
-  formData.append("file", file);
-  
-  const response = await fetch(`${BASE_URL}/api/folders/${folderId}/upload`, {
-    method: "POST",
-    body: formData
+export async function uploadFileToFolder(folderId: string, file: File, entityTag?: string): Promise<void> {
+  await uploadFileToFolderWithProgress(folderId, file, 0, 1, undefined, entityTag);
+}
+
+export type UploadProgress = {
+  percent: number;
+  fileIndex: number;
+  fileTotal: number;
+  fileName: string;
+  phase: "uploading" | "processing";
+};
+
+export interface UploadResult {
+  path: string;
+  fileName: string;
+  image: boolean;
+}
+
+export function uploadFileToFolderWithProgress(
+  folderId: string,
+  file: File,
+  fileIndex: number,
+  fileTotal: number,
+  onProgress?: (progress: UploadProgress) => void,
+  entityTag?: string
+): Promise<UploadResult> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const report = (fileRatio: number, phase: UploadProgress["phase"]) => {
+      const clampedRatio = Math.max(0, Math.min(1, fileRatio));
+      const overallPercent = ((fileIndex + clampedRatio) / fileTotal) * 100;
+      onProgress?.({
+        percent: Math.round(Math.min(100, overallPercent)),
+        fileIndex: fileIndex + 1,
+        fileTotal,
+        fileName: file.name,
+        phase,
+      });
+    };
+
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        report(event.loaded / event.total, "uploading");
+      }
+    });
+
+    xhr.upload.addEventListener("loadend", () => {
+      report(0.92, "processing");
+    });
+
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        report(1, "processing");
+        try {
+          const parsed = JSON.parse(xhr.responseText) as UploadResult;
+          resolve(parsed);
+        } catch {
+          resolve({
+            path: "",
+            fileName: file.name,
+            image: file.type.startsWith("image/"),
+          });
+        }
+        return;
+      }
+      reject(new Error("Failed to upload file"));
+    });
+
+    xhr.addEventListener("error", () => {
+      reject(new Error("Failed to upload file"));
+    });
+
+    let url = `${BASE_URL}/api/folders/${folderId}/upload`;
+    if (entityTag) {
+      url += `?entityTag=${encodeURIComponent(entityTag)}`;
+    }
+    xhr.open("POST", url);
+    xhr.send(formData);
+
+    report(0, "uploading");
   });
-  
-  if (!response.ok) throw new Error("Failed to upload file");
 }
 
 export async function renameFile(oldPath: string, newName: string): Promise<void> {
@@ -181,6 +307,26 @@ export async function moveFiles(filePaths: string[], targetFolderId: string): Pr
   if (!response.ok) throw new Error("Failed to move files");
 }
 
+export async function deleteFiles(filePaths: string[]): Promise<void> {
+  const response = await fetch(`${BASE_URL}/api/data/files/delete`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ filePaths })
+  });
+
+  if (!response.ok) throw new Error("Failed to delete files");
+}
+
+export async function clearAllData(): Promise<void> {
+  const response = await fetch(`${BASE_URL}/api/data/clear-all`, {
+    method: "DELETE"
+  });
+
+  if (!response.ok) throw new Error("Failed to clear all data");
+}
+
 export async function getMessagesForChat(chatId: string): Promise<Message[]> {
   const response = await fetch(`${BASE_URL}/api/chat/${chatId}/messages`);
   if (!response.ok) throw new Error("Failed to fetch messages");
@@ -190,7 +336,10 @@ export async function getMessagesForChat(chatId: string): Promise<Message[]> {
     id: `${chatId}-${index}`,
     role: m.type === "USER" ? "user" : "assistant",
     content: m.text,
-    sources: m.sources
+    sources: m.sources,
+    uncertain: m.uncertain ?? false,
+    evidence: m.evidence,
+    answerKind: m.answerKind,
   }));
 }
 
@@ -206,11 +355,14 @@ export async function sendMessage(chatId: string, content: string): Promise<Mess
   if (!response.ok) throw new Error("Failed to send message");
   const data = await response.json();
   
-  return {
+    return {
     id: `resp-${Date.now()}`,
     role: "assistant",
     content: data.response,
-    sources: data.sources
+      sources: data.sources,
+      uncertain: data.uncertain ?? false,
+      evidence: data.evidence,
+      answerKind: data.answerKind,
   };
 }
 
@@ -224,6 +376,32 @@ export async function renameChat(chatId: string, newName: string): Promise<void>
   });
   
   if (!response.ok) throw new Error("Failed to rename chat");
+}
+
+export async function getFileEmbeddings(path: string): Promise<{
+  title: string;
+  content: string;
+  chunkCount: number;
+}> {
+  const params = new URLSearchParams({ path });
+  const response = await fetch(
+    `${BASE_URL}/api/data/files/embeddings?${params.toString()}`
+  );
+  if (!response.ok) throw new Error("Failed to fetch file embeddings");
+  const data = await response.json();
+  return {
+    title: data.title,
+    content: data.content,
+    chunkCount: Number(data.chunkCount) || 0,
+  };
+}
+
+export async function getFilePreview(path: string): Promise<FilePreview> {
+  const params = new URLSearchParams({ path });
+  const response = await fetch(`${BASE_URL}/api/data/files/preview?${params.toString()}`);
+  if (!response.ok) throw new Error("Failed to fetch file preview");
+  const data = await response.json();
+  return { ...data, path: data.path ?? path };
 }
 
 export async function deleteChat(chatId: string): Promise<void> {

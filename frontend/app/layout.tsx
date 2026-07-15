@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { ThemeProvider } from "@/lib/ThemeContext";
+import { ThemeScript } from "@/components/ThemeScript";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "RAG Document Manager",
-  description: "Zarządzanie dokumentami i czat z AI",
+  title: "RAG",
+  description: "Dokumenty i czat",
 };
 
 export default function RootLayout({
@@ -27,12 +29,18 @@ export default function RootLayout({
     <html
       lang="pl"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="h-screen w-screen flex bg-white text-gray-900 overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 flex flex-col h-full overflow-hidden">
-          {children}
-        </main>
+      <body className="h-screen w-screen overflow-hidden bg-surface text-ink">
+        <ThemeScript />
+        <ThemeProvider>
+          <div className="app-shell h-full w-full">
+            <Sidebar />
+            <main className="app-main">
+              {children}
+            </main>
+          </div>
+        </ThemeProvider>
       </body>
     </html>
   );

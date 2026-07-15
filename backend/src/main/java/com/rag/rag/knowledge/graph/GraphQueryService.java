@@ -1,0 +1,1084 @@
+package com.rag.rag.knowledge.graph;
+
+import com.rag.rag.folder.repository.FileRepository;
+import com.rag.rag.folder.entity.FileEntity;
+import com.rag.rag.knowledge.entity.EntityAlias;
+import com.rag.rag.knowledge.entity.EntityMention;
+import com.rag.rag.knowledge.entity.KnowledgeEntity;
+import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.fact.Fact;
+import com.rag.rag.knowledge.repository.EntityAliasRepository;
+import com.rag.rag.knowledge.repository.EntityMentionRepository;
+import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
+import jakarta.persistence.EntityManager;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.math.BigDecimal;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.Comparator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+@Service
+@RequiredArgsConstructor
+public class GraphQueryService {
+
+    private static final Pattern NEXT_TO_ENTITY_PATTERN = Pattern.compile(
+            "(?i).*(?:obok|przy)\\s+([\\p{L}0-9_-]+).*"
+    );
+    private static final Pattern SPATIAL_ENTITY_PATTERN = Pattern.compile(
+            "(?i).*(?:po lewej|po lewej stronie|z lewej(?: strony)?|na lewo|po prawej|po prawej stronie|z prawej(?: strony)?|na prawo)\\s*(?:od|strony)?\\s*([\\p{L}0-9_-]+).*"
+    );
+
+    private static final Pattern FILE_REFERENCE_PATTERN = Pattern.compile(
+            "(?i)@([\\w\\-]+(?:\\.[a-zA-Z0-9]+)?)"
+    );
+
+    private final EntityManager entityManager;
+    private final KnowledgeEntityRepository entityRepository;
+    private final EntityAliasRepository aliasRepository;
+    private final EntityMentionRepository mentionRepository;
+    private final FileRepository fileRepository;
+
+    @Transactional(readOnly = true)
+    public Optional<String> resolveFilePathFromQuestion(String question) {
+        List<String> imagePaths = resolveImageFilePathsFromQuestion(question);
+        if (!imagePaths.isEmpty()) {
+            return Optional.of(imagePaths.get(0));
+        }
+
+        if (question == null || question.isBlank()) {
+            return Optional.empty();
+        }
+        Matcher matcher = FILE_REFERENCE_PATTERN.matcher(question);
+        while (matcher.find()) {
+            Optional<String> path = resolveFilePathByFileName(matcher.group(1));
+            if (path.isPresent()) {
+                return path;
+            }
+        }
+        return Optional.empty();
+    }
+
+    @Transactional(readOnly = true)
+    public List<String> resolveImageFilePathsFromQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
+        Matcher matcher = FILE_REFERENCE_PATTERN.matcher(question);
+        while (matcher.find()) {
+            resolveFilePathByFileName(matcher.group(1))
+                    .filter(this::isImageFilePath)
+                    .ifPresent(paths::add);
+        }
+        return new ArrayList<>(paths);
+    }
+
+    @Transactional(readOnly = true)
+    public int countResolvedFileReferences(String question) {
+        if (question == null || question.isBlank()) {
+            return 0;
+        }
+
+        int count = 0;
+        Matcher matcher = FILE_REFERENCE_PATTERN.matcher(question);
+        while (matcher.find()) {
+            if (resolveFilePathByFileName(matcher.group(1)).isPresent()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private boolean isImageFilePath(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        return fileRepository.findByPath(path)
+                .map(file -> file.getFileType() != null
+                        && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
+                .orElseGet(() -> hasImageExtension(path));
+    }
+
+    private boolean hasImageExtension(String value) {
+        String lower = value.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".jpg")
+                || lower.endsWith(".jpeg")
+                || lower.endsWith(".png")
+                || lower.endsWith(".gif")
+                || lower.endsWith(".webp");
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<String> resolveFilePathByFileName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return Optional.empty();
+        }
+        return fileRepository.findFirstByFileNameIgnoreCase(fileName.trim())
+                .map(file -> file.getPath());
+    }
+
+    @Transactional(readOnly = true)
+    public String buildContextForFile(String filePath) {
+        return buildFullContextForFile(filePath);
+    }
+
+    @Transactional(readOnly = true)
+    public String buildFullContextForFile(String filePath) {
+        if (filePath == null || filePath.isBlank()) {
+            return "";
+        }
+
+        List<EntityMention> mentions = mentionRepository.findByFilePath(filePath).stream()
+                .filter(mention -> mention.getStatus() == MentionStatus.CONFIRMED
+                        || mention.getStatus() == MentionStatus.SUGGESTED)
+                .toList();
+
+        StringBuilder contextBuilder = new StringBuilder();
+        boolean hasContent = false;
+
+        if (!mentions.isEmpty()) {
+            contextBuilder.append("[Osoby z grafu wiedzy na pliku]\n");
+            Set<String> seenNames = new LinkedHashSet<>();
+
+            for (EntityMention mention : mentions) {
+                String displayName = resolveMentionName(mention);
+                if (displayName.isBlank() || !seenNames.add(displayName.toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                contextBuilder.append("- ")
+                        .append(displayName)
+                        .append(" (etykieta: ")
+                        .append(mention.getLabel())
+                        .append(", status: ")
+                        .append(mention.getStatus())
+                        .append(", pewność: ")
+                        .append(mention.getConfidence())
+                        .append(") | plik: ")
+                        .append(filePath)
+                        .append("\n");
+                appendMentionVisualContext(contextBuilder, displayName, mention, filePath);
+            }
+            hasContent = true;
+        }
+
+        List<Fact> fileFacts = getFactsForFile(filePath);
+        List<Fact> activityFacts = fileFacts.stream()
+                .filter(fact -> fact.getAction() != null && !fact.getAction().startsWith("REL_"))
+                .toList();
+        if (!activityFacts.isEmpty()) {
+            if (hasContent) {
+                contextBuilder.append("\n");
+            }
+            contextBuilder.append("[Fakty z grafu wiedzy]\n");
+            for (Fact fact : activityFacts) {
+                appendFactLine(contextBuilder, fact);
+            }
+            hasContent = true;
+        }
+
+        List<Fact> relationFacts = fileFacts.stream()
+                .filter(fact -> fact.getAction() != null && fact.getAction().startsWith("REL_"))
+                .toList();
+        if (!relationFacts.isEmpty()) {
+            if (hasContent) {
+                contextBuilder.append("\n");
+            }
+            contextBuilder.append("[Relacje z grafu wiedzy]\n");
+            Set<String> seenLines = new LinkedHashSet<>();
+            for (Fact fact : relationFacts) {
+                String subjectName = resolveMentionName(fact.getMention());
+                String objectName = resolveObjectName(fact);
+                String line = "- "
+                        + subjectName
+                        + " "
+                        + RelationConstants.prettyAction(fact.getAction())
+                        + " "
+                        + objectName
+                        + " | plik: "
+                        + fact.getFilePath()
+                        + "\n";
+                if (seenLines.add(line)) {
+                    contextBuilder.append(line);
+                }
+            }
+            hasContent = true;
+        }
+
+        Optional<FileEntity> file = fileRepository.findByPath(filePath);
+        if (file.isPresent() && (file.get().getImageScene() != null || file.get().getImageSummary() != null
+                || file.get().getVisibleTexts() != null)) {
+            if (hasContent) contextBuilder.append("\n");
+            contextBuilder.append("[Kontekst obrazu]\n");
+            appendFileContext(contextBuilder, file.get());
+            hasContent = true;
+        }
+
+        return hasContent ? contextBuilder.toString() : "";
+    }
+
+    @Transactional(readOnly = true)
+    public List<Fact> getFactsForFile(String filePath) {
+        String sql = """
+            SELECT f.* FROM facts f
+            JOIN entity_mentions em ON f.mention_id = em.id
+            WHERE f.file_path = :filePath
+              AND em.status IN ('CONFIRMED', 'SUGGESTED')
+            ORDER BY f.created_at
+            """;
+
+        return entityManager.createNativeQuery(sql, Fact.class)
+                .setParameter("filePath", filePath)
+                .getResultList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<Fact> getActivitiesForEntity(String entityNameOrAlias) {
+        String sql = """
+            SELECT f.* FROM facts f
+            JOIN entity_mentions em ON f.mention_id = em.id
+            LEFT JOIN entities e ON em.entity_id = e.id
+            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+            WHERE (e.display_name ILIKE :name OR ea.alias ILIKE :name OR em.label ILIKE :name)
+              AND em.status IN ('CONFIRMED', 'SUGGESTED')
+              AND f.action NOT LIKE 'REL_%'
+            ORDER BY f.created_at
+            """;
+
+        return entityManager.createNativeQuery(sql, Fact.class)
+                .setParameter("name", "%" + entityNameOrAlias + "%")
+                .getResultList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<Fact> getRelationFactsForEntity(String entityNameOrAlias, String relationAction) {
+        String sql = """
+            SELECT f.* FROM facts f
+            JOIN entity_mentions em ON f.mention_id = em.id
+            LEFT JOIN entities e ON em.entity_id = e.id
+            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+            WHERE f.action = :relationAction
+              AND em.status IN ('CONFIRMED', 'SUGGESTED')
+              AND (e.display_name ILIKE :name OR ea.alias ILIKE :name OR em.label ILIKE :name)
+            ORDER BY f.created_at
+            """;
+
+        return entityManager.createNativeQuery(sql, Fact.class)
+                .setParameter("relationAction", relationAction)
+                .setParameter("name", "%" + entityNameOrAlias + "%")
+                .getResultList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<MentionFileRow> getFilesForEntity(String entityNameOrAlias) {
+        String sql = """
+            SELECT DISTINCT em.file_path, em.label
+            FROM entity_mentions em
+            LEFT JOIN entities e ON em.entity_id = e.id
+            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+            WHERE (e.display_name ILIKE :name OR ea.alias ILIKE :name OR em.label ILIKE :name)
+              AND em.status IN ('CONFIRMED', 'SUGGESTED')
+            ORDER BY em.file_path
+            """;
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = entityManager.createNativeQuery(sql)
+                .setParameter("name", "%" + entityNameOrAlias + "%")
+                .getResultList();
+
+        List<MentionFileRow> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            result.add(new MentionFileRow((String) row[0], (String) row[1]));
+        }
+        return result;
+    }
+
+    /**
+     * Returns image files containing every requested person.  This is kept as
+     * structured data instead of a prompt fragment so callers do not have to
+     * infer counts or source membership from an LLM response.
+     */
+    @Transactional(readOnly = true)
+    public List<PhotoMatch> findPhotoMatchesForEntities(List<String> entityNames) {
+        if (entityNames == null || entityNames.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashMap<UUID, String> entities = new LinkedHashMap<>();
+        for (String name : entityNames) {
+            if (name == null || name.isBlank()) continue;
+            resolveEntityByAlias(name).ifPresent(entity -> entities.putIfAbsent(entity.getId(), entity.getDisplayName()));
+        }
+        if (entities.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, Map<UUID, MentionAggregate>> byFile = new LinkedHashMap<>();
+        for (UUID entityId : entities.keySet()) {
+            for (EntityMention mention : mentionRepository.findByEntityId(entityId)) {
+                if (mention.getStatus() != MentionStatus.CONFIRMED
+                        && mention.getStatus() != MentionStatus.SUGGESTED) {
+                    continue;
+                }
+                if (!isImagePath(mention.getFilePath())) continue;
+                byFile.computeIfAbsent(mention.getFilePath(), ignored -> new LinkedHashMap<>())
+                        .merge(entityId, MentionAggregate.from(mention), MentionAggregate::merge);
+            }
+        }
+
+        List<PhotoMatch> matches = new ArrayList<>();
+        for (Map.Entry<String, Map<UUID, MentionAggregate>> entry : byFile.entrySet()) {
+            if (entry.getValue().keySet().containsAll(entities.keySet())) {
+                boolean suggested = entry.getValue().values().stream()
+                        .anyMatch(value -> value.status() == MentionStatus.SUGGESTED);
+                BigDecimal confidence = entry.getValue().values().stream()
+                        .map(MentionAggregate::confidence)
+                        .min(Comparator.naturalOrder())
+                        .orElse(BigDecimal.ZERO);
+                matches.add(new PhotoMatch(
+                        entry.getKey(),
+                        new ArrayList<>(entities.values()),
+                        suggested ? MentionStatus.SUGGESTED : MentionStatus.CONFIRMED,
+                        confidence));
+            }
+        }
+
+        return matches.stream()
+                .sorted(Comparator.comparing(PhotoMatch::status)
+                        .thenComparing(PhotoMatch::filePath))
+                .toList();
+    }
+
+    private boolean isImagePath(String path) {
+        if (path == null || path.isBlank()) return false;
+        return fileRepository.findByPath(path)
+                .map(file -> file.getFileType() != null
+                        && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
+                .orElseGet(() -> hasImageExtension(path));
+    }
+
+    private record MentionAggregate(MentionStatus status, BigDecimal confidence) {
+        static MentionAggregate from(EntityMention mention) {
+            return new MentionAggregate(mention.getStatus(),
+                    mention.getConfidence() == null ? BigDecimal.ZERO : mention.getConfidence());
+        }
+
+        static MentionAggregate merge(MentionAggregate left, MentionAggregate right) {
+            MentionStatus status = left.status() == MentionStatus.CONFIRMED
+                    || right.status() == MentionStatus.CONFIRMED
+                    ? MentionStatus.CONFIRMED : MentionStatus.SUGGESTED;
+            return new MentionAggregate(status, left.confidence().max(right.confidence()));
+        }
+    }
+
+    public record PhotoMatch(String filePath, List<String> entityNames,
+                             MentionStatus status, BigDecimal confidence) {}
+
+    @Transactional(readOnly = true)
+    public Optional<KnowledgeEntity> resolveEntityByAlias(String name) {
+        String sql = """
+            SELECT e.* FROM entities e
+            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+            WHERE e.display_name ILIKE :name OR ea.alias ILIKE :name
+            LIMIT 1
+            """;
+
+        List<KnowledgeEntity> results = entityManager.createNativeQuery(sql, KnowledgeEntity.class)
+                .setParameter("name", "%" + name + "%")
+                .getResultList();
+
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
+    }
+
+    @Transactional(readOnly = true)
+    public String buildContextForEntity(String entityName) {
+        StringBuilder contextBuilder = new StringBuilder("[Fakty z grafu wiedzy]\n");
+        boolean foundFacts = false;
+
+        for (String variant : PolishNameMatcher.generateVariants(entityName)) {
+            List<Fact> facts = getActivitiesForEntity(variant);
+            for (Fact fact : facts) {
+                foundFacts = true;
+                appendFactLine(contextBuilder, fact);
+            }
+        }
+
+        Set<String> seenMentions = new LinkedHashSet<>();
+        for (String variant : PolishNameMatcher.generateVariants(entityName)) {
+            Optional<KnowledgeEntity> entity = resolveEntityByAlias(variant);
+            if (entity.isEmpty()) continue;
+            for (EntityMention mention : mentionRepository.findByEntityId(entity.get().getId())) {
+                if (!seenMentions.add(String.valueOf(mention.getId()))
+                        || mention.getStatus() == MentionStatus.REJECTED) continue;
+                appendMentionContext(contextBuilder, mention);
+            }
+        }
+
+        return foundFacts || !seenMentions.isEmpty() ? contextBuilder.toString() : "";
+    }
+
+    @Transactional(readOnly = true)
+    public String buildContextForQuestion(String question) {
+        Optional<String> resolvedEntity = findEntityNameInQuestion(question);
+        if (resolvedEntity.isPresent()) {
+            return buildContextForEntity(resolvedEntity.get());
+        }
+
+        StringBuilder contextBuilder = new StringBuilder("[Fakty z grafu wiedzy]\n");
+        boolean foundFacts = false;
+        Set<String> processedVariants = new LinkedHashSet<>();
+
+        for (String token : PolishNameMatcher.extractEntityTokens(question)) {
+            for (String variant : PolishNameMatcher.generateVariants(token)) {
+                if (!processedVariants.add(variant)) {
+                    continue;
+                }
+                List<Fact> facts = getActivitiesForEntity(variant);
+                for (Fact fact : facts) {
+                    foundFacts = true;
+                    appendFactLine(contextBuilder, fact);
+                }
+            }
+        }
+
+        return foundFacts ? contextBuilder.toString() : "";
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<String> findEntityNameInQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return Optional.empty();
+        }
+
+        // Short user aliases such as "A" or "B" are valid entity names,
+        // even though the Polish token matcher treats them as stop words.
+        List<String> mentionedEntities = findAllEntityNamesInQuestion(question);
+        if (!mentionedEntities.isEmpty()) {
+            return Optional.of(mentionedEntities.get(0));
+        }
+
+        for (KnowledgeEntity entity : entityRepository.findAll()) {
+            if (questionContainsName(question, entity.getDisplayName())) {
+                return Optional.of(entity.getDisplayName());
+            }
+        }
+
+        for (EntityAlias alias : aliasRepository.findAll()) {
+            if (alias.getEntity() == null) {
+                continue;
+            }
+            if (questionContainsName(question, alias.getAlias())) {
+                return Optional.of(alias.getEntity().getDisplayName());
+            }
+        }
+
+        return resolveEntityNameFromQuestion(question);
+    }
+
+    /** Resolves every canonical entity/alias mentioned in a question. */
+    @Transactional(readOnly = true)
+    public List<String> findAllEntityNamesInQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return List.of();
+        }
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (KnowledgeEntity entity : entityRepository.findAll()) {
+            if (questionContainsNameIncludingShortAliases(question, entity.getDisplayName())) {
+                names.add(entity.getDisplayName());
+            }
+        }
+        for (EntityAlias alias : aliasRepository.findAll()) {
+            if (alias.getEntity() != null && questionContainsNameIncludingShortAliases(question, alias.getAlias())) {
+                names.add(alias.getEntity().getDisplayName());
+            }
+        }
+        for (EntityMention mention : mentionRepository.findAll()) {
+            if (mention.getLabel() != null
+                    && questionContainsNameIncludingShortAliases(question, mention.getLabel())) {
+                names.add(resolveMentionName(mention));
+            }
+        }
+        return new ArrayList<>(names);
+    }
+
+    private boolean questionContainsNameIncludingShortAliases(String question, String name) {
+        if (name == null || name.isBlank()) return false;
+        LinkedHashSet<String> variants = new LinkedHashSet<>(PolishNameMatcher.generateVariants(name));
+        variants.add(name.trim().toLowerCase(Locale.ROOT));
+        for (String variant : variants) {
+            Pattern pattern = Pattern.compile("(?i)(?<![\\p{L}])" + Pattern.quote(variant)
+                    + "(?![\\p{L}])");
+            if (pattern.matcher(question).find()) return true;
+        }
+        return false;
+    }
+
+    @Transactional(readOnly = true)
+    public String buildNeighborContextForQuestion(String question) {
+        String relationContext = buildDirectedRelationContext(
+                question, NEXT_TO_ENTITY_PATTERN, RelationConstants.NEXT_TO, "siedzi obok"
+        );
+        if (!relationContext.isEmpty()) {
+            return relationContext;
+        }
+        return buildCoOccurrenceAsNeighborContext(question);
+    }
+
+    @Transactional(readOnly = true)
+    public String buildSpatialLeftContextForQuestion(String question) {
+        Matcher matcher = SPATIAL_ENTITY_PATTERN.matcher(question);
+        if (!matcher.matches() || !question.toLowerCase(Locale.ROOT).contains("lewej")) {
+            return "";
+        }
+        return buildSpatialSideContext(matcher.group(1), true);
+    }
+
+    @Transactional(readOnly = true)
+    public String buildSpatialRightContextForQuestion(String question) {
+        Matcher matcher = SPATIAL_ENTITY_PATTERN.matcher(question);
+        if (!matcher.matches() || !question.toLowerCase(Locale.ROOT).contains("prawej")) {
+            return "";
+        }
+        return buildSpatialSideContext(matcher.group(1), false);
+    }
+
+    @Transactional(readOnly = true)
+    public String buildFileListContextForQuestion(String question) {
+        Optional<String> entityName = resolveEntityNameFromQuestion(question);
+        if (entityName.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder contextBuilder = new StringBuilder("[Pliki z grafu wiedzy]\n");
+        boolean found = false;
+        Map<String, Set<String>> filesByPath = new LinkedHashMap<>();
+
+        for (String variant : PolishNameMatcher.generateVariants(entityName.get())) {
+            for (MentionFileRow row : getFilesForEntity(variant)) {
+                found = true;
+                filesByPath.computeIfAbsent(row.filePath(), ignored -> new LinkedHashSet<>()).add(row.label());
+            }
+        }
+
+        for (Map.Entry<String, Set<String>> entry : filesByPath.entrySet()) {
+            contextBuilder.append("- ")
+                    .append(entityName.get())
+                    .append(" występuje w pliku: ")
+                    .append(fileNameFromPath(entry.getKey()))
+                    .append(" (etykieta: ")
+                    .append(String.join(", ", entry.getValue()))
+                    .append(") | plik: ")
+                    .append(entry.getKey())
+                    .append("\n");
+        }
+
+        return found ? contextBuilder.toString() : "";
+    }
+
+    /**
+     * Legacy graph-only photo context. Semantic conditions are evaluated by
+     * DynamicVisualMatcher against the complete image context; this method is
+     * retained for callers that only need the anchor person's file list.
+     */
+    @Transactional(readOnly = true)
+    public String buildPhotoSearchContextForQuestion(String question) {
+        Optional<String> anchor = findEntityNameInQuestion(question);
+        if (anchor.isEmpty()) return "";
+
+        Set<String> paths = new LinkedHashSet<>();
+        for (String variant : PolishNameMatcher.generateVariants(anchor.get())) {
+            getFilesForEntity(variant).forEach(row -> paths.add(row.filePath()));
+        }
+        if (paths.isEmpty()) return "";
+
+        StringBuilder context = new StringBuilder("[Zdjęcia spełniające warunki grafu]\n");
+        for (String path : paths) {
+            context.append("- ").append(anchor.get());
+            context.append(" | plik: ").append(path).append("\n");
+        }
+        return context.toString();
+    }
+
+    @Transactional(readOnly = true)
+    public String buildCoOccurrenceContextForQuestion(String question) {
+        Optional<String> entityName = findEntityNameInQuestion(question);
+        if (entityName.isEmpty()) {
+            entityName = resolveEntityNameFromQuestion(question);
+        }
+        if (entityName.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder contextBuilder = new StringBuilder("[Współwystępowania z grafu wiedzy]\n");
+        Map<String, Set<String>> peopleByFile = new LinkedHashMap<>();
+        Set<String> allCoOccurringPeople = new LinkedHashSet<>();
+        Set<String> processedRows = new LinkedHashSet<>();
+
+        for (String variant : PolishNameMatcher.generateVariants(entityName.get())) {
+            for (CoOccurrenceRow row : getCoOccurringPeopleForEntity(variant)) {
+                String personName = resolveCoOccurrenceName(row);
+                if (isSamePersonAsAnchor(entityName.get(), personName, row.label())) {
+                    continue;
+                }
+
+                String rowKey = row.filePath() + "|" + personName.toLowerCase(Locale.ROOT);
+                if (!processedRows.add(rowKey)) {
+                    continue;
+                }
+
+                peopleByFile.computeIfAbsent(row.filePath(), ignored -> new LinkedHashSet<>()).add(personName);
+                allCoOccurringPeople.add(personName);
+            }
+        }
+
+        if (peopleByFile.isEmpty()) {
+            return "";
+        }
+
+        for (Map.Entry<String, Set<String>> entry : peopleByFile.entrySet()) {
+            contextBuilder.append("- ")
+                    .append(entityName.get())
+                    .append(" występuje w pliku ")
+                    .append(fileNameFromPath(entry.getKey()))
+                    .append(" razem z: ")
+                    .append(String.join(", ", entry.getValue()))
+                    .append(" | plik: ")
+                    .append(entry.getKey())
+                    .append("\n");
+        }
+
+        contextBuilder.append("- Wszystkie osoby współwystępujące z ")
+                .append(entityName.get())
+                .append(": ")
+                .append(String.join(", ", allCoOccurringPeople))
+                .append("\n");
+
+        return contextBuilder.toString();
+    }
+
+    @Transactional(readOnly = true)
+    public List<CoOccurrenceRow> getCoOccurringPeopleForEntity(String entityNameOrAlias) {
+        String sql = """
+            SELECT DISTINCT em2.file_path, em2.label, e2.display_name,
+                   COALESCE(e2.display_name, em2.label) AS sort_name
+            FROM entity_mentions em1
+            LEFT JOIN entities e1 ON em1.entity_id = e1.id
+            LEFT JOIN entity_aliases ea1 ON ea1.entity_id = e1.id
+            JOIN entity_mentions em2 ON em2.file_path = em1.file_path AND em2.id <> em1.id
+            LEFT JOIN entities e2 ON em2.entity_id = e2.id
+            WHERE em1.status IN ('CONFIRMED', 'SUGGESTED')
+              AND em2.status IN ('CONFIRMED', 'SUGGESTED')
+              AND (e1.display_name ILIKE :name OR ea1.alias ILIKE :name OR em1.label ILIKE :name)
+            ORDER BY em2.file_path, sort_name
+            """;
+
+        @SuppressWarnings("unchecked")
+        List<Object[]> rows = entityManager.createNativeQuery(sql)
+                .setParameter("name", "%" + entityNameOrAlias + "%")
+                .getResultList();
+
+        List<CoOccurrenceRow> result = new ArrayList<>();
+        for (Object[] row : rows) {
+            result.add(new CoOccurrenceRow(
+                    (String) row[0],
+                    (String) row[1],
+                    row[2] != null ? (String) row[2] : null
+            ));
+        }
+        return result;
+    }
+
+    private String resolveCoOccurrenceName(CoOccurrenceRow row) {
+        if (row.displayName() != null && !row.displayName().isBlank()) {
+            return row.displayName();
+        }
+        return row.label();
+    }
+
+    private boolean isSamePersonAsAnchor(String anchorName, String personName, String label) {
+        Set<String> anchorVariants = PolishNameMatcher.generateVariants(anchorName);
+        for (String anchorVariant : anchorVariants) {
+            if (matchesNameVariant(anchorVariant, personName) || matchesNameVariant(anchorVariant, label)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean matchesNameVariant(String variant, String name) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+        for (String nameVariant : PolishNameMatcher.generateVariants(name)) {
+            if (variant.equalsIgnoreCase(nameVariant)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String buildDirectedRelationContext(
+            String question,
+            Pattern entityPattern,
+            String relationAction,
+            String relationPhrase
+    ) {
+        Matcher matcher = entityPattern.matcher(question);
+        if (!matcher.matches()) {
+            return "";
+        }
+
+        String token = matcher.group(1);
+        String canonicalAnchor = findEntityNameInQuestion(question).orElse(token);
+        Set<String> anchorVariants = new LinkedHashSet<>();
+        anchorVariants.addAll(PolishNameMatcher.generateVariants(canonicalAnchor));
+        anchorVariants.addAll(PolishNameMatcher.generateVariants(token));
+
+        StringBuilder contextBuilder = new StringBuilder("[Relacje z grafu wiedzy]\n");
+        Set<String> seenLines = new LinkedHashSet<>();
+        boolean foundFacts = false;
+
+        for (String variant : anchorVariants) {
+            for (Fact fact : getRelationFactsForEntity(variant, relationAction)) {
+                String neighborName = resolveObjectName(fact);
+                if (neighborName.isBlank() || isSamePersonAsAnchor(canonicalAnchor, neighborName, fact.getObject())) {
+                    continue;
+                }
+                foundFacts |= appendRelationLine(
+                        contextBuilder, seenLines, neighborName, relationPhrase, canonicalAnchor, fact.getFilePath()
+                );
+            }
+
+            for (Fact fact : getRelationFactsWhereObjectMatches(variant, relationAction)) {
+                String neighborName = resolveMentionName(fact.getMention());
+                if (neighborName.isBlank() || isSamePersonAsAnchor(canonicalAnchor, neighborName, fact.getMention().getLabel())) {
+                    continue;
+                }
+                foundFacts |= appendRelationLine(
+                        contextBuilder, seenLines, neighborName, relationPhrase, canonicalAnchor, fact.getFilePath()
+                );
+            }
+        }
+
+        return foundFacts ? contextBuilder.toString() : "";
+    }
+
+    private boolean appendRelationLine(
+            StringBuilder contextBuilder,
+            Set<String> seenLines,
+            String neighborName,
+            String relationPhrase,
+            String anchorVariant,
+            String filePath
+    ) {
+        String line = "- "
+                + neighborName
+                + " "
+                + relationPhrase
+                + " "
+                + anchorVariant
+                + " | plik: "
+                + filePath
+                + "\n";
+        if (!seenLines.add(line)) {
+            return false;
+        }
+        contextBuilder.append(line);
+        return true;
+    }
+
+    private String buildCoOccurrenceAsNeighborContext(String question) {
+        Optional<String> entityName = findEntityNameInQuestion(question);
+        if (entityName.isEmpty()) {
+            entityName = resolveEntityNameFromQuestion(question);
+        }
+        if (entityName.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder contextBuilder = new StringBuilder("[Relacje z grafu wiedzy]\n");
+        Map<String, Set<String>> peopleByFile = new LinkedHashMap<>();
+        Set<String> processedRows = new LinkedHashSet<>();
+
+        for (String variant : PolishNameMatcher.generateVariants(entityName.get())) {
+            for (CoOccurrenceRow row : getCoOccurringPeopleForEntity(variant)) {
+                String personName = resolveCoOccurrenceName(row);
+                if (isSamePersonAsAnchor(entityName.get(), personName, row.label())) {
+                    continue;
+                }
+                String rowKey = row.filePath() + "|" + personName.toLowerCase(Locale.ROOT);
+                if (!processedRows.add(rowKey)) {
+                    continue;
+                }
+                peopleByFile.computeIfAbsent(row.filePath(), ignored -> new LinkedHashSet<>()).add(personName);
+            }
+        }
+
+        if (peopleByFile.isEmpty()) {
+            return "";
+        }
+
+        for (Map.Entry<String, Set<String>> entry : peopleByFile.entrySet()) {
+            for (String personName : entry.getValue()) {
+                contextBuilder.append("- ")
+                        .append(personName)
+                        .append(" siedzi obok ")
+                        .append(entityName.get())
+                        .append(" | plik: ")
+                        .append(entry.getKey())
+                        .append("\n");
+            }
+        }
+
+        return contextBuilder.toString();
+    }
+
+    private String resolveObjectName(Fact fact) {
+        if (fact.getObject() == null || fact.getObject().isBlank()) {
+            return "";
+        }
+        String objectLabel = fact.getObject().trim();
+
+        String sql = """
+            SELECT COALESCE(e.display_name, em.label)
+            FROM entity_mentions em
+            LEFT JOIN entities e ON em.entity_id = e.id
+            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+            WHERE em.file_path = :filePath
+              AND em.status IN ('CONFIRMED', 'SUGGESTED')
+              AND (em.label ILIKE :label OR e.display_name ILIKE :label OR ea.alias ILIKE :label)
+            ORDER BY CASE WHEN e.id IS NOT NULL THEN 0 ELSE 1 END
+            LIMIT 1
+            """;
+
+        @SuppressWarnings("unchecked")
+        List<String> rows = entityManager.createNativeQuery(sql)
+                .setParameter("filePath", fact.getFilePath())
+                .setParameter("label", objectLabel)
+                .getResultList();
+
+        if (!rows.isEmpty() && rows.get(0) != null && !rows.get(0).isBlank()) {
+            return rows.get(0);
+        }
+        return objectLabel;
+    }
+
+    private String buildSpatialSideContext(String anchorName, boolean leftSideQuestion) {
+        StringBuilder contextBuilder = new StringBuilder("[Relacje z grafu wiedzy]\n");
+        boolean foundFacts = false;
+
+        for (String variant : PolishNameMatcher.generateVariants(anchorName)) {
+            if (leftSideQuestion) {
+                foundFacts |= appendLeftSideAnswers(contextBuilder, variant);
+            } else {
+                foundFacts |= appendRightSideAnswers(contextBuilder, variant);
+            }
+        }
+
+        return foundFacts ? contextBuilder.toString() : "";
+    }
+
+    private boolean appendLeftSideAnswers(StringBuilder contextBuilder, String anchorVariant) {
+        boolean found = false;
+
+        List<Fact> leftFacts = getRelationFactsWhereObjectMatches(anchorVariant, RelationConstants.LEFT_OF);
+        for (Fact fact : leftFacts) {
+            found = true;
+            contextBuilder.append("- ")
+                    .append(resolveMentionName(fact.getMention()))
+                    .append(" jest po lewej od ")
+                    .append(anchorVariant)
+                    .append(" | plik: ")
+                    .append(fact.getFilePath())
+                    .append("\n");
+        }
+
+        List<Fact> rightFacts = getRelationFactsForEntity(anchorVariant, RelationConstants.RIGHT_OF);
+        for (Fact fact : rightFacts) {
+            found = true;
+            contextBuilder.append("- ")
+                    .append(fact.getObject())
+                    .append(" jest po lewej od ")
+                    .append(anchorVariant)
+                    .append(" | plik: ")
+                    .append(fact.getFilePath())
+                    .append("\n");
+        }
+
+        return found;
+    }
+
+    private boolean appendRightSideAnswers(StringBuilder contextBuilder, String anchorVariant) {
+        boolean found = false;
+
+        List<Fact> leftFacts = getRelationFactsForEntity(anchorVariant, RelationConstants.LEFT_OF);
+        for (Fact fact : leftFacts) {
+            found = true;
+            contextBuilder.append("- ")
+                    .append(fact.getObject())
+                    .append(" jest po prawej od ")
+                    .append(anchorVariant)
+                    .append(" | plik: ")
+                    .append(fact.getFilePath())
+                    .append("\n");
+        }
+
+        List<Fact> rightFacts = getRelationFactsWhereObjectMatches(anchorVariant, RelationConstants.RIGHT_OF);
+        for (Fact fact : rightFacts) {
+            found = true;
+            contextBuilder.append("- ")
+                    .append(resolveMentionName(fact.getMention()))
+                    .append(" jest po prawej od ")
+                    .append(anchorVariant)
+                    .append(" | plik: ")
+                    .append(fact.getFilePath())
+                    .append("\n");
+        }
+
+        return found;
+    }
+
+    @Transactional(readOnly = true)
+    public List<Fact> getRelationFactsWhereObjectMatches(String objectName, String relationAction) {
+        String sql = """
+            SELECT f.* FROM facts f
+            JOIN entity_mentions em ON f.mention_id = em.id
+            WHERE f.action = :relationAction
+              AND em.status IN ('CONFIRMED', 'SUGGESTED')
+              AND f.object ILIKE :objectName
+            ORDER BY f.created_at
+            """;
+
+        return entityManager.createNativeQuery(sql, Fact.class)
+                .setParameter("relationAction", relationAction)
+                .setParameter("objectName", "%" + objectName + "%")
+                .getResultList();
+    }
+
+    private Optional<String> resolveEntityNameFromQuestion(String question) {
+        List<String> mentionedEntities = findAllEntityNamesInQuestion(question);
+        if (!mentionedEntities.isEmpty()) {
+            return Optional.of(mentionedEntities.get(0));
+        }
+        for (String token : PolishNameMatcher.extractEntityTokens(question)) {
+            for (String variant : PolishNameMatcher.generateVariants(token)) {
+                if (!getFilesForEntity(variant).isEmpty()) {
+                    return Optional.of(variant);
+                }
+                if (!getActivitiesForEntity(variant).isEmpty()) {
+                    return Optional.of(variant);
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private boolean questionContainsName(String question, String name) {
+        if (name == null || name.isBlank()) {
+            return false;
+        }
+        for (String variant : PolishNameMatcher.generateVariants(name)) {
+            if (variant.length() < 3) {
+                continue;
+            }
+            Pattern pattern = Pattern.compile(
+                    "(?i)(?<![\\p{L}])" + Pattern.quote(variant) + "(?![\\p{L}])"
+            );
+            if (pattern.matcher(question).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void appendFactLine(StringBuilder contextBuilder, Fact fact) {
+        KnowledgeEntity entity = fact.getMention().getEntity();
+        String entityName = entity != null ? entity.getDisplayName() : fact.getMention().getLabel();
+        contextBuilder.append("- Postać: ")
+                .append(entityName)
+                .append(" (pewność: ")
+                .append(fact.getConfidence())
+                .append(") | ")
+                .append(RelationConstants.prettyAction(fact.getAction()));
+        if (fact.getObject() != null && !fact.getObject().isBlank()) {
+            contextBuilder.append(" ").append(fact.getObject());
+        }
+        contextBuilder.append(" | plik: ").append(fact.getFilePath()).append("\n");
+    }
+
+    private void appendMentionContext(StringBuilder contextBuilder, EntityMention mention) {
+        String name = resolveMentionName(mention);
+        if (mention.getVisualCues() != null && !mention.getVisualCues().isBlank()) {
+            contextBuilder.append("- Postać: ").append(name).append(" | wygląd: ")
+                    .append(mention.getVisualCues()).append(" | plik: ").append(mention.getFilePath()).append("\n");
+        }
+        if (mention.getContextObjects() != null && !mention.getContextObjects().isBlank()) {
+            contextBuilder.append("- Postać: ").append(name).append(" | obiekty i otoczenie: ")
+                    .append(mention.getContextObjects()).append(" | plik: ").append(mention.getFilePath()).append("\n");
+        }
+        if (mention.getNearbyText() != null && !mention.getNearbyText().isBlank()) {
+            contextBuilder.append("- Postać: ").append(name).append(" | napisy obok: ")
+                    .append(mention.getNearbyText()).append(" | plik: ").append(mention.getFilePath()).append("\n");
+        }
+        fileRepository.findByPath(mention.getFilePath()).ifPresent(file -> appendFileContext(contextBuilder, file));
+    }
+
+    private void appendMentionVisualContext(StringBuilder contextBuilder, String displayName,
+                                            EntityMention mention, String filePath) {
+        if (mention.getVisualCues() != null && !mention.getVisualCues().isBlank()) {
+            contextBuilder.append("- ").append(displayName).append(" | wygląd: ")
+                    .append(mention.getVisualCues()).append(" | plik: ").append(filePath).append("\n");
+        }
+        if (mention.getContextObjects() != null && !mention.getContextObjects().isBlank()) {
+            contextBuilder.append("- ").append(displayName).append(" | obiekty i otoczenie: ")
+                    .append(mention.getContextObjects()).append(" | plik: ").append(filePath).append("\n");
+        }
+        if (mention.getNearbyText() != null && !mention.getNearbyText().isBlank()) {
+            contextBuilder.append("- ").append(displayName).append(" | napisy obok: ")
+                    .append(mention.getNearbyText()).append(" | plik: ").append(filePath).append("\n");
+        }
+    }
+
+    private void appendFileContext(StringBuilder contextBuilder, FileEntity file) {
+        if (file.getImageScene() != null && !file.getImageScene().isBlank()) {
+            contextBuilder.append("- Scena zdjęcia: ").append(file.getImageScene()).append(" | plik: ").append(file.getPath()).append("\n");
+        }
+        if (file.getImageSummary() != null && !file.getImageSummary().isBlank()) {
+            contextBuilder.append("- Kontekst zdjęcia: ").append(file.getImageSummary()).append(" | plik: ").append(file.getPath()).append("\n");
+        }
+        if (file.getVisibleTexts() != null && !file.getVisibleTexts().isBlank()) {
+            contextBuilder.append("- Widoczne napisy: ").append(file.getVisibleTexts()).append(" | plik: ").append(file.getPath()).append("\n");
+        }
+    }
+
+    private String resolveMentionName(com.rag.rag.knowledge.entity.EntityMention mention) {
+        if (mention.getEntity() != null) {
+            return mention.getEntity().getDisplayName();
+        }
+        return mention.getLabel();
+    }
+
+    private String fileNameFromPath(String path) {
+        if (path == null) {
+            return "";
+        }
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    public record MentionFileRow(String filePath, String label) {}
+
+    public record CoOccurrenceRow(String filePath, String label, String displayName) {}
+}

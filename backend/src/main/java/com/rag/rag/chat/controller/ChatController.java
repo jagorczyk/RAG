@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.IntStream;
+import java.time.LocalDateTime;
 
 @Slf4j
 @RestController
@@ -36,6 +37,15 @@ public class ChatController {
     public List<UUID> getAllChats() {
         return chatMemoryRepository.findAllByOrderByLastMessageAtDesc().stream()
                 .map(ChatMemoryEntity::getChatId)
+                .toList();
+    }
+
+    public record ChatSummary(String id, String name, LocalDateTime updatedAt) {}
+
+    @GetMapping("/summaries")
+    public List<ChatSummary> getChatSummaries() {
+        return chatMemoryRepository.findAllByOrderByLastMessageAtDesc().stream()
+                .map(chat -> new ChatSummary(chat.getChatId().toString(), chat.getName(), chat.getLastMessageAt()))
                 .toList();
     }
 
@@ -68,7 +78,9 @@ public class ChatController {
                                 .mapToObj(i -> ingestionService.createSourceDto(paths.get(i), null, entity.getScores().get(i)))
                                 .toList();
                     }
-                    return new ChatMessageDto(entity.getTextContext(), entity.getRole(), sources);
+                    return new ChatMessageDto(entity.getTextContext(), entity.getRole(), sources, entity.getEvidence(),
+                            Boolean.TRUE.equals(entity.getUncertain()),
+                            entity.getAnswerKind() == null ? "DOCUMENT" : entity.getAnswerKind());
                 })
                 .toList();
     }
