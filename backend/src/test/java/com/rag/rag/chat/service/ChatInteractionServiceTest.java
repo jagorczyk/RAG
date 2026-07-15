@@ -9,6 +9,7 @@ import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
 import com.rag.rag.knowledge.graph.GraphQueryService;
+import com.rag.rag.knowledge.entity.MentionStatus;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.rag.content.Content;
@@ -376,6 +377,126 @@ class ChatInteractionServiceTest {
         assertEquals(1, response.sources().size());
         assertEquals("20230526_232510.jpg", response.sources().get(0).fileName());
         verify(graphQueryService).buildNeighborContextForQuestion(request.message());
+    }
+
+    @Test
+    void shouldReturnOnlyMatchingHeadphonesPhoto() {
+        MessageRequest request = new MessageRequest("daj mi zdjęcie Igora w słuchawkach");
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Igor"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Igor występuje w pliku: 20220212_214716.jpg | plik: dir://tes/20220212_214716.jpg
+                - Igor występuje w pliku: 20230608_180000.jpg | plik: dir://awd/20230608_180000.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(
+                Result.<String>builder().content("Nie mam dostępu do zdjęć.").build());
+
+        SourceDto matching = new SourceDto(
+                "dir://tes/20220212_214716.jpg", "20220212_214716.jpg", 0.91, null, "IMAGE");
+        SourceDto irrelevant = new SourceDto(
+                "dir://awd/20230608_180000.jpg", "20230608_180000.jpg", 0.31, null, "IMAGE");
+        when(ingestionService.getSources(any())).thenReturn(List.of(matching, irrelevant));
+        when(ingestionService.createGraphFactSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0), invocation.getArgument(1), 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Znalazłem pasujące zdjęcie.", response.response());
+        assertEquals(List.of(matching.path()), response.sources().stream().map(SourceDto::path).toList());
+    }
+
+    @Test
+    void shouldAnswerExactPhotoListFromGraphWithoutCallingLanguageModel() {
+        MessageRequest request = new MessageRequest("Zdjęcia Igora");
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.HYBRID);
+        when(queryRouter.isExactPhotoListQuestion(anyString(), any())).thenReturn(true);
+        when(graphQueryService.findAllEntityNamesInQuestion(request.message()))
+                .thenReturn(List.of("Igor"));
+        when(graphQueryService.findPhotoMatchesForEntities(List.of("Igor")))
+                .thenReturn(List.of(
+                        new GraphQueryService.PhotoMatch(
+                                "dir://123/a.jpg", List.of("Igor"), MentionStatus.CONFIRMED,
+                                java.math.BigDecimal.valueOf(0.91)),
+                        new GraphQueryService.PhotoMatch(
+                                "dir://123/b.jpg", List.of("Igor"), MentionStatus.CONFIRMED,
+                                java.math.BigDecimal.valueOf(0.82))));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Znaleziono 2 zdjęcia, na których występuje Igor.", response.response());
+        assertEquals(2, response.sources().size());
+        assertEquals("GRAPH_QUERY", response.answerKind());
+        verifyNoInteractions(chatAiService);
+        verify(ingestionService, never()).getSources(any());
+    }
+
+    @Test
+    void shouldReturnOnlyRallyPhotoForQualifiedPhotoSearch() {
+        MessageRequest request = new MessageRequest("daj mi zdjęcie Olka z rajdowcem");
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Olek"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Olek występuje w pliku: 20220320_170940.jpg | plik: dir://tes/20220320_170940.jpg
+                - Olek występuje w pliku: 20230225_212339.jpg | plik: dir://awd/20230225_212339.jpg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(
+                Result.<String>builder().content("Nie mam dostępu do zdjęć.").build());
+
+        SourceDto matching = new SourceDto(
+                "dir://tes/20220320_170940.jpg", "20220320_170940.jpg", 0.88, null, "IMAGE");
+        SourceDto irrelevant = new SourceDto(
+                "dir://awd/20230225_212339.jpg", "20230225_212339.jpg", 0.22, null, "IMAGE");
+        when(ingestionService.getSources(any())).thenReturn(List.of(matching, irrelevant));
+        when(ingestionService.createGraphFactSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0), invocation.getArgument(1), 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Znalazłem pasujące zdjęcie.", response.response());
+        assertEquals(List.of(matching.path()), response.sources().stream().map(SourceDto::path).toList());
+    }
+
+    @Test
+    void shouldReturnAllGraphPhotosForUnqualifiedPhotoList() {
+        MessageRequest request = new MessageRequest("podaj wszystkie zdjęcia na których występuje Olek");
+        when(queryRouter.classify(any())).thenReturn(QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH);
+        when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.of("Olek"));
+        String graphContext = """
+                [Pliki z grafu wiedzy]
+                - Olek występuje w pliku: 20220320_170940.jpg | plik: dir://tes/20220320_170940.jpg
+                - Olek występuje w pliku: 20230225_212339.jpg | plik: dir://awd/20230225_212339.jpg
+                - Olek występuje w pliku: 20230505_132643.jpg | plik: dir://awd/20230505_132643.jpg
+                - Olek występuje w pliku: 4C Matura-342.jpg | plik: dir://awd/4C Matura-342.jpg
+                - Olek występuje w pliku: 4C Matura-347.jpg | plik: dir://awd/4C Matura-347.jpg
+                - Olek występuje w pliku: received_161894593440046.jpeg | plik: dir://awd/received_161894593440046.jpeg
+                """;
+        when(graphQueryService.buildFileListContextForQuestion(any())).thenReturn(graphContext);
+        when(chatAiService.answer(eq(chatId), any())).thenReturn(
+                Result.<String>builder().content("Olek występuje na zdjęciach.").build());
+
+        SourceDto first = new SourceDto("dir://tes/20220320_170940.jpg", "20220320_170940.jpg", 0.0, null, "IMAGE");
+        SourceDto second = new SourceDto("dir://awd/20230225_212339.jpg", "20230225_212339.jpg", 0.0, null, "IMAGE");
+        SourceDto third = new SourceDto("dir://awd/20230505_132643.jpg", "20230505_132643.jpg", 0.0, null, "IMAGE");
+        SourceDto fourth = new SourceDto("dir://awd/4C Matura-342.jpg", "4C Matura-342.jpg", 0.0, null, "IMAGE");
+        SourceDto fifth = new SourceDto("dir://awd/4C Matura-347.jpg", "4C Matura-347.jpg", 0.0, null, "IMAGE");
+        SourceDto sixth = new SourceDto("dir://awd/received_161894593440046.jpeg", "received_161894593440046.jpeg", 0.0, null, "IMAGE");
+        when(ingestionService.createGraphFactSourceDto(any(), any(), anyDouble()))
+                .thenAnswer(invocation -> new SourceDto(
+                        invocation.getArgument(0), invocation.getArgument(1), 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = chatInteractionService.processChatMessage(chatId, request);
+
+        assertEquals("Znalazłem 6 zdjęć.", response.response());
+        assertEquals(6, response.sources().size());
+        assertEquals(
+                List.of(first.path(), second.path(), third.path(), fourth.path(), fifth.path(), sixth.path()),
+                response.sources().stream().map(SourceDto::path).toList());
     }
 
     private static Content retrievalContent(String path, String filename, double score, String text) {

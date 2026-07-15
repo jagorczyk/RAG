@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import com.rag.rag.ingestion.cache.ImageAnalysisStatus;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -34,4 +35,23 @@ public class FileEntity {
 
     @Enumerated(EnumType.STRING)
     private IngestionStatus ingestionStatus;
+
+    @Column(length = 64)
+    private String contentHash;
+
+    @Enumerated(EnumType.STRING)
+    private ImageAnalysisStatus visionAnalysisStatus;
+
+    @Enumerated(EnumType.STRING)
+    private ImageAnalysisStatus faceAnalysisStatus;
+
+    @Column(columnDefinition = "text")
+    private String imageScene;
+
+    @Column(columnDefinition = "text")
+    private String imageSummary;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private String visibleTexts;
 }

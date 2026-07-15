@@ -3,6 +3,7 @@ const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 export interface SuggestionMention {
   id: string;
   label: string;
+  entityType?: string;
   filePath: string;
   fileName: string;
   faceCropBase64?: string | null;
@@ -88,6 +89,20 @@ export async function detectFacesForFile(path: string): Promise<EntityMention[]>
     method: "POST",
   });
   if (!res.ok) throw new Error("Failed to detect faces for file");
+  return res.json();
+}
+
+export async function resolveFaceBatch(paths: string[]): Promise<{
+  linked: number;
+  clusters: number;
+  unresolved: number;
+}> {
+  const res = await fetch(`${API_URL}/api/knowledge/faces/resolve-batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths }),
+  });
+  if (!res.ok) throw new Error("Failed to resolve face batch");
   return res.json();
 }
 

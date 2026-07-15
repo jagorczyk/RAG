@@ -40,6 +40,7 @@ import {
   type IdentityReviewFile,
 } from "@/components/knowledge/UploadIdentityPrompt";
 import { buildIdentityReviewQueue } from "@/lib/upload-identity";
+import { resolveFaceBatch } from "@/lib/knowledge-api";
 import type { UploadResult } from "@/lib/api";
 
 interface FolderDetailPageProps {
@@ -145,6 +146,13 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
           entityTag
         );
         uploadResults.push(result);
+      }
+
+      const imagePaths = uploadResults
+        .filter((result) => result.image && result.path)
+        .map((result) => result.path);
+      if (imagePaths.length > 0) {
+        await resolveFaceBatch(imagePaths);
       }
 
       setIngestionProgress({

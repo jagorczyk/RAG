@@ -37,6 +37,8 @@ public final class RelationConstants {
             return prettyRelation(action);
         }
         return switch (action.toLowerCase(Locale.ROOT)) {
+            case "near_object" -> "ma w pobliżu obiekt";
+            case "near_text" -> "ma obok napis";
             case "sitting" -> "siedzi";
             case "standing" -> "stoi";
             case "smiling" -> "uśmiecha się";

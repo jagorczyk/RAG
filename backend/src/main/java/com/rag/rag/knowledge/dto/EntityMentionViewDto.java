@@ -8,6 +8,7 @@ public record EntityMentionViewDto(
         UUID id,
         String filePath,
         String label,
+        String entityType,
         BigDecimal confidence,
         String status,
         String visualCues,

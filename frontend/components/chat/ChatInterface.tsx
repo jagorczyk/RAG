@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import {
   Loader2,
   FileText,
-  Image as ImageIcon,
   FolderOpen,
   AtSign,
   SendHorizonal,
@@ -474,7 +473,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               </div>
             )}
 
-            <div className="pointer-events-none absolute inset-0 z-10 whitespace-pre-wrap break-words px-4 py-3.5 text-sm">
+            <div className="pointer-events-none absolute inset-0 z-10 whitespace-pre-wrap break-words px-4 py-3.5 text-sm leading-[inherit]">
               {inputValue
                 .split(/(@[\w\-\.\/\u00C0-\u017F]+)/g)
                 .map((part, i) => {
@@ -486,7 +485,11 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
                       allFiles.some((f) => f.name === mentionName));
                   if (exists) {
                     return (
-                      <span key={i} className="chip-accent rounded px-1">
+                      <span
+                        key={i}
+                        className="rounded-sm bg-accent-muted text-accent"
+                        style={{ boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}
+                      >
                         {part}
                       </span>
                     );
@@ -506,7 +509,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               onInput={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              className="relative z-30 block min-h-[52px] w-full bg-transparent px-4 py-3.5 text-sm text-transparent caret-ink outline-none"
+              className="relative z-20 block min-h-[52px] w-full bg-transparent px-4 py-3.5 text-sm text-transparent caret-ink outline-none"
               spellCheck={false}
               role="textbox"
               aria-multiline="false"

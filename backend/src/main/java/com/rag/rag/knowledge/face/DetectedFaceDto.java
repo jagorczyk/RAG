@@ -1,13 +1,16 @@
 package com.rag.rag.knowledge.face;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
 
 public record DetectedFaceDto(
-        List<Float> embedding,
-        List<Float> bbox,
-        @JsonProperty("det_score") double detScore
+        @JsonProperty("embedding") List<Float> embedding,
+        @JsonProperty("bbox") List<Float> bbox,
+        @JsonProperty("det_score") double detScore,
+        @JsonProperty(access = JsonProperty.Access.READ_ONLY) Integer imageWidth,
+        @JsonProperty(access = JsonProperty.Access.READ_ONLY) Integer imageHeight
 ) {
     public float[] embeddingArray() {
         if (embedding == null) {
@@ -18,5 +21,9 @@ public record DetectedFaceDto(
             result[i] = embedding.get(i);
         }
         return result;
+    }
+
+    public DetectedFaceDto withImageDimensions(int width, int height) {
+        return new DetectedFaceDto(embedding, bbox, detScore, width, height);
     }
 }

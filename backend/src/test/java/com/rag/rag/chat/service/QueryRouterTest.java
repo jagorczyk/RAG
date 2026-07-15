@@ -12,6 +12,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
@@ -29,6 +31,7 @@ class QueryRouterTest {
         queryRouter = new QueryRouter(graphQueryService);
         lenient().when(graphQueryService.findEntityNameInQuestion(any())).thenReturn(Optional.empty());
         lenient().when(graphQueryService.resolveFilePathFromQuestion(any())).thenReturn(Optional.empty());
+        lenient().when(graphQueryService.countResolvedFileReferences(any())).thenReturn(0);
     }
 
     @ParameterizedTest
@@ -84,10 +87,91 @@ class QueryRouterTest {
     }
 
     @Test
+    void shouldClassifySingularPhotoQuestionAsEntityFiles() {
+        assertEquals(QueryRouter.QueryRoute.ENTITY_FILES,
+                queryRouter.classify("na ktorym zdjeciu jest osoba A"));
+    }
+
+    @Test
     void shouldClassifyGraphRelatedQuestionAsHybrid() {
         assertEquals(
                 QueryRouter.QueryRoute.HYBRID,
                 queryRouter.classify("rozpoznaj twarze na zdjęciu")
         );
+    }
+
+    @Test
+    void shouldClassifyPhotoSearchQuestion() {
+        when(graphQueryService.findEntityNameInQuestion("daj mi zdjęcie Igora w słuchawkach"))
+                .thenReturn(Optional.of("Igor"));
+
+        assertEquals(
+                QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH,
+                queryRouter.classify("daj mi zdjęcie Igora w słuchawkach")
+        );
+    }
+
+    @Test
+    void shouldClassifyNounPhotoRelationAsPhotoSearch() {
+        when(graphQueryService.findEntityNameInQuestion("zdjecie Olka z rajdowcem"))
+                .thenReturn(Optional.of("Olek"));
+
+        assertEquals(
+                QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH,
+                queryRouter.classify("zdjecie Olka z rajdowcem")
+        );
+    }
+
+    @Test
+    void shouldClassifyUnqualifiedPhotoListQuestion() {
+        when(graphQueryService.findEntityNameInQuestion("podaj wszystkie zdjęcia na których występuje Olek"))
+                .thenReturn(Optional.of("Olek"));
+
+        assertEquals(
+                QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH,
+                queryRouter.classify("podaj wszystkie zdjęcia na których występuje Olek")
+        );
+    }
+
+    @Test
+    void shouldClassifyCombinedDocAndPhotoQuestionAsHybrid() {
+        assertEquals(
+                QueryRouter.QueryRoute.HYBRID,
+                queryRouter.classify(
+                        "opisz @dupen i wskaż kto znajduje się na zdjęciu @20230505_132630.jpg"
+                )
+        );
+    }
+
+    @Test
+    void shouldClassifyMultipleFileReferencesAsHybrid() {
+        when(graphQueryService.countResolvedFileReferences(
+                "opisz @dupen i @20230505_132630.jpg"
+        )).thenReturn(2);
+
+        assertEquals(
+                QueryRouter.QueryRoute.HYBRID,
+                queryRouter.classify("opisz @dupen i @20230505_132630.jpg")
+        );
+    }
+
+    @Test
+    void recognizesAnUnqualifiedPhotoListWithoutACommandVerb() {
+        when(graphQueryService.findAllEntityNamesInQuestion("Zdjęcia Igora"))
+                .thenReturn(java.util.List.of("Igor"));
+        when(graphQueryService.findEntityNameInQuestion("Zdjęcia Igora"))
+                .thenReturn(Optional.of("Igor"));
+
+        assertEquals(QueryRouter.QueryRoute.HYBRID, queryRouter.classify("Zdjęcia Igora"));
+        assertTrue(queryRouter.isExactPhotoListQuestion("Zdjęcia Igora", QueryRouter.QueryRoute.HYBRID));
+    }
+
+    @Test
+    void keepsAVisualQualifierOutOfTheExactGraphPath() {
+        when(graphQueryService.findAllEntityNamesInQuestion("Zdjęcia Igora w słuchawkach"))
+                .thenReturn(java.util.List.of("Igor"));
+
+        assertFalse(queryRouter.isExactPhotoListQuestion(
+                "Zdjęcia Igora w słuchawkach", QueryRouter.QueryRoute.HYBRID));
     }
 }

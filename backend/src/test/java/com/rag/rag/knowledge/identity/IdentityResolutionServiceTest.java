@@ -5,6 +5,7 @@ import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
+import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -24,6 +25,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,6 +43,8 @@ class IdentityResolutionServiceTest {
     @Mock
     private IdentitySuggestionRepository suggestionRepository;
     @Mock
+    private FaceEmbeddingRepository faceEmbeddingRepository;
+    @Mock
     private ChatLanguageModel chatModel;
 
     private IdentityResolutionService service;
@@ -52,6 +56,7 @@ class IdentityResolutionServiceTest {
                 aliasRepository,
                 mentionRepository,
                 suggestionRepository,
+                faceEmbeddingRepository,
                 chatModel
         );
     }
@@ -81,11 +86,12 @@ class IdentityResolutionServiceTest {
                 .type("PERSON")
                 .build();
 
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Bartek")).thenReturn(Optional.empty());
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase("Bartek", "PERSON"))
+                .thenReturn(Optional.empty());
         when(entityRepository.save(any(KnowledgeEntity.class))).thenReturn(entity);
         when(aliasRepository.save(any())).thenReturn(null);
 
-        service.resolve(mention, "Bartek");
+        service.resolve(mention, "Bartek", "PERSON");
 
         ArgumentCaptor<EntityMention> captor = ArgumentCaptor.forClass(EntityMention.class);
         verify(mentionRepository).save(captor.capture());
@@ -95,7 +101,7 @@ class IdentityResolutionServiceTest {
     }
 
     @Test
-    void shouldCreateSuggestedEntityForDescriptiveLabelWithoutTag() {
+    void shouldKeepDescriptiveVisionLabelPendingWithoutEntity() {
         EntityMention mention = EntityMention.builder()
                 .id(UUID.randomUUID())
                 .label("mężczyzna w czerwonej koszulce")
@@ -107,15 +113,12 @@ class IdentityResolutionServiceTest {
                 .type("PERSON")
                 .build();
 
-        when(mentionRepository.findAll()).thenReturn(List.of());
-        when(entityRepository.save(any(KnowledgeEntity.class))).thenReturn(savedEntity);
-        when(aliasRepository.save(any())).thenReturn(null);
-
-        service.resolve(mention, null);
+        service.resolve(mention, null, "PERSON");
 
         ArgumentCaptor<EntityMention> captor = ArgumentCaptor.forClass(EntityMention.class);
         verify(mentionRepository).save(captor.capture());
-        assertEquals(MentionStatus.SUGGESTED, captor.getValue().getStatus());
+        assertEquals(MentionStatus.PENDING, captor.getValue().getStatus());
+        assertEquals(null, captor.getValue().getEntity());
         assertFalse(service.looksLikePersonName("mężczyzna w czerwonej koszulce"));
     }
 
@@ -132,10 +135,10 @@ class IdentityResolutionServiceTest {
                 .type("PERSON")
                 .build();
 
-        when(mentionRepository.findAll()).thenReturn(List.of());
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Bartek")).thenReturn(Optional.of(existing));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase("Bartek", "PERSON"))
+                .thenReturn(Optional.of(existing));
 
-        service.resolve(mention, null);
+        service.resolve(mention, null, "PERSON");
 
         ArgumentCaptor<EntityMention> captor = ArgumentCaptor.forClass(EntityMention.class);
         verify(mentionRepository).save(captor.capture());
@@ -156,7 +159,8 @@ class IdentityResolutionServiceTest {
                 .label("mężczyzna")
                 .build();
 
-        when(aliasRepository.findFirstByAliasIgnoreCase("mężczyzna")).thenReturn(Optional.empty());
+        when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCase("mężczyzna", "PERSON"))
+                .thenReturn(Optional.empty());
         when(aliasRepository.save(any())).thenReturn(null);
 
         service.confirmFaceMatch(mention, igor, mention.getLabel());
@@ -166,5 +170,35 @@ class IdentityResolutionServiceTest {
         assertEquals(MentionStatus.CONFIRMED, mentionCaptor.getValue().getStatus());
         assertEquals(igor, mentionCaptor.getValue().getEntity());
         verify(aliasRepository).save(any());
+    }
+
+    @Test
+    void shouldKeepSameNameSeparatedByEntityType() {
+        KnowledgeEntity person = KnowledgeEntity.builder()
+                .id(UUID.randomUUID())
+                .displayName("Figa")
+                .type("PERSON")
+                .build();
+        KnowledgeEntity animal = KnowledgeEntity.builder()
+                .id(UUID.randomUUID())
+                .displayName("Figa")
+                .type("ANIMAL")
+                .build();
+
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase("Figa", "PERSON"))
+                .thenReturn(Optional.of(person));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase("Figa", "ANIMAL"))
+                .thenReturn(Optional.of(animal));
+
+        assertEquals(person, service.findOrCreateEntityByName("Figa", "PERSON"));
+        assertEquals(animal, service.findOrCreateEntityByName("Figa", "ANIMAL"));
+    }
+
+    @Test
+    void shouldRejectUnsupportedEntityType() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.findOrCreateEntityByName("Krzesło", "OBJECT")
+        );
     }
 }

@@ -12,4 +12,6 @@ import java.util.UUID;
 public interface KnowledgeEntityRepository extends JpaRepository<KnowledgeEntity, UUID> {
 
     Optional<KnowledgeEntity> findFirstByDisplayNameIgnoreCase(String displayName);
+
+    Optional<KnowledgeEntity> findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase(String displayName, String type);
 }

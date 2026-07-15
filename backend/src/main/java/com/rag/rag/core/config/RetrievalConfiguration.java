@@ -45,6 +45,9 @@ public class RetrievalConfiguration {
     @Value("${rag.retrieval.min-score:0.5}")
     private double minScore;
 
+    @Value("${rag.retrieval.photo-max-results:20}")
+    private int photoMaxResults;
+
     @Bean
     ContentRetriever contentRetriever(
             EmbeddingStore<TextSegment> embeddingStore,
@@ -89,7 +92,18 @@ public class RetrievalConfiguration {
                 searchRequestBuilder.filter(pathFilter.or(filenameFilter).or(folderFilter));
                 searchRequestBuilder.minScore(0.01);
                 boolean graphFirst = extractGraphContext(queryText).contains("[Osoby z grafu wiedzy na pliku]");
-                searchRequestBuilder.maxResults(graphFirst ? 5 : 15);
+                long distinctMentions = mentions.stream().distinct().count();
+                boolean combinedDocAndGraph = graphFirst && distinctMentions >= 2;
+                searchRequestBuilder.maxResults(graphFirst && !combinedDocAndGraph ? 5 : 15);
+            }
+
+            List<String> graphPaths = extractGraphPaths(queryText);
+            boolean photoSearch = queryText.contains("[Wyszukiwanie zdjęć]")
+                    || queryText.contains("[Wyszukiwanie zdjec]");
+            if (!graphPaths.isEmpty()) {
+                searchRequestBuilder.filter(metadataKey("path").isIn(graphPaths));
+                searchRequestBuilder.minScore(0.01);
+                searchRequestBuilder.maxResults(photoSearch ? photoMaxResults : 15);
             }
 
             EmbeddingSearchResult<TextSegment> vectorResults = embeddingStore.search(searchRequestBuilder.build());
@@ -123,7 +137,7 @@ public class RetrievalConfiguration {
             });
 
             return rerankedContents.stream()
-                    .limit(maxResults)
+                    .limit(photoSearch ? photoMaxResults : maxResults)
                     .collect(Collectors.toList());
         };
     }
@@ -169,8 +183,9 @@ public class RetrievalConfiguration {
             if (!graphContext.isEmpty()) {
                 promptBuilder.append(graphContext).append("\n\n");
             }
-            promptBuilder.append("Odpowiedz na pytanie. Graf wiedzy (jeśli podany) jest źródłem prawdy — ")
-                    .append("fragmenty dokumentów służą tylko jako uzupełnienie opisu. Odpowiadaj po polsku. ")
+            promptBuilder.append("Odpowiedz na pytanie. Graf wiedzy (jeśli podany) jest źródłem prawdy dla osób i relacji — ")
+                    .append("fragmenty dokumentów uzupełniają opis. Gdy pytanie ma dwie części (np. opis dokumentu i kto jest na zdjęciu), ")
+                    .append("odpowiedz na obie części osobno. Odpowiadaj po polsku. ")
                     .append("Nie wypisuj nazw plików, identyfikatorów zdjęć ani list plików w odpowiedzi.\n\n")
                     .append("Pytanie: ").append(actualQuestion).append("\n\n")
                     .append("Dokumenty:\n").append(contextJoined);
@@ -209,5 +224,19 @@ public class RetrievalConfiguration {
     private static String extractRetrievalQuery(String queryText) {
         String question = extractUserQuestion(queryText);
         return question.replaceAll("@[^\\s,\\]]+", "").trim();
+    }
+
+    private static List<String> extractGraphPaths(String queryText) {
+        if (queryText == null || !queryText.contains("[Pliki z grafu wiedzy]")) {
+            return List.of();
+        }
+        Matcher matcher = Pattern.compile("\\|\\s*plik:\\s*([^\\s]+)").matcher(queryText);
+        List<String> paths = new ArrayList<>();
+        while (matcher.find()) {
+            if (!paths.contains(matcher.group(1))) {
+                paths.add(matcher.group(1));
+            }
+        }
+        return paths;
     }
 }

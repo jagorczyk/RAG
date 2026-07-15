@@ -25,6 +25,7 @@ export function Sidebar() {
   const [isOpen, setIsOpen] = useState(true);
   const [chats, setChats] = useState<Chat[]>([]);
   const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [isLoadingChats, setIsLoadingChats] = useState(true);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -58,12 +59,15 @@ export function Sidebar() {
 
   const handleCreateChat = async () => {
     setIsCreating(true);
+    setCreateError(null);
     try {
       const newChat = await createChat();
       setChats((prev) => [newChat, ...prev]);
+      setIsOpen(false);
       router.push(`/chat/${newChat.id}`);
     } catch (error) {
       console.error("Failed to create chat", error);
+      setCreateError("Nie można utworzyć rozmowy. Sprawdź połączenie z serwerem.");
     } finally {
       setIsCreating(false);
     }
@@ -111,9 +115,10 @@ export function Sidebar() {
   const isFoldersActive = pathname.startsWith("/folders");
 
   return (
-    <aside
-      className={`relative flex h-full shrink-0 flex-col border-r border-border bg-sidebar transition-[width] duration-200 ${
-        isOpen ? "w-72" : "w-16"
+    <>
+      <aside
+      className={`absolute inset-y-0 left-0 z-30 flex h-full shrink-0 flex-col border-r border-border bg-sidebar transition-[width,transform] duration-200 md:relative ${
+        isOpen ? "w-72 translate-x-0" : "w-16 -translate-x-full md:translate-x-0"
       }`}
       style={{ transitionTimingFunction: "var(--ease-out)" }}
     >
@@ -172,6 +177,11 @@ export function Sidebar() {
           )}
           {isOpen && <span>Nowa konwersacja</span>}
         </button>
+        {createError && isOpen && (
+          <p className="mt-2 text-xs text-error" role="alert">
+            {createError}
+          </p>
+        )}
       </div>
 
       <nav className="flex flex-1 flex-col gap-4 overflow-y-auto p-3">
@@ -305,6 +315,18 @@ export function Sidebar() {
           )}
         </button>
       </div>
-    </aside>
+
+      </aside>
+      {!isOpen && (
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          className="fixed left-3 top-3 z-40 rounded-full border border-border bg-surface-raised p-2 shadow-sm md:hidden"
+          aria-label="Otwórz panel rozmów"
+        >
+          <PanelLeftOpen size={18} />
+        </button>
+      )}
+    </>
   );
 }

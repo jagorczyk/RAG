@@ -1,5 +1,27 @@
-const BASE_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8080";
+// Use the Next.js API proxy by default. This keeps mobile clients on the
+// frontend origin and avoids localhost/CORS/mixed-content issues.
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
+
+export interface ReanalysisStatus {
+  jobId: string;
+  status: "RUNNING" | "COMPLETED";
+  total: number;
+  completed: number;
+  failed: number;
+  remaining: number;
+}
+
+export async function startContextReanalysis(): Promise<ReanalysisStatus> {
+  const response = await fetch(`${BASE_URL}/api/data/images/reanalyze-context`, { method: "POST" });
+  if (!response.ok) throw new Error("Failed to start context reanalysis");
+  return response.json();
+}
+
+export async function getContextReanalysisStatus(jobId: string): Promise<ReanalysisStatus> {
+  const response = await fetch(`${BASE_URL}/api/data/images/reanalyze-context/${jobId}`);
+  if (!response.ok) throw new Error("Failed to read context reanalysis status");
+  return response.json();
+}
 
 export interface Chat {
   id: string;
@@ -28,6 +50,15 @@ export interface Message {
   content: string;
   sources?: Source[];
   uncertain?: boolean;
+  evidence?: QueryEvidence[];
+  answerKind?: "GRAPH_QUERY" | "DOCUMENT" | "HYBRID" | "NO_EVIDENCE";
+}
+
+export interface QueryEvidence {
+  path: string;
+  confidence: number;
+  reasons: string[];
+  matchStatus?: "CONFIRMED" | "SUGGESTED";
 }
 
 export interface Source {
@@ -74,6 +105,9 @@ interface ApiMessage {
   type: "USER" | "ASSISTANT" | "AI";
   text: string;
   sources?: Source[];
+  evidence?: QueryEvidence[];
+  uncertain?: boolean;
+  answerKind?: Message["answerKind"];
 }
 
 export async function getChats(): Promise<Chat[]> {
@@ -302,7 +336,10 @@ export async function getMessagesForChat(chatId: string): Promise<Message[]> {
     id: `${chatId}-${index}`,
     role: m.type === "USER" ? "user" : "assistant",
     content: m.text,
-    sources: m.sources
+    sources: m.sources,
+    uncertain: m.uncertain ?? false,
+    evidence: m.evidence,
+    answerKind: m.answerKind,
   }));
 }
 
@@ -318,12 +355,14 @@ export async function sendMessage(chatId: string, content: string): Promise<Mess
   if (!response.ok) throw new Error("Failed to send message");
   const data = await response.json();
   
-  return {
+    return {
     id: `resp-${Date.now()}`,
     role: "assistant",
     content: data.response,
-    sources: data.sources,
-    uncertain: data.uncertain ?? false,
+      sources: data.sources,
+      uncertain: data.uncertain ?? false,
+      evidence: data.evidence,
+      answerKind: data.answerKind,
   };
 }
 

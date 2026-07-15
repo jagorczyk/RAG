@@ -2,7 +2,7 @@
 
 import { X, Edit2, Check } from "lucide-react";
 import { FilePreview } from "@/lib/api";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { getMentionsForFile, detectFacesForFile, EntityMention, renameMention } from "@/lib/knowledge-api";
 import { FaceAnnotatedImage } from "@/components/ui/FaceAnnotatedImage";
 import { getFaceColor } from "@/lib/face-colors";
@@ -21,13 +21,7 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
-  useEffect(() => {
-    if (preview.path) {
-      loadMentions();
-    }
-  }, [preview.path]);
-
-  const loadMentions = async () => {
+  const loadMentions = useCallback(async () => {
     if (!preview.path) return;
     try {
       let data = await getMentionsForFile(preview.path);
@@ -43,7 +37,15 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
     } catch (e) {
       console.error(e);
     }
-  };
+  }, [preview.path]);
+
+  useEffect(() => {
+    if (preview.path) {
+      // Data loading is the external synchronization this effect is responsible for.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      void loadMentions();
+    }
+  }, [preview.path, loadMentions]);
 
   const annotatedFaces = useMemo(
     () =>
@@ -68,7 +70,7 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
     try {
       await renameMention(editingId, editValue);
       setEditingId(null);
-      loadMentions();
+      void loadMentions();
     } catch (e) {
       console.error(e);
     }

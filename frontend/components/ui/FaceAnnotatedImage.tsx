@@ -86,7 +86,12 @@ export function FaceAnnotatedImage({ src, alt, faces }: FaceAnnotatedImageProps)
             return null;
           }
 
-          const [x1, y1, x2, y2] = face.bbox;
+          const [rawX1, rawY1, rawX2, rawY2] = face.bbox;
+          // Keep stale/invalid data from drawing outside the actual image.
+          const x1 = Math.max(0, Math.min(rawX1, metrics.naturalW));
+          const y1 = Math.max(0, Math.min(rawY1, metrics.naturalH));
+          const x2 = Math.max(x1, Math.min(rawX2, metrics.naturalW));
+          const y2 = Math.max(y1, Math.min(rawY2, metrics.naturalH));
           const color = getFaceColor(face.colorIndex);
           const left = metrics.offsetX + (x1 / metrics.naturalW) * metrics.renderW;
           const top = metrics.offsetY + (y1 / metrics.naturalH) * metrics.renderH;

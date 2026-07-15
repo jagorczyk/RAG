@@ -5,7 +5,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.regex.Pattern;
+import java.util.Locale;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.List;
+import com.rag.rag.knowledge.graph.PolishNameMatcher;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class QueryRouter {
@@ -75,6 +82,19 @@ public class QueryRouter {
                     + ").*"
     );
 
+    private static final Pattern PHOTO_SEARCH_PATTERN = Pattern.compile(
+            "(?i).*(daj|podaj|zwróc|zwroc|pokaz|pokaż|znajdz|znajdź|wyswietl|wyświetl|znaleźć).*"
+                    + "(zdj|foto|fotkę|fotke|obraz).*"
+    );
+
+    private static final Pattern PHOTO_RELATION_SEARCH_PATTERN = Pattern.compile(
+            "(?i).*(zdjecie|zdjęcie|zdjecia|zdjęcia|foto|obraz).*(\\bz\\b|\\bze\\b|obok|razem).*"
+    );
+
+    private static final Pattern SINGULAR_ENTITY_FILE_PATTERN = Pattern.compile(
+            "(?i).*(na ktorym|na którym|na jakim)\\s+(zdjeciu|zdjęciu|foto|obrazie|pliku).*"
+    );
+
     private static final Pattern ENTITY_ACTIVITY_PATTERN = Pattern.compile(
             "(?i).*(co robi|co robił|co robiła|co robią|co robia|co robiło|co robilo|jakie czynności|jakie aktywności|jakie aktywnosci|czym się zajmuje|czym sie zajmuje|czym się zajmował|czym sie zajmowal|czym się zajmowała|czym sie zajmowala|co porabia|co wykonuje|co wykonywał|co wykonywala|nad czym pracuje|jaką czynność|jaka czynnosc|co robi na zdjęciu|co robi na zdjeciu|jaką aktywność|jaka aktywnosc|co aktualnie robi|jakie czynności wykonuje).*(postać|osoba).*"
     );
@@ -119,11 +139,36 @@ public class QueryRouter {
             "(?i)@([\\w\\-]+(?:\\.[a-zA-Z0-9]+)?)"
     );
 
+    private boolean isCombinedDocAndGraphQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+        String lower = question.toLowerCase(Locale.ROOT);
+        boolean describesDoc = lower.contains("opisz")
+                || lower.contains("opowiedz")
+                || lower.contains("powiedz o")
+                || lower.contains("wytłumacz")
+                || lower.contains("wytlumacz")
+                || lower.contains("wyjaśnij")
+                || lower.contains("wyjasnij");
+        boolean asksPeopleOnPhoto = (lower.contains("kto")
+                || lower.contains("wskaż")
+                || lower.contains("wskaz")
+                || lower.contains("znajduje"))
+                && (lower.contains("zdjęci")
+                || lower.contains("zdjeciu")
+                || lower.contains("foto")
+                || lower.contains("obrazie")
+                || lower.contains("pliku"));
+        return describesDoc && asksPeopleOnPhoto;
+    }
+
     public enum QueryRoute {
         ENTITY_NEIGHBOR,
         ENTITY_SPATIAL_LEFT,
         ENTITY_SPATIAL_RIGHT,
         ENTITY_CO_OCCURRENCE,
+        ENTITY_PHOTO_SEARCH,
         ENTITY_FILES,
         ENTITY_DESCRIPTION,
         ENTITY_ACTIVITY,
@@ -149,8 +194,18 @@ public class QueryRouter {
         if (CO_OCCURRENCE_PATTERN.matcher(question).matches()) {
             return QueryRoute.ENTITY_CO_OCCURRENCE;
         }
-        if (ENTITY_FILES_PATTERN.matcher(question).matches()) {
+        if ((PHOTO_SEARCH_PATTERN.matcher(question).matches()
+                || PHOTO_RELATION_SEARCH_PATTERN.matcher(question).matches())
+                && graphQueryService.findEntityNameInQuestion(question).isPresent()) {
+            return QueryRoute.ENTITY_PHOTO_SEARCH;
+        }
+        if (ENTITY_FILES_PATTERN.matcher(question).matches()
+                || SINGULAR_ENTITY_FILE_PATTERN.matcher(question).matches()) {
             return QueryRoute.ENTITY_FILES;
+        }
+        if (isCombinedDocAndGraphQuestion(question)
+                || graphQueryService.countResolvedFileReferences(question) >= 2) {
+            return QueryRoute.HYBRID;
         }
         if (DESCRIPTIVE_ENTITY_PATTERN.matcher(question).matches()) {
             return QueryRoute.ENTITY_DESCRIPTION;
@@ -178,5 +233,56 @@ public class QueryRouter {
             return QueryRoute.HYBRID;
         }
         return QueryRoute.DOCUMENT;
+    }
+
+    /**
+     * Exact photo-list queries are answered from the graph.  The test is
+     * intentionally based on resolved entities and remaining vocabulary, not
+     * on a hard-coded list of person names.
+     */
+    public boolean isExactPhotoListQuestion(String question, QueryRoute route) {
+        if (question == null || question.isBlank()) return false;
+        if (route != QueryRoute.HYBRID
+                && route != QueryRoute.ENTITY_FILES
+                && route != QueryRoute.ENTITY_LIST
+                && route != QueryRoute.ENTITY_PHOTO_SEARCH) {
+            return false;
+        }
+        List<String> entities = graphQueryService.findAllEntityNamesInQuestion(question);
+        log.debug("PHOTO LIST CHECK: route={}, entities={}, question={}", route, entities, question);
+        if (entities.isEmpty() || !normalize(question).matches(".*(zdjec|foto|obraz|fotograf|plik).*")) {
+            return false;
+        }
+
+        String remainder = normalize(question);
+        for (String entity : entities) {
+            for (String variant : PolishNameMatcher.generateVariants(entity)) {
+                remainder = remainder.replaceAll("(?<![a-z0-9])" + Pattern.quote(normalize(variant)
+                        .replace(" ", "")) + "(?![a-z0-9])", " ");
+            }
+        }
+
+        log.debug("PHOTO LIST CANDIDATE: entities={}, remainder={}", entities, remainder);
+
+        Set<String> boilerplate = new HashSet<>(Set.of(
+                "zdjec", "zdjecia", "zdjecie", "zdjeciach", "zdjeciu", "foto", "fotografie",
+                "fotografia", "obraz", "obrazy", "plik", "pliki", "daj", "podaj", "pokaz",
+                "znajdz", "wyszukaj", "szukaj", "odnajdz", "wyswietl", "wszystkie", "wszystkich",
+                "na", "ktorych", "ktorym", "ktore", "wystepuje", "wystepuja", "znajduje", "sie",
+                "osoba", "osoby", "i", "oraz", "z", "ze", "w", "kto", "jest", "gdzie"
+        ));
+        for (String token : remainder.split("[^a-z0-9]+")) {
+            if (!token.isBlank() && !boilerplate.contains(token)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String normalize(String value) {
+        return value.toLowerCase(Locale.ROOT)
+                .replace("ą", "a").replace("ć", "c").replace("ę", "e")
+                .replace("ł", "l").replace("ń", "n").replace("ó", "o")
+                .replace("ś", "s").replace("ź", "z").replace("ż", "z");
     }
 }

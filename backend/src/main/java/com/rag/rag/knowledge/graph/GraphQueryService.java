@@ -1,6 +1,7 @@
 package com.rag.rag.knowledge.graph;
 
 import com.rag.rag.folder.repository.FileRepository;
+import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.knowledge.entity.EntityAlias;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -23,6 +25,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Comparator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -49,14 +52,73 @@ public class GraphQueryService {
 
     @Transactional(readOnly = true)
     public Optional<String> resolveFilePathFromQuestion(String question) {
+        List<String> imagePaths = resolveImageFilePathsFromQuestion(question);
+        if (!imagePaths.isEmpty()) {
+            return Optional.of(imagePaths.get(0));
+        }
+
         if (question == null || question.isBlank()) {
             return Optional.empty();
         }
         Matcher matcher = FILE_REFERENCE_PATTERN.matcher(question);
-        if (matcher.find()) {
-            return resolveFilePathByFileName(matcher.group(1));
+        while (matcher.find()) {
+            Optional<String> path = resolveFilePathByFileName(matcher.group(1));
+            if (path.isPresent()) {
+                return path;
+            }
         }
         return Optional.empty();
+    }
+
+    @Transactional(readOnly = true)
+    public List<String> resolveImageFilePathsFromQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return List.of();
+        }
+
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
+        Matcher matcher = FILE_REFERENCE_PATTERN.matcher(question);
+        while (matcher.find()) {
+            resolveFilePathByFileName(matcher.group(1))
+                    .filter(this::isImageFilePath)
+                    .ifPresent(paths::add);
+        }
+        return new ArrayList<>(paths);
+    }
+
+    @Transactional(readOnly = true)
+    public int countResolvedFileReferences(String question) {
+        if (question == null || question.isBlank()) {
+            return 0;
+        }
+
+        int count = 0;
+        Matcher matcher = FILE_REFERENCE_PATTERN.matcher(question);
+        while (matcher.find()) {
+            if (resolveFilePathByFileName(matcher.group(1)).isPresent()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private boolean isImageFilePath(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        return fileRepository.findByPath(path)
+                .map(file -> file.getFileType() != null
+                        && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
+                .orElseGet(() -> hasImageExtension(path));
+    }
+
+    private boolean hasImageExtension(String value) {
+        String lower = value.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".jpg")
+                || lower.endsWith(".jpeg")
+                || lower.endsWith(".png")
+                || lower.endsWith(".gif")
+                || lower.endsWith(".webp");
     }
 
     @Transactional(readOnly = true)
@@ -107,6 +169,7 @@ public class GraphQueryService {
                         .append(") | plik: ")
                         .append(filePath)
                         .append("\n");
+                appendMentionVisualContext(contextBuilder, displayName, mention, filePath);
             }
             hasContent = true;
         }
@@ -151,6 +214,15 @@ public class GraphQueryService {
                     contextBuilder.append(line);
                 }
             }
+            hasContent = true;
+        }
+
+        Optional<FileEntity> file = fileRepository.findByPath(filePath);
+        if (file.isPresent() && (file.get().getImageScene() != null || file.get().getImageSummary() != null
+                || file.get().getVisibleTexts() != null)) {
+            if (hasContent) contextBuilder.append("\n");
+            contextBuilder.append("[Kontekst obrazu]\n");
+            appendFileContext(contextBuilder, file.get());
             hasContent = true;
         }
 
@@ -233,6 +305,87 @@ public class GraphQueryService {
         return result;
     }
 
+    /**
+     * Returns image files containing every requested person.  This is kept as
+     * structured data instead of a prompt fragment so callers do not have to
+     * infer counts or source membership from an LLM response.
+     */
+    @Transactional(readOnly = true)
+    public List<PhotoMatch> findPhotoMatchesForEntities(List<String> entityNames) {
+        if (entityNames == null || entityNames.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashMap<UUID, String> entities = new LinkedHashMap<>();
+        for (String name : entityNames) {
+            if (name == null || name.isBlank()) continue;
+            resolveEntityByAlias(name).ifPresent(entity -> entities.putIfAbsent(entity.getId(), entity.getDisplayName()));
+        }
+        if (entities.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, Map<UUID, MentionAggregate>> byFile = new LinkedHashMap<>();
+        for (UUID entityId : entities.keySet()) {
+            for (EntityMention mention : mentionRepository.findByEntityId(entityId)) {
+                if (mention.getStatus() != MentionStatus.CONFIRMED
+                        && mention.getStatus() != MentionStatus.SUGGESTED) {
+                    continue;
+                }
+                if (!isImagePath(mention.getFilePath())) continue;
+                byFile.computeIfAbsent(mention.getFilePath(), ignored -> new LinkedHashMap<>())
+                        .merge(entityId, MentionAggregate.from(mention), MentionAggregate::merge);
+            }
+        }
+
+        List<PhotoMatch> matches = new ArrayList<>();
+        for (Map.Entry<String, Map<UUID, MentionAggregate>> entry : byFile.entrySet()) {
+            if (entry.getValue().keySet().containsAll(entities.keySet())) {
+                boolean suggested = entry.getValue().values().stream()
+                        .anyMatch(value -> value.status() == MentionStatus.SUGGESTED);
+                BigDecimal confidence = entry.getValue().values().stream()
+                        .map(MentionAggregate::confidence)
+                        .min(Comparator.naturalOrder())
+                        .orElse(BigDecimal.ZERO);
+                matches.add(new PhotoMatch(
+                        entry.getKey(),
+                        new ArrayList<>(entities.values()),
+                        suggested ? MentionStatus.SUGGESTED : MentionStatus.CONFIRMED,
+                        confidence));
+            }
+        }
+
+        return matches.stream()
+                .sorted(Comparator.comparing(PhotoMatch::status)
+                        .thenComparing(PhotoMatch::filePath))
+                .toList();
+    }
+
+    private boolean isImagePath(String path) {
+        if (path == null || path.isBlank()) return false;
+        return fileRepository.findByPath(path)
+                .map(file -> file.getFileType() != null
+                        && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
+                .orElseGet(() -> hasImageExtension(path));
+    }
+
+    private record MentionAggregate(MentionStatus status, BigDecimal confidence) {
+        static MentionAggregate from(EntityMention mention) {
+            return new MentionAggregate(mention.getStatus(),
+                    mention.getConfidence() == null ? BigDecimal.ZERO : mention.getConfidence());
+        }
+
+        static MentionAggregate merge(MentionAggregate left, MentionAggregate right) {
+            MentionStatus status = left.status() == MentionStatus.CONFIRMED
+                    || right.status() == MentionStatus.CONFIRMED
+                    ? MentionStatus.CONFIRMED : MentionStatus.SUGGESTED;
+            return new MentionAggregate(status, left.confidence().max(right.confidence()));
+        }
+    }
+
+    public record PhotoMatch(String filePath, List<String> entityNames,
+                             MentionStatus status, BigDecimal confidence) {}
+
     @Transactional(readOnly = true)
     public Optional<KnowledgeEntity> resolveEntityByAlias(String name) {
         String sql = """
@@ -262,7 +415,18 @@ public class GraphQueryService {
             }
         }
 
-        return foundFacts ? contextBuilder.toString() : "";
+        Set<String> seenMentions = new LinkedHashSet<>();
+        for (String variant : PolishNameMatcher.generateVariants(entityName)) {
+            Optional<KnowledgeEntity> entity = resolveEntityByAlias(variant);
+            if (entity.isEmpty()) continue;
+            for (EntityMention mention : mentionRepository.findByEntityId(entity.get().getId())) {
+                if (!seenMentions.add(String.valueOf(mention.getId()))
+                        || mention.getStatus() == MentionStatus.REJECTED) continue;
+                appendMentionContext(contextBuilder, mention);
+            }
+        }
+
+        return foundFacts || !seenMentions.isEmpty() ? contextBuilder.toString() : "";
     }
 
     @Transactional(readOnly = true)
@@ -298,6 +462,13 @@ public class GraphQueryService {
             return Optional.empty();
         }
 
+        // Short user aliases such as "A" or "B" are valid entity names,
+        // even though the Polish token matcher treats them as stop words.
+        List<String> mentionedEntities = findAllEntityNamesInQuestion(question);
+        if (!mentionedEntities.isEmpty()) {
+            return Optional.of(mentionedEntities.get(0));
+        }
+
         for (KnowledgeEntity entity : entityRepository.findAll()) {
             if (questionContainsName(question, entity.getDisplayName())) {
                 return Optional.of(entity.getDisplayName());
@@ -314,6 +485,44 @@ public class GraphQueryService {
         }
 
         return resolveEntityNameFromQuestion(question);
+    }
+
+    /** Resolves every canonical entity/alias mentioned in a question. */
+    @Transactional(readOnly = true)
+    public List<String> findAllEntityNamesInQuestion(String question) {
+        if (question == null || question.isBlank()) {
+            return List.of();
+        }
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (KnowledgeEntity entity : entityRepository.findAll()) {
+            if (questionContainsNameIncludingShortAliases(question, entity.getDisplayName())) {
+                names.add(entity.getDisplayName());
+            }
+        }
+        for (EntityAlias alias : aliasRepository.findAll()) {
+            if (alias.getEntity() != null && questionContainsNameIncludingShortAliases(question, alias.getAlias())) {
+                names.add(alias.getEntity().getDisplayName());
+            }
+        }
+        for (EntityMention mention : mentionRepository.findAll()) {
+            if (mention.getLabel() != null
+                    && questionContainsNameIncludingShortAliases(question, mention.getLabel())) {
+                names.add(resolveMentionName(mention));
+            }
+        }
+        return new ArrayList<>(names);
+    }
+
+    private boolean questionContainsNameIncludingShortAliases(String question, String name) {
+        if (name == null || name.isBlank()) return false;
+        LinkedHashSet<String> variants = new LinkedHashSet<>(PolishNameMatcher.generateVariants(name));
+        variants.add(name.trim().toLowerCase(Locale.ROOT));
+        for (String variant : variants) {
+            Pattern pattern = Pattern.compile("(?i)(?<![\\p{L}])" + Pattern.quote(variant)
+                    + "(?![\\p{L}])");
+            if (pattern.matcher(question).find()) return true;
+        }
+        return false;
     }
 
     @Transactional(readOnly = true)
@@ -376,6 +585,30 @@ public class GraphQueryService {
         }
 
         return found ? contextBuilder.toString() : "";
+    }
+
+    /**
+     * Legacy graph-only photo context. Semantic conditions are evaluated by
+     * DynamicVisualMatcher against the complete image context; this method is
+     * retained for callers that only need the anchor person's file list.
+     */
+    @Transactional(readOnly = true)
+    public String buildPhotoSearchContextForQuestion(String question) {
+        Optional<String> anchor = findEntityNameInQuestion(question);
+        if (anchor.isEmpty()) return "";
+
+        Set<String> paths = new LinkedHashSet<>();
+        for (String variant : PolishNameMatcher.generateVariants(anchor.get())) {
+            getFilesForEntity(variant).forEach(row -> paths.add(row.filePath()));
+        }
+        if (paths.isEmpty()) return "";
+
+        StringBuilder context = new StringBuilder("[Zdjęcia spełniające warunki grafu]\n");
+        for (String path : paths) {
+            context.append("- ").append(anchor.get());
+            context.append(" | plik: ").append(path).append("\n");
+        }
+        return context.toString();
     }
 
     @Transactional(readOnly = true)
@@ -735,6 +968,10 @@ public class GraphQueryService {
     }
 
     private Optional<String> resolveEntityNameFromQuestion(String question) {
+        List<String> mentionedEntities = findAllEntityNamesInQuestion(question);
+        if (!mentionedEntities.isEmpty()) {
+            return Optional.of(mentionedEntities.get(0));
+        }
         for (String token : PolishNameMatcher.extractEntityTokens(question)) {
             for (String variant : PolishNameMatcher.generateVariants(token)) {
                 if (!getFilesForEntity(variant).isEmpty()) {
@@ -779,6 +1016,51 @@ public class GraphQueryService {
             contextBuilder.append(" ").append(fact.getObject());
         }
         contextBuilder.append(" | plik: ").append(fact.getFilePath()).append("\n");
+    }
+
+    private void appendMentionContext(StringBuilder contextBuilder, EntityMention mention) {
+        String name = resolveMentionName(mention);
+        if (mention.getVisualCues() != null && !mention.getVisualCues().isBlank()) {
+            contextBuilder.append("- Postać: ").append(name).append(" | wygląd: ")
+                    .append(mention.getVisualCues()).append(" | plik: ").append(mention.getFilePath()).append("\n");
+        }
+        if (mention.getContextObjects() != null && !mention.getContextObjects().isBlank()) {
+            contextBuilder.append("- Postać: ").append(name).append(" | obiekty i otoczenie: ")
+                    .append(mention.getContextObjects()).append(" | plik: ").append(mention.getFilePath()).append("\n");
+        }
+        if (mention.getNearbyText() != null && !mention.getNearbyText().isBlank()) {
+            contextBuilder.append("- Postać: ").append(name).append(" | napisy obok: ")
+                    .append(mention.getNearbyText()).append(" | plik: ").append(mention.getFilePath()).append("\n");
+        }
+        fileRepository.findByPath(mention.getFilePath()).ifPresent(file -> appendFileContext(contextBuilder, file));
+    }
+
+    private void appendMentionVisualContext(StringBuilder contextBuilder, String displayName,
+                                            EntityMention mention, String filePath) {
+        if (mention.getVisualCues() != null && !mention.getVisualCues().isBlank()) {
+            contextBuilder.append("- ").append(displayName).append(" | wygląd: ")
+                    .append(mention.getVisualCues()).append(" | plik: ").append(filePath).append("\n");
+        }
+        if (mention.getContextObjects() != null && !mention.getContextObjects().isBlank()) {
+            contextBuilder.append("- ").append(displayName).append(" | obiekty i otoczenie: ")
+                    .append(mention.getContextObjects()).append(" | plik: ").append(filePath).append("\n");
+        }
+        if (mention.getNearbyText() != null && !mention.getNearbyText().isBlank()) {
+            contextBuilder.append("- ").append(displayName).append(" | napisy obok: ")
+                    .append(mention.getNearbyText()).append(" | plik: ").append(filePath).append("\n");
+        }
+    }
+
+    private void appendFileContext(StringBuilder contextBuilder, FileEntity file) {
+        if (file.getImageScene() != null && !file.getImageScene().isBlank()) {
+            contextBuilder.append("- Scena zdjęcia: ").append(file.getImageScene()).append(" | plik: ").append(file.getPath()).append("\n");
+        }
+        if (file.getImageSummary() != null && !file.getImageSummary().isBlank()) {
+            contextBuilder.append("- Kontekst zdjęcia: ").append(file.getImageSummary()).append(" | plik: ").append(file.getPath()).append("\n");
+        }
+        if (file.getVisibleTexts() != null && !file.getVisibleTexts().isBlank()) {
+            contextBuilder.append("- Widoczne napisy: ").append(file.getVisibleTexts()).append(" | plik: ").append(file.getPath()).append("\n");
+        }
     }
 
     private String resolveMentionName(com.rag.rag.knowledge.entity.EntityMention mention) {

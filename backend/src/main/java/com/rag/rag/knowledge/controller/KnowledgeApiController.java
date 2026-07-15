@@ -1,5 +1,6 @@
 package com.rag.rag.knowledge.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.dto.EntityMentionViewDto;
@@ -10,10 +11,12 @@ import com.rag.rag.knowledge.dto.SuggestionMentionViewDto;
 import com.rag.rag.knowledge.entity.EntityAlias;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
+import com.rag.rag.knowledge.entity.LivingEntityTypes;
 import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.face.FaceCropService;
 import com.rag.rag.knowledge.face.FaceEmbedding;
 import com.rag.rag.knowledge.face.FaceIdentityService;
+import com.rag.rag.knowledge.repository.FaceObservationRepository;
 import com.rag.rag.knowledge.identity.IdentitySuggestion;
 import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import com.rag.rag.knowledge.identity.SuggestionStatus;
@@ -41,6 +44,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Locale;
+import java.util.HashMap;
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 
 @RestController
 @RequestMapping("/api/knowledge")
@@ -57,14 +64,18 @@ public class KnowledgeApiController {
     private final FaceEmbeddingRepository faceEmbeddingRepository;
     private final FaceIdentityService faceIdentityService;
     private final FaceCropService faceCropService;
+    private final FaceObservationRepository faceObservationRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private static final int MAX_PHOTOS_PER_ENTITY = 4;
+
+    public record FaceBatchRequest(List<String> paths) {}
 
     @GetMapping("/review/pending")
     @Transactional
     public ResponseEntity<List<IdentitySuggestionViewDto>> getPendingSuggestions() {
         List<IdentitySuggestion> pending = suggestionRepository.findAll().stream()
                 .filter(s -> s.getStatus() == SuggestionStatus.PENDING)
+                .filter(s -> isPersonMention(s.getMentionA()) && isPersonMention(s.getMentionB()))
                 .toList();
 
         Set<String> ensuredFiles = new HashSet<>();
@@ -83,7 +94,8 @@ public class KnowledgeApiController {
         if (filePath == null || filePath.isBlank() || !ensuredFiles.add(filePath)) {
             return;
         }
-        if (!faceEmbeddingRepository.findByFilePath(filePath).isEmpty()) {
+        if (!faceEmbeddingRepository.findByFilePath(filePath).isEmpty()
+                || faceObservationRepository.existsByFilePath(filePath)) {
             return;
         }
 
@@ -91,10 +103,7 @@ public class KnowledgeApiController {
             if (file.getImageData() == null || file.getImageData().length == 0) {
                 return;
             }
-            List<EntityMention> mentions = mentionRepository.findByFilePath(filePath);
-            if (mentions.isEmpty()) {
-                return;
-            }
+            List<EntityMention> mentions = personMentionsForFile(filePath);
             faceIdentityService.processImageFaces(file.getImageData(), filePath, file.getFileName(), mentions);
         });
     }
@@ -130,9 +139,7 @@ public class KnowledgeApiController {
     public ResponseEntity<Void> confirmMention(@PathVariable UUID id, @RequestParam UUID entityId) {
         EntityMention mention = mentionRepository.findById(id).orElseThrow();
         KnowledgeEntity entity = entityRepository.findById(entityId).orElseThrow();
-        mention.setEntity(entity);
-        mention.setStatus(MentionStatus.CONFIRMED);
-        mentionRepository.save(mention);
+        relinkMention(mention, entity);
         return ResponseEntity.ok().build();
     }
 
@@ -158,16 +165,11 @@ public class KnowledgeApiController {
         // If neither has entity, create one
         KnowledgeEntity entity = mA.getEntity() != null ? mA.getEntity() : mB.getEntity();
         if (entity == null) {
-            entity = identityResolutionService.findOrCreateEntityByName(mA.getLabel());
+            entity = identityResolutionService.findOrCreateEntityByName(mA.getLabel(), "PERSON");
         }
 
-        mA.setEntity(entity);
-        mA.setStatus(MentionStatus.CONFIRMED);
-        mB.setEntity(entity);
-        mB.setStatus(MentionStatus.CONFIRMED);
-
-        mentionRepository.save(mA);
-        mentionRepository.save(mB);
+        relinkMention(mA, entity);
+        relinkMention(mB, entity);
 
         return ResponseEntity.ok().build();
     }
@@ -183,6 +185,11 @@ public class KnowledgeApiController {
 
     @PostMapping("/entities")
     public ResponseEntity<KnowledgeEntity> createEntity(@RequestBody KnowledgeEntity entity) {
+        String normalizedType = LivingEntityTypes.normalize(entity.getType());
+        if (!"PERSON".equals(normalizedType)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only PERSON entities are supported for new records");
+        }
+        entity.setType(normalizedType);
         return ResponseEntity.ok(entityRepository.save(entity));
     }
 
@@ -198,44 +205,16 @@ public class KnowledgeApiController {
     public ResponseEntity<List<EntitySummaryDto>> getAllEntities() {
         Map<String, EntitySummaryDto> entitiesByKey = new LinkedHashMap<>();
         for (KnowledgeEntity entity : entityRepository.findAll()) {
-            String key = entityKey(entity.getDisplayName());
+            if (!"PERSON".equalsIgnoreCase(entity.getType())
+                    || identityResolutionService.isGenericPersonLabel(entity.getDisplayName())) {
+                continue;
+            }
+            String normalizedType = LivingEntityTypes.normalize(entity.getType());
+            String key = entityKey(entity.getDisplayName(), normalizedType);
             if (key == null) {
                 continue;
             }
             entitiesByKey.putIfAbsent(key, toEntitySummary(entity));
-        }
-
-        Map<String, List<EntityMention>> mentionsByLabel = new LinkedHashMap<>();
-        for (EntityMention mention : mentionRepository.findAll()) {
-            String label = mention.getLabel();
-            if (label == null || label.isBlank() || identityResolutionService.isGenericPersonLabel(label)) {
-                continue;
-            }
-            String key = entityKey(label);
-            if (key == null) {
-                continue;
-            }
-            mentionsByLabel.computeIfAbsent(key, ignored -> new ArrayList<>()).add(mention);
-        }
-
-        for (Map.Entry<String, List<EntityMention>> entry : mentionsByLabel.entrySet()) {
-            if (entitiesByKey.containsKey(entry.getKey())) {
-                continue;
-            }
-
-            String displayLabel = entry.getValue().stream()
-                    .map(EntityMention::getLabel)
-                    .filter(label -> label != null && !label.isBlank())
-                    .max(Comparator.comparingInt(String::length))
-                    .orElse(entry.getKey());
-
-            KnowledgeEntity entity = identityResolutionService.findOrCreateEntityByName(displayLabel);
-            entitiesByKey.put(entry.getKey(), new EntitySummaryDto(
-                    entity.getId(),
-                    displayLabel,
-                    entity.getType(),
-                    loadPhotosForMentions(entry.getValue())
-            ));
         }
 
         List<EntitySummaryDto> entities = entitiesByKey.values().stream()
@@ -253,11 +232,11 @@ public class KnowledgeApiController {
         );
     }
 
-    private String entityKey(String name) {
-        if (name == null || name.isBlank()) {
+    private String entityKey(String name, String type) {
+        if (name == null || name.isBlank() || type == null) {
             return null;
         }
-        return name.trim().toLowerCase(Locale.ROOT);
+        return type + "\u0000" + name.trim().toLowerCase(Locale.ROOT);
     }
 
     private List<EntityPhotoDto> loadPhotosForEntity(UUID entityId) {
@@ -274,9 +253,6 @@ public class KnowledgeApiController {
 
         List<EntityPhotoDto> photos = new ArrayList<>();
         for (String path : filePaths) {
-            if (photos.size() >= MAX_PHOTOS_PER_ENTITY) {
-                break;
-            }
             toEntityPhoto(path).ifPresent(photos::add);
         }
         return photos;
@@ -319,11 +295,20 @@ public class KnowledgeApiController {
     @Transactional
     public ResponseEntity<Void> renameMention(@PathVariable UUID id, @RequestParam String newName) {
         EntityMention mention = mentionRepository.findById(id).orElseThrow();
-        KnowledgeEntity entity = identityResolutionService.findOrCreateEntityByName(newName);
+        KnowledgeEntity entity = identityResolutionService.findOrCreateEntityByName(newName, "PERSON");
+        mention.setLabel(newName.trim());
+        relinkMention(mention, entity);
+        return ResponseEntity.ok().build();
+    }
+
+    private void relinkMention(EntityMention mention, KnowledgeEntity entity) {
         mention.setEntity(entity);
         mention.setStatus(MentionStatus.CONFIRMED);
         mentionRepository.save(mention);
-        return ResponseEntity.ok().build();
+        if (mention.getId() != null) {
+            faceEmbeddingRepository.relinkByMentionId(mention.getId(), entity);
+            faceIdentityService.promoteObservation(mention, entity);
+        }
     }
 
     @PostMapping("/entities/consolidate-duplicates")
@@ -336,6 +321,7 @@ public class KnowledgeApiController {
     @GetMapping("/mentions/by-file")
     public ResponseEntity<List<EntityMentionViewDto>> getMentionsForFile(@RequestParam String path) {
         List<EntityMentionViewDto> mentions = mentionRepository.findByFilePath(path).stream()
+                .filter(this::isReviewableMention)
                 .map(this::toMentionViewDto)
                 .sorted(this::compareMentionsForDisplay)
                 .toList();
@@ -352,31 +338,141 @@ public class KnowledgeApiController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "File has no image data");
         }
 
-        List<EntityMention> mentions = mentionRepository.findByFilePath(path);
-        if (mentions.isEmpty()) {
-            return ResponseEntity.ok(List.of());
-        }
-
+        List<EntityMention> mentions = personMentionsForFile(path);
         faceIdentityService.replaceFaceEmbeddingsForFile(file.getImageData(), path, file.getFileName(), mentions);
 
         List<EntityMentionViewDto> result = mentionRepository.findByFilePath(path).stream()
+                .filter(this::isLivingOrUnlinkedMention)
                 .map(this::toMentionViewDto)
                 .sorted(this::compareMentionsForDisplay)
                 .toList();
         return ResponseEntity.ok(result);
     }
 
+    @PostMapping("/faces/resolve-batch")
+    @Transactional
+    public ResponseEntity<Map<String, Integer>> resolveFaceBatch(@RequestBody FaceBatchRequest request) {
+        List<String> paths = request == null || request.paths() == null
+                ? List.of()
+                : request.paths().stream().filter(path -> path != null && !path.isBlank()).distinct().toList();
+        List<FaceEmbedding> embeddings = new ArrayList<>();
+        for (String path : paths) {
+            if (faceEmbeddingRepository.findByFilePath(path).isEmpty()) {
+                ensureFaceEmbeddingsForFile(path, new HashSet<>());
+            }
+            embeddings.addAll(faceEmbeddingRepository.findByFilePath(path));
+        }
+
+        List<FaceEmbedding> candidates = embeddings.stream()
+                .filter(face -> face.getEmbedding() != null && face.getMention() != null)
+                .filter(face -> face.getEntity() == null
+                        || identityResolutionService.isGenericPersonLabel(face.getEntity().getDisplayName()))
+                .toList();
+        List<List<FaceEmbedding>> groups = new ArrayList<>();
+        Set<UUID> consumed = new HashSet<>();
+        for (FaceEmbedding seed : candidates) {
+            if (seed.getId() != null && consumed.contains(seed.getId())) continue;
+            List<FaceEmbedding> group = new ArrayList<>();
+            List<FaceEmbedding> frontier = new ArrayList<>(List.of(seed));
+            while (!frontier.isEmpty()) {
+                FaceEmbedding current = frontier.remove(frontier.size() - 1);
+                if (current.getId() != null && !consumed.add(current.getId())) continue;
+                group.add(current);
+                for (FaceEmbedding other : candidates) {
+                    if (other == current || (other.getId() != null && consumed.contains(other.getId()))) continue;
+                    if (FaceIdentityService.cosineSimilarity(
+                            FaceIdentityService.normalizeEmbedding(current.getEmbedding()),
+                            FaceIdentityService.normalizeEmbedding(other.getEmbedding())) >= faceIdentityService.batchClusterThreshold()) {
+                        frontier.add(other);
+                    }
+                }
+            }
+            groups.add(group);
+        }
+
+        int linked = 0;
+        int clusters = 0;
+        int unresolved = 0;
+        for (List<FaceEmbedding> group : groups) {
+            if (group.isEmpty()) continue;
+            float[] representative = averageEmbedding(group);
+            KnowledgeEntity target = faceIdentityService.findBestEntityMatch(representative, null, 0.50)
+                    .map(FaceIdentityService.EntityMatch::entity)
+                    .orElse(group.get(0).getEntity());
+            if (target == null) {
+                unresolved++;
+                continue;
+            }
+            if (group.size() > 1) clusters++;
+            for (FaceEmbedding face : group) {
+                relinkMention(face.getMention(), target);
+                linked++;
+            }
+        }
+        return ResponseEntity.ok(Map.of("linked", linked, "clusters", clusters, "unresolved", unresolved));
+    }
+
+    private float[] averageEmbedding(List<FaceEmbedding> faces) {
+        int length = faces.get(0).getEmbedding().length;
+        float[] average = new float[length];
+        for (FaceEmbedding face : faces) {
+            float[] normalized = FaceIdentityService.normalizeEmbedding(face.getEmbedding());
+            for (int i = 0; i < length && i < normalized.length; i++) average[i] += normalized[i];
+        }
+        float norm = 0f;
+        for (float value : average) norm += value * value;
+        norm = (float) Math.sqrt(norm);
+        if (norm > 0f) for (int i = 0; i < average.length; i++) average[i] /= norm;
+        return average;
+    }
+
+    private List<EntityMention> personMentionsForFile(String path) {
+        return mentionRepository.findByFilePath(path).stream()
+                .filter(this::isPersonMention)
+                .toList();
+    }
+
+    private boolean isLivingOrUnlinkedMention(EntityMention mention) {
+        return isPersonMention(mention);
+    }
+
+    private boolean isReviewableMention(EntityMention mention) {
+        if (mention == null || mention.getStatus() == MentionStatus.REJECTED) {
+            return false;
+        }
+        return "PERSON".equalsIgnoreCase(mention.getEntityType())
+                || (mention.getEntity() != null && "PERSON".equalsIgnoreCase(mention.getEntity().getType()));
+    }
+
+    private boolean isPersonMention(EntityMention mention) {
+        if (mention == null) {
+            return false;
+        }
+        if (mention.getStatus() == MentionStatus.REJECTED
+                || "Osoba do weryfikacji".equalsIgnoreCase(mention.getLabel())) {
+            return false;
+        }
+        if (mention.getEntity() != null
+                && identityResolutionService.isGenericPersonLabel(mention.getEntity().getDisplayName())) {
+            return false;
+        }
+        return "PERSON".equalsIgnoreCase(mention.getEntityType())
+                || (mention.getEntity() != null && "PERSON".equalsIgnoreCase(mention.getEntity().getType()));
+    }
+
     private EntityMentionViewDto toMentionViewDto(EntityMention mention) {
+        Optional<FileEntity> file = fileRepository.findByPath(mention.getFilePath());
         List<Float> bbox = faceEmbeddingRepository.findFirstByMention_Id(mention.getId())
                 .map(FaceEmbedding::getBbox)
                 .map(this::bboxToList)
-                .orElse(null);
+                .orElseGet(() -> parseMentionBbox(mention.getBbox(), file.orElse(null)));
 
         KnowledgeEntity entity = mention.getEntity();
         return new EntityMentionViewDto(
                 mention.getId(),
                 mention.getFilePath(),
                 mention.getLabel(),
+                mention.getEntityType() == null ? "PERSON" : mention.getEntityType(),
                 mention.getConfidence(),
                 mention.getStatus() != null ? mention.getStatus().name() : null,
                 mention.getVisualCues(),
@@ -384,6 +480,42 @@ public class KnowledgeApiController {
                 entity != null ? entity.getDisplayName() : null,
                 bbox
         );
+    }
+
+    private List<Float> parseMentionBbox(String rawBbox, FileEntity file) {
+        if (rawBbox == null || rawBbox.isBlank()) {
+            return null;
+        }
+        try {
+            float[] values = objectMapper.readValue(rawBbox, float[].class);
+            if (values.length < 4) {
+                return null;
+            }
+
+            int imageWidth = 0;
+            int imageHeight = 0;
+            if (file != null && file.getImageData() != null) {
+                BufferedImage image = ImageIO.read(new ByteArrayInputStream(file.getImageData()));
+                if (image != null) {
+                    imageWidth = image.getWidth();
+                    imageHeight = image.getHeight();
+                }
+            }
+
+            // Vision returns normalized coordinates for some models, while face-service
+            // returns pixels. Convert both formats to the pixel format used by the UI.
+            if (imageWidth > 0 && imageHeight > 0
+                    && values[0] >= 0f && values[1] >= 0f
+                    && values[2] <= 1f && values[3] <= 1f) {
+                values[0] *= imageWidth;
+                values[2] *= imageWidth;
+                values[1] *= imageHeight;
+                values[3] *= imageHeight;
+            }
+            return bboxToList(clampBbox(values, imageWidth, imageHeight));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private List<Float> bboxToList(float[] bbox) {
@@ -395,6 +527,20 @@ public class KnowledgeApiController {
             values.add(value);
         }
         return values;
+    }
+
+    private float[] clampBbox(float[] bbox, int imageWidth, int imageHeight) {
+        if (bbox == null || bbox.length < 4 || imageWidth <= 0 || imageHeight <= 0) {
+            return bbox;
+        }
+        float x1 = Math.max(0f, Math.min(bbox[0], imageWidth));
+        float y1 = Math.max(0f, Math.min(bbox[1], imageHeight));
+        float x2 = Math.max(x1, Math.min(bbox[2], imageWidth));
+        float y2 = Math.max(y1, Math.min(bbox[3], imageHeight));
+        if (x2 - x1 < 1f || y2 - y1 < 1f) {
+            return null;
+        }
+        return new float[]{x1, y1, x2, y2};
     }
 
     private int compareMentionsForDisplay(EntityMentionViewDto a, EntityMentionViewDto b) {

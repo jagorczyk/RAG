@@ -7,20 +7,26 @@ import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
+import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -30,27 +36,41 @@ public class IdentityResolutionService {
     private final EntityAliasRepository aliasRepository;
     private final EntityMentionRepository mentionRepository;
     private final IdentitySuggestionRepository suggestionRepository;
+    private final FaceEmbeddingRepository faceEmbeddingRepository;
     private final ChatLanguageModel chatModel;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Value("${identity.llm-matcher.enabled:false}")
+    private boolean llmMatcherEnabled;
+
+    @Value("${identity.llm-matcher.max-candidates:2}")
+    private int llmMatcherMaxCandidates;
 
     public IdentityResolutionService(
             KnowledgeEntityRepository entityRepository,
             EntityAliasRepository aliasRepository,
             EntityMentionRepository mentionRepository,
             IdentitySuggestionRepository suggestionRepository,
+            FaceEmbeddingRepository faceEmbeddingRepository,
             @Qualifier("chatLanguageModel") ChatLanguageModel chatModel
     ) {
         this.entityRepository = entityRepository;
         this.aliasRepository = aliasRepository;
         this.mentionRepository = mentionRepository;
         this.suggestionRepository = suggestionRepository;
+        this.faceEmbeddingRepository = faceEmbeddingRepository;
         this.chatModel = chatModel;
     }
 
     @Transactional
-    public void resolve(EntityMention mention, String fileEntityTag) {
+    public void resolve(EntityMention mention, String fileEntityTag, String entityType) {
+        String type = LivingEntityTypes.normalize(entityType);
+        if (type == null) {
+            log.debug("Ignoring unsupported entity type '{}' for mention '{}'", entityType, mention.getLabel());
+            return;
+        }
         if (fileEntityTag != null && !fileEntityTag.isBlank()) {
-            linkMention(mention, findOrCreateEntityByName(fileEntityTag), MentionStatus.CONFIRMED);
+            linkMention(mention, findOrCreateEntityByName(fileEntityTag, type), MentionStatus.CONFIRMED);
             return;
         }
 
@@ -61,23 +81,80 @@ public class IdentityResolutionService {
             return;
         }
 
+        if (!isGenericLabel(label)) {
+            Optional<KnowledgeEntity> exactMatch = findEntityByNameOrAlias(label, type);
+            if (exactMatch.isPresent()) {
+                linkMention(mention, exactMatch.get(), MentionStatus.CONFIRMED);
+                return;
+            }
+        }
+
+        // Vision produces neutral descriptions ("person 1", clothing, pose),
+        // which must remain observations until a user names or confirms them.
+        if (LivingEntityTypes.PERSON.equals(type)
+                && (isGenericLabel(label) || !looksLikePersonName(label))) {
+            mention.setStatus(MentionStatus.PENDING);
+            mentionRepository.save(mention);
+            return;
+        }
+
+        EntityMention bestSuggestionCandidate = null;
+        double bestSuggestionScore = 0.0;
+        EntityMention bestConfirmCandidate = null;
+        double bestConfirmScore = 0.0;
+        List<CandidateScore> heuristicCandidates = new ArrayList<>();
+
         for (EntityMention candidate : mentionRepository.findAll()) {
             if (candidate.getId().equals(mention.getId())) {
                 continue;
             }
-
-            double score = computeSimilarity(mention, candidate);
-            if (score >= 0.85 && candidate.getEntity() != null) {
-                linkMention(mention, candidate.getEntity(), MentionStatus.CONFIRMED);
-                return;
+            if (candidate.getEntity() == null
+                    || !type.equals(LivingEntityTypes.normalize(candidate.getEntity().getType()))) {
+                continue;
             }
-            if (score >= 0.60) {
-                saveSuggestion(mention, candidate, score);
+
+            double score = computeHeuristicSimilarity(mention, candidate);
+            heuristicCandidates.add(new CandidateScore(candidate, score));
+            if (score >= 0.85 && candidate.getEntity() != null && score > bestConfirmScore) {
+                bestConfirmCandidate = candidate;
+                bestConfirmScore = score;
+                continue;
+            }
+            if (score >= 0.60 && score > bestSuggestionScore) {
+                bestSuggestionCandidate = candidate;
+                bestSuggestionScore = score;
             }
         }
 
+        if (bestConfirmCandidate == null && llmMatcherEnabled) {
+            List<CandidateScore> llmCandidates = heuristicCandidates.stream()
+                    .sorted((a, b) -> Double.compare(b.score(), a.score()))
+                    .limit(Math.max(0, llmMatcherMaxCandidates))
+                    .toList();
+            for (CandidateScore candidateScore : llmCandidates) {
+                double score = computeLlmSimilarity(mention, candidateScore.candidate());
+                if (score >= 0.85 && candidateScore.candidate().getEntity() != null && score > bestConfirmScore) {
+                    bestConfirmCandidate = candidateScore.candidate();
+                    bestConfirmScore = score;
+                    continue;
+                }
+                if (score >= 0.60 && score > bestSuggestionScore) {
+                    bestSuggestionCandidate = candidateScore.candidate();
+                    bestSuggestionScore = score;
+                }
+            }
+        }
+
+        if (bestConfirmCandidate != null && bestConfirmCandidate.getEntity() != null) {
+            linkMention(mention, bestConfirmCandidate.getEntity(), MentionStatus.CONFIRMED);
+            return;
+        }
+        if (bestSuggestionCandidate != null) {
+            saveSuggestion(mention, bestSuggestionCandidate, bestSuggestionScore);
+        }
+
         Optional<KnowledgeEntity> existing = looksLikePersonName(label)
-                ? findEntityByNameOrAlias(label)
+                ? findEntityByNameOrAlias(label, type)
                 : Optional.empty();
         if (existing.isPresent()) {
             linkMention(mention, existing.get(), MentionStatus.CONFIRMED);
@@ -85,26 +162,31 @@ public class IdentityResolutionService {
         }
 
         KnowledgeEntity entity = looksLikePersonName(label)
-                ? findOrCreateEntityByName(label)
-                : createSuggestedEntity(label);
+                ? findOrCreateEntityByName(label, type)
+                : createSuggestedEntity(label, type);
         linkMention(mention, entity, looksLikePersonName(label) ? MentionStatus.CONFIRMED : MentionStatus.SUGGESTED);
     }
 
     @Transactional
-    public KnowledgeEntity findOrCreateEntityByName(String name) {
+    public KnowledgeEntity findOrCreateEntityByName(String name, String type) {
         String normalized = normalizeLabel(name);
         if (normalized == null) {
             throw new IllegalArgumentException("Entity name cannot be blank");
         }
 
-        Optional<KnowledgeEntity> existing = findEntityByNameOrAlias(normalized);
+        String normalizedType = LivingEntityTypes.normalize(type);
+        if (normalizedType == null) {
+            throw new IllegalArgumentException("Entity type must be PERSON or ANIMAL");
+        }
+
+        Optional<KnowledgeEntity> existing = findEntityByNameOrAlias(normalized, normalizedType);
         if (existing.isPresent()) {
             return existing.get();
         }
 
         KnowledgeEntity newEntity = KnowledgeEntity.builder()
                 .displayName(normalized)
-                .type("PERSON")
+                .type(normalizedType)
                 .build();
         newEntity = entityRepository.save(newEntity);
 
@@ -119,13 +201,28 @@ public class IdentityResolutionService {
     }
 
     @Transactional
+    public KnowledgeEntity createUnconfirmedEntity(String name, String type) {
+        String normalizedName = normalizeLabel(name);
+        String normalizedType = LivingEntityTypes.normalize(type);
+        if (normalizedName == null) {
+            throw new IllegalArgumentException("Entity name cannot be blank");
+        }
+        if (normalizedType == null) {
+            throw new IllegalArgumentException("Entity type must be PERSON or ANIMAL");
+        }
+        return createSuggestedEntity(normalizedName, normalizedType);
+    }
+
+    @Transactional
     public int consolidateDuplicateEntities() {
         Map<String, List<KnowledgeEntity>> grouped = new LinkedHashMap<>();
         for (KnowledgeEntity entity : entityRepository.findAll()) {
-            String key = normalizeLabel(entity.getDisplayName());
-            if (key == null) {
+            String normalizedType = LivingEntityTypes.normalize(entity.getType());
+            String normalizedName = normalizeLabel(entity.getDisplayName());
+            if (normalizedType == null || normalizedName == null) {
                 continue;
             }
+            String key = normalizedType + "\u0000" + normalizedName.toLowerCase(Locale.ROOT);
             grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(entity);
         }
 
@@ -146,6 +243,7 @@ public class IdentityResolutionService {
     }
 
     private void mergeEntityInto(KnowledgeEntity target, KnowledgeEntity duplicate) {
+        faceEmbeddingRepository.relinkEntity(duplicate.getId(), target);
         for (EntityMention mention : mentionRepository.findByEntityId(duplicate.getId())) {
             mention.setEntity(target);
             mention.setStatus(MentionStatus.CONFIRMED);
@@ -156,7 +254,8 @@ public class IdentityResolutionService {
             if (alias.getEntity() == null || !duplicate.getId().equals(alias.getEntity().getId())) {
                 continue;
             }
-            boolean aliasExists = aliasRepository.findFirstByAliasIgnoreCase(alias.getAlias())
+            boolean aliasExists = aliasRepository
+                    .findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCase(alias.getAlias(), target.getType())
                     .filter(existing -> existing.getEntity().getId().equals(target.getId()))
                     .isPresent();
             if (aliasExists) {
@@ -171,22 +270,42 @@ public class IdentityResolutionService {
         log.info("Merged duplicate entity '{}' into '{}'", duplicate.getDisplayName(), target.getDisplayName());
     }
 
-    private Optional<KnowledgeEntity> findEntityByNameOrAlias(String name) {
-        Optional<KnowledgeEntity> byName = entityRepository.findFirstByDisplayNameIgnoreCase(name);
+    private Optional<KnowledgeEntity> findEntityByNameOrAlias(String name, String type) {
+        Optional<KnowledgeEntity> byName = entityRepository
+                .findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase(name, type);
         if (byName.isPresent()) {
             return byName;
         }
 
-        return aliasRepository.findFirstByAliasIgnoreCase(name).map(EntityAlias::getEntity);
+        return aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCase(name, type)
+                .map(EntityAlias::getEntity);
     }
 
     private void linkMention(EntityMention mention, KnowledgeEntity entity, MentionStatus status) {
         mention.setEntity(entity);
         mention.setStatus(status);
         mentionRepository.save(mention);
+        if (mention.getId() != null) {
+            faceEmbeddingRepository.relinkByMentionId(mention.getId(), entity);
+        }
+    }
+
+    @Transactional
+    public KnowledgeEntity createUnresolvedPerson(String label) {
+        String normalized = normalizeLabel(label);
+        if (normalized == null) {
+            throw new IllegalArgumentException("Unresolved person label cannot be blank");
+        }
+        return createSuggestedEntity(normalized, "PERSON");
     }
 
     private void saveSuggestion(EntityMention mention, EntityMention candidate, double score) {
+        if (mention == null || candidate == null || mention.getId().equals(candidate.getId())) {
+            return;
+        }
+        if (suggestionRepository.existsBetweenMentions(mention.getId(), candidate.getId())) {
+            return;
+        }
         IdentitySuggestion suggestion = IdentitySuggestion.builder()
                 .mentionA(mention)
                 .mentionB(candidate)
@@ -220,13 +339,7 @@ public class IdentityResolutionService {
             return;
         }
 
-        boolean alreadySuggested = suggestionRepository.findAll().stream()
-                .anyMatch(suggestion -> suggestion.getStatus() == SuggestionStatus.PENDING
-                        && ((suggestion.getMentionA().getId().equals(mention.getId())
-                                && suggestion.getMentionB().getId().equals(candidateMention.get().getId()))
-                            || (suggestion.getMentionB().getId().equals(mention.getId())
-                                && suggestion.getMentionA().getId().equals(candidateMention.get().getId()))));
-        if (alreadySuggested) {
+        if (suggestionRepository.existsBetweenMentions(mention.getId(), candidateMention.get().getId())) {
             return;
         }
 
@@ -241,7 +354,8 @@ public class IdentityResolutionService {
         if (normalized.equalsIgnoreCase(entity.getDisplayName())) {
             return;
         }
-        boolean exists = aliasRepository.findFirstByAliasIgnoreCase(normalized)
+        boolean exists = aliasRepository
+                .findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCase(normalized, entity.getType())
                 .filter(alias -> alias.getEntity().getId().equals(entity.getId()))
                 .isPresent();
         if (exists) {
@@ -250,7 +364,7 @@ public class IdentityResolutionService {
         aliasRepository.save(EntityAlias.builder()
                 .entity(entity)
                 .alias(normalized)
-                .source(AliasSource.FACE)
+                .source(AliasSource.AUTO)
                 .build());
     }
 
@@ -273,10 +387,10 @@ public class IdentityResolutionService {
         return label.trim().split("\\s+").length <= 2;
     }
 
-    private KnowledgeEntity createSuggestedEntity(String label) {
+    private KnowledgeEntity createSuggestedEntity(String label, String type) {
         KnowledgeEntity entity = KnowledgeEntity.builder()
                 .displayName(label)
-                .type("PERSON")
+                .type(type)
                 .build();
         entity = entityRepository.save(entity);
         EntityAlias alias = EntityAlias.builder()
@@ -288,17 +402,38 @@ public class IdentityResolutionService {
         return entity;
     }
 
-    private double computeSimilarity(EntityMention a, EntityMention b) {
+    private double computeHeuristicSimilarity(EntityMention a, EntityMention b) {
+        if (a.getEntity() != null && b.getEntity() != null
+                && a.getEntity().getId().equals(b.getEntity().getId())) {
+            return 1.0;
+        }
+
         String labelA = normalizeLabel(a.getLabel());
         String labelB = normalizeLabel(b.getLabel());
         if (labelA != null && labelA.equalsIgnoreCase(labelB)) {
-            return 0.0;
+            return 0.99;
         }
 
         if (isGenericLabel(labelA) || isGenericLabel(labelB)) {
             return 0.0;
         }
 
+        Set<String> labelTokensA = tokenize(labelA);
+        Set<String> labelTokensB = tokenize(labelB);
+        double labelScore = jaccard(labelTokensA, labelTokensB);
+        if (labelA.toLowerCase(Locale.ROOT).contains(labelB.toLowerCase(Locale.ROOT))
+                || labelB.toLowerCase(Locale.ROOT).contains(labelA.toLowerCase(Locale.ROOT))) {
+            labelScore = Math.max(labelScore, 0.70);
+        }
+
+        Set<String> cuesA = tokenizeVisualCues(a.getVisualCues());
+        Set<String> cuesB = tokenizeVisualCues(b.getVisualCues());
+        double cuesScore = jaccard(cuesA, cuesB);
+
+        return 0.7 * labelScore + 0.3 * cuesScore;
+    }
+
+    private double computeLlmSimilarity(EntityMention a, EntityMention b) {
         String prompt = String.format(
                 "Are these two descriptions about the same person? " +
                         "Person A: %s, cues: %s. Person B: %s, cues: %s. " +
@@ -317,6 +452,50 @@ public class IdentityResolutionService {
             log.warn("LLM matching failed", e);
         }
         return 0.0;
+    }
+
+    private Set<String> tokenizeVisualCues(String value) {
+        if (value == null || value.isBlank()) {
+            return Set.of();
+        }
+        try {
+            JsonNode node = objectMapper.readTree(value);
+            if (node.isArray()) {
+                Set<String> tokens = new HashSet<>();
+                for (JsonNode item : node) {
+                    if (item.isTextual()) {
+                        tokens.addAll(tokenize(item.asText()));
+                    }
+                }
+                return tokens;
+            }
+        } catch (Exception ignored) {
+        }
+        return tokenize(value);
+    }
+
+    private Set<String> tokenize(String text) {
+        if (text == null || text.isBlank()) {
+            return Set.of();
+        }
+        return Arrays.stream(text.toLowerCase(Locale.ROOT).split("[^\\p{L}0-9]+"))
+                .map(String::trim)
+                .filter(token -> token.length() >= 3)
+                .collect(Collectors.toSet());
+    }
+
+    private double jaccard(Set<String> a, Set<String> b) {
+        if (a.isEmpty() || b.isEmpty()) {
+            return 0.0;
+        }
+        Set<String> intersection = new HashSet<>(a);
+        intersection.retainAll(b);
+        if (intersection.isEmpty()) {
+            return 0.0;
+        }
+        Set<String> union = new HashSet<>(a);
+        union.addAll(b);
+        return (double) intersection.size() / union.size();
     }
 
     private String normalizeLabel(String label) {
@@ -367,4 +546,6 @@ public class IdentityResolutionService {
         }
         return trimmed;
     }
+
+    private record CandidateScore(EntityMention candidate, double score) {}
 }

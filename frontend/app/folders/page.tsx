@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { FolderOpen, Plus, Trash2, FolderPlus, Loader2 } from "lucide-react";
+import { FolderOpen, Plus, Trash2, FolderPlus, Loader2, RefreshCw } from "lucide-react";
 import {
   getFolders,
   createFolder,
@@ -10,6 +10,9 @@ import {
   clearAllData,
   Folder as FolderType,
   uploadFileToFolder,
+  startContextReanalysis,
+  getContextReanalysisStatus,
+  ReanalysisStatus,
 } from "@/lib/api";
 import { ViewModeToggle } from "@/components/ui/ViewModeToggle";
 import { useViewMode } from "@/hooks/useViewMode";
@@ -27,6 +30,7 @@ export default function FoldersPage() {
   const [showClearModal, setShowClearModal] = useState(false);
   const [clearConfirmText, setClearConfirmText] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
+  const [reanalysis, setReanalysis] = useState<ReanalysisStatus | null>(null);
   const { viewMode, setViewMode } = useViewMode();
 
   useEffect(() => {
@@ -108,6 +112,22 @@ export default function FoldersPage() {
     }
   };
 
+  const handleReanalysis = async () => {
+    if (!confirm("Przeliczyć kontekst wszystkich zapisanych zdjęć?")) return;
+    try {
+      let status = await startContextReanalysis();
+      setReanalysis(status);
+      while (status.status === "RUNNING") {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        status = await getContextReanalysisStatus(status.jobId);
+        setReanalysis(status);
+      }
+    } catch (error) {
+      console.error("Context reanalysis failed", error);
+      alert("Nie udało się uruchomić reanalizy kontekstu.");
+    }
+  };
+
   return (
     <div className="page-shell">
       <header className="page-header">
@@ -137,6 +157,16 @@ export default function FoldersPage() {
             </label>
             <button
               type="button"
+              onClick={handleReanalysis}
+              className="btn-secondary"
+              disabled={reanalysis?.status === "RUNNING"}
+              title="Uzupełnij czynności, obiekty, scenę i napisy na zdjęciach"
+            >
+              {reanalysis?.status === "RUNNING" ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
+              <span>Analizuj kontekst</span>
+            </button>
+            <button
+              type="button"
               onClick={() => setIsAdding(true)}
               className="btn-primary"
             >
@@ -162,6 +192,12 @@ export default function FoldersPage() {
       </header>
 
       <div className="page-body">
+        {reanalysis && (
+          <div className="status-banner" role="status">
+            <RefreshCw size={18} className={reanalysis.status === "RUNNING" ? "animate-spin" : ""} />
+            <span>Analiza kontekstu: {reanalysis.completed}/{reanalysis.total}, błędy: {reanalysis.failed}</span>
+          </div>
+        )}
         {isUploadingFolder && (
           <div className="status-banner" role="status">
             <Loader2 size={18} className="animate-spin text-accent" />

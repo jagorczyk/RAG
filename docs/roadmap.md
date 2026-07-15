@@ -1,151 +1,102 @@
-# Roadmap — RAG / GraphRAG
+# Roadmap RAG / GraphRAG
 
-Żywy plan rozwoju projektu. Uzupełnia [`graphrag-plan.md`](graphrag-plan.md) (architektura MVP) oraz [`issues-backlog.md`](issues-backlog.md) (konkretne issue).
-
-**Ostatnia aktualizacja:** 2026-07-11  
-**Branch:** `feature/graphrag`
-
----
+Plan rozwoju systemu hybrydowego RAG z grafem wiedzy. Stan dokumentu: **2026-07-12**.
 
 ## Stan obecny
 
-| Obszar | Status |
-|--------|--------|
-| Vector RAG (txt/pdf/obrazy) | ✅ Działa |
-| Structured vision → graf (encje, fakty, relacje) | ✅ Działa |
-| Face-service (InsightFace) | ✅ Działa |
-| QueryRouter (regex PL) | ✅ Rozbudowany |
-| GraphQueryService (aktywności, relacje, współwystępowania, pliki) | ✅ Działa |
-| Panel Osoby + review tożsamości | ✅ Działa |
-| Kontekst grafu per plik + follow-up „co to za mężczyzna?” | ✅ `09b9b0d` |
-| Odmiany imion PL (Bartka → Bartek) | ✅ `037f762` |
-| Relacje „obok” dwukierunkowe + źródła tylko z grafu | ✅ `617552e` |
+Rdzeń GraphRAG działa end-to-end:
 
----
+- ingest tekstów, PDF-ów i obrazów z embeddingami;
+- strukturalna analiza obrazów i zapis encji, wzmianek, faktów oraz relacji;
+- rozpoznawanie twarzy przez `face-service`;
+- tagowanie encji przy uploadzie i automatyczne potwierdzenie face-match;
+- sugestie tożsamości wymagające potwierdzenia;
+- router zapytań po polsku oraz routing graf-first dla pytań o `@plik`;
+- pytania o aktywności, pliki, współwystępowanie i relacje są obsługiwane przez graf;
+- kontekst encji dla follow-upów, odmiany polskich imion i źródła `GRAPH_FACT`;
+- UI przeglądu tożsamości oraz prompt przy uploadzie bez potwierdzonej tożsamości;
+- cache analizy obrazu (vision i face) oraz testy regresyjne.
 
-## Zrobione (2026-07-11)
+Weryfikacja lokalna: `./mvnw.cmd test` — **85 testów, 0 błędów**.
 
-| Commit | Co |
-|--------|-----|
-| `9f1584a` | Rozszerzone zwroty PL w `QueryRouter` + fix SQL co-occurrence |
-| `70a3d84` | Fix `entityTag`, auto-merge, sprzątanie ingest, `.gitignore` |
-| `617552e` | Relacje „obok” dwukierunkowe, źródła z grafu |
-| `037f762` | Odmiany imion (`Bartka` → `Bartek`) |
-| `09b9b0d` | Kontekst osób na pliku + follow-up tożsamości (Igor) |
+## Zakończone etapy
 
-**Zamknięte issue GitHub:** #5, #6, #13, #14, #16, #22
+| Etap | Zakres | Status |
+|---|---|---|
+| A | Model danych, ekstrakcja vision i zapis faktów | Zrobione |
+| B | Identity resolution, tagi, sugestie i face-match | Zrobione |
+| C | GraphQueryService i kontekst grafu w czacie | Zrobione |
+| D | QueryRouter, graf-first i follow-upy | Zrobione |
+| E | UI review tożsamości, `GRAPH_FACT`, prompt uploadu | Zrobione |
+| F | Cache analizy i testy ścieżek krytycznych | Zrobione częściowo |
 
----
+## Plan kolejnych prac
 
-## Roadmap — fazy jakości GraphRAG
+### Sprint 6 — jakość danych i odporność
 
-### Faza A — Tożsamość i pewność (najwyższy ROI)
+Priorytet: wysoki. Celem jest bezpieczne zarządzanie cyklem życia danych.
 
-Cel: każda podpisana osoba w grafie jest widoczna w czacie, nie tylko jako „mężczyzna”.
+1. **Sprzątanie osieroconych encji po usunięciu pliku**
+   - po usunięciu ostatniej wzmianki usuwać encję bez aktywnych wzmianek;
+   - zachować encje przypisane ręcznie, jeśli mają alias użytkownika;
+   - dodać test: upload → delete file → brak mention/fact/face embedding i brak osieroconej encji.
 
-| # | Zadanie | Priorytet | Issue | Status |
-|---|---------|-----------|-------|--------|
-| A.1 | `entityTag` przy uploadzie działa end-to-end | 🔴 | #22 | ✅ Done |
-| A.2 | Auto-merge tylko z potwierdzeniem twarzy / bez agresywnego label-match | 🔴 | #6 | ✅ Done |
-| A.3 | Kontekst `[Osoby z grafu wiedzy na pliku]` dla `@plik` i follow-up | 🔴 | — | ✅ Done |
-| A.4 | Face-match → CONFIRMED + alias przy ingestii | 🔴 | #24 | ✅ Done |
-| A.5 | UI: wymuszony tag lub potwierdzenie twarzy przy uploadzie | 🟠 | #25 | ✅ Done |
-| A.6 | Banner niepewności + typ źródła `GRAPH_FACT` | 🟠 | #18 | ✅ Done |
+2. **Pełne testy GraphRAG**
+   - `StructuredVisionExtractor`: poprawny JSON i fallback;
+   - `GraphQueryService`: agregacja, relacje, współwystępowanie i filtr pliku;
+   - `IdentityResolutionService`: progi, sugestie i merge;
+   - E2E rename/move/delete.
 
-### Faza B — Routing i kontekst (graf first)
+3. **Wydajność identity resolution**
+   - ograniczyć kandydatów po typie, folderze i tokenach etykiety;
+   - zachować limit kandydatów LLM;
+   - dodać cache wyników dopasowania i pomiar czasu ingestu.
 
-Cel: pytania o osoby/fakty idą do grafu, nie do vector RAG.
+4. **Ujednolicenie konfiguracji**
+   - jeden zestaw progów face-service w README, properties i kodzie;
+   - jedno źródło prawdy dla `maxResults` retrieval.
 
-| # | Zadanie | Priorytet | Issue | Status |
-|---|---------|-----------|-------|--------|
-| B.1 | Pytania z `@plik` → **graf first**, vector jako uzupełnienie | 🔴 | #23 | ✅ Done |
-| B.2 | Router LLM jako fallback gdy regex → DOCUMENT | 🟠 | #3 | ⬜ Todo |
-| B.3 | Fallback gdy encja nie znaleziona w grafie | 🟠 | #12 | ⬜ Todo |
-| B.4 | Filtrowanie HYBRID po folderze/ścieżce | 🟡 | #20 | ⬜ Todo |
-| B.5 | Plik konfiguracyjny fraz PL zamiast hardcoded regex | 🟡 | — | ⬜ Todo |
+### Sprint 7 — fallback i UX
 
-### Faza C — Wydajność i jakość danych
+Priorytet: średni.
 
-| # | Zadanie | Priorytet | Issue | Status |
-|---|---------|-----------|-------|--------|
-| C.1 | `IdentityResolutionService` — pre-filtr + cache LLM | 🔴 | #4 | ⬜ Todo |
-| C.2 | GET `/entities` bez side-effect merge | 🟠 | #5 | ✅ Done |
-| C.3 | Testy: extractor, graph query, identity, E2E delete | 🔴 | #8 | 🟡 Częściowo |
-| C.4 | Czyszczenie osieroconych encji po delete pliku | 🟡 | #2 | ⬜ Todo |
-| C.5 | Ujednolicenie progów face-service | 🟢 | #7 | ⬜ Todo |
+1. Fallback do vector RAG, gdy router rozpozna encję, ale graf jej nie zawiera.
+2. Filtrowanie HYBRID po folderze i ścieżce.
+3. Edycja aliasów encji w panelu Osoby.
+4. Status zdrowia `face-service` w UI.
+5. Aktualizacja README o GraphRAG, face-service i pełne API.
 
-### Faza D — UX i dokumentacja
+### Backlog długoterminowy
 
-| # | Zadanie | Priorytet | Issue | Status |
-|---|---------|-----------|-------|--------|
-| D.1 | README: GraphRAG, face-service, knowledge API | 🟠 | #9 | ⬜ Todo |
-| D.2 | Edycja aliasów encji w UI | 🟡 | #21 | ⬜ Todo |
-| D.3 | Health face-service w panelu Osoby | 🟡 | #19 | ⬜ Todo |
-| D.4 | Wizualizacja grafu relacji | 🟢 | #1 | ⬜ Todo |
+- LLM fallback dla niejednoznacznych pytań routera;
+- wizualizacja grafu relacji;
+- konfiguracja fraz routera poza kodem;
+- face embeddings dla przypadków bez wystarczającego opisu vision;
+- podsumowania społeczności grafu przy dużych zbiorach.
 
-### Faza E — Sprzątanie techniczne
+## Kryteria akceptacji
 
-| # | Zadanie | Priorytet | Issue | Status |
-|---|---------|-----------|-------|--------|
-| E.1 | Martwy kod `visionModel` / `VISION_PROMPT` | 🟠 | #13 | ✅ Done |
-| E.2 | Zdublowane importy `IngestionService` | 🟢 | #14 | ✅ Done |
-| E.3 | `.gitignore` artefaktów build / LaTeX | 🔴 | #16 | ✅ Done |
-| E.4 | Endpoint `DELETE /api/data/clear` vs `clear-all` | 🟠 | #15 | ⬜ Todo |
-| E.5 | Usunąć przypadkowe pliki z repo | 🟡 | #17 | ⬜ Todo |
+1. Upload dwóch zdjęć z tagiem „Igor” i pytanie o jego czynności zwraca fakty z obu zdjęć.
+2. Pytanie „co to za mężczyzna?” po `@zdjęciu` zwraca potwierdzoną encję, jeśli face-match ją potwierdził.
+3. Pytanie o osoby obok encji zwraca wyłącznie relacje z grafu i właściwe źródła.
+4. Niepewne dopasowanie tworzy sugestię `PENDING`, bez automatycznego potwierdzenia.
+5. Usunięcie pliku usuwa jego embeddingi, wzmianki, fakty, face embeddings i nieużywane encje.
+6. Pytania dokumentowe nadal działają przez vector RAG.
 
----
+## Kolejność realizacji
 
-## Sprinty (propozycja)
+```text
+Sprint 6.1  orphan cleanup + test delete
+Sprint 6.2  testy GraphQuery/identity/extractor
+Sprint 6.3  pre-filter i cache identity
+Sprint 6.4  konfiguracja progów i retrieval
+Sprint 7.1  fallback bez encji + HYBRID path
+Sprint 7.2  aliasy, health face-service i README
+Backlog    wizualizacja, LLM router, face embeddings
+```
 
-### Sprint 5 — Graf first (następny)
-- **B.1** Graf first dla `@plik`
-- **A.4** Face-match → CONFIRMED przy ingestii
-- **A.6** GRAPH_FACT w UI (#18)
-- **C.1** Wydajność identity (#4)
+## Dokumenty powiązane
 
-### Sprint 6 — Pewność danych
-- **A.5** UI tag/twarz przy uploadzie
-- **C.3** Testy GraphQueryService + E2E
-- **C.4** Osierocone encje (#2)
-- **D.1** README (#9)
-
-### Sprint 7 — Routing i UX
-- **B.2** LLM router fallback (#3)
-- **B.3** Fallback bez encji (#12)
-- **D.2** Aliasy w UI (#21)
-- **D.3** Health face-service (#19)
-
-### Backlog długi
-- **B.4** Filtr HYBRID po folderze (#20)
-- **D.4** Wizualizacja grafu (#1)
-- **B.5** Konfig fraz PL
-
----
-
-## Metryki sukcesu (kryteria akceptacyjne)
-
-1. Upload z tagiem „Igor" → pytanie o czynności Igora → odpowiedź ze wszystkich jego zdjęć
-2. „Co to za mężczyzna?" po `@zdjęciu` → **Igor**, nie „inna osoba"
-3. „Kto siedzi obok Bartka?" → imiona z grafu, jedno trafne źródło
-4. Podobne osoby bez tagu → sugestia PENDING, nie auto-merge
-5. Usunięcie pliku → cascade mentions + facts + embeddings
-
----
-
-## Powiązane dokumenty
-
-| Plik | Opis |
-|------|------|
-| [`docs/graphrag-plan.md`](graphrag-plan.md) | Architektura MVP, model danych, fazy 0–7 |
-| [`docs/issues-backlog.md`](issues-backlog.md) | Tabela issue ADD/IMPROVE/REMOVE |
-| [GitHub Issues](https://github.com/jagorczyk/RAG/issues) | Śledzenie zadań |
-| `scripts/create-github-issues.ps1` | Masowe tworzenie issue |
-| `scripts/create-roadmap-issues.ps1` | Issue roadmap Sprint 5–6 (#23–#25) |
-
----
-
-## Jak aktualizować roadmap
-
-1. Po zakończeniu zadania: zmień status na ✅ w tabeli + dopisz commit w sekcji „Zrobione"
-2. Zamknij issue na GitHubie z linkiem do commita
-3. Nowe epiki dopisuj w odpowiedniej fazie (A–E)
+- [`graphrag-plan.md`](graphrag-plan.md) — architektura i założenia MVP;
+- [`issues-backlog.md`](issues-backlog.md) — lista zadań i issue;
+- [`../README.md`](../README.md) — uruchomienie oraz API.

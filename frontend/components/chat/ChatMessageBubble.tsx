@@ -44,6 +44,45 @@ export function ChatMessageBubble({
     return null;
   };
 
+  const suggestedPaths = new Set(
+    (message.evidence ?? [])
+      .filter((item) => item.matchStatus === "SUGGESTED")
+      .map((item) => item.path),
+  );
+
+  const renderSources = (items: Source[], label?: string) => {
+    if (items.length === 0) return null;
+    return (
+      <div className="flex w-full max-w-[min(100%,46rem)] flex-wrap gap-1.5 pt-0.5">
+        {label && (
+          <span className="basis-full text-[11px] font-medium text-ink-muted">{label}</span>
+        )}
+        {items.map((source, idx) => {
+          const imageUrl = getSourceImageUrl(source);
+          const clickable = !!(imageUrl || source.path) && onSourceClick;
+          return (
+            <button
+              key={`${source.path}-${idx}`}
+              type="button"
+              onClick={() => clickable && onSourceClick?.(source)}
+              className={`chip ${clickable ? "cursor-pointer" : "cursor-default"}`}
+              title={`${source.fileName} · score ${source.score.toFixed(4)}`}
+            >
+              {imageUrl ? (
+                <span className="h-4 w-4 overflow-hidden rounded-sm bg-border">
+                  <img src={imageUrl} alt="" className="h-full w-full object-cover" />
+                </span>
+              ) : (
+                <span className="text-[9px] font-mono">{renderSourceIcon(source.type)}</span>
+              )}
+              <span className="max-w-[140px] truncate font-mono text-[11px]">{source.fileName}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <article
       className={`flex flex-col gap-1.5 ${
@@ -68,39 +107,20 @@ export function ChatMessageBubble({
       </div>
 
       {sources && sources.length > 0 && (
-        <div className="flex w-full max-w-[min(100%,46rem)] flex-wrap gap-1.5 pt-0.5">
-          {sources.map((source, idx) => {
-            const imageUrl = getSourceImageUrl(source);
-            const clickable = !!(imageUrl || source.path) && onSourceClick;
-            return (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => clickable && onSourceClick?.(source)}
-                className={`chip ${
-                  clickable ? "cursor-pointer" : "cursor-default"
-                }`}
-                title={`${source.fileName} · score ${source.score.toFixed(4)}`}
-              >
-                {imageUrl ? (
-                  <span className="h-4 w-4 overflow-hidden rounded-sm bg-border">
-                    <img
-                      src={imageUrl}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  </span>
-                ) : (
-                  <span className="text-[9px] font-mono">
-                    {renderSourceIcon(source.type)}
-                  </span>
-                )}
-                <span className="max-w-[140px] truncate font-mono text-[11px]">
-                  {source.fileName}
-                </span>
-              </button>
-            );
-          })}
+        <>
+          {renderSources(sources.filter((source) => !suggestedPaths.has(source.path)), "Potwierdzone")}
+          {renderSources(sources.filter((source) => suggestedPaths.has(source.path)), "Niepewne")}
+        </>
+      )}
+
+      {message.evidence && message.evidence.length > 0 && (
+        <div className="w-full max-w-[min(100%,46rem)] space-y-1 text-[11px] text-ink-muted">
+          {message.evidence.map((item) => (
+            <p key={`${item.path}-${item.reasons.join("|")}`}>
+              <span className="font-medium">Dowód:</span> {item.reasons.join("; ")}
+              {` (${Math.round(item.confidence * 100)}%)`}
+            </p>
+          ))}
         </div>
       )}
 

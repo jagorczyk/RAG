@@ -10,12 +10,17 @@ import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.folder.repository.FolderRepository;
 import com.rag.rag.ingestion.service.IngestionService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @RestController
 @RequestMapping("/api/data")
@@ -25,6 +30,16 @@ public class IngestionController {
     private final JdbcTemplate jdbcTemplate;
     private final FileRepository fileRepository;
     private final FolderRepository folderRepository;
+    private final Map<UUID, ReanalysisJob> reanalysisJobs = new ConcurrentHashMap<>();
+
+    private static final class ReanalysisJob {
+        final int total;
+        final AtomicInteger completed = new AtomicInteger();
+        final AtomicInteger failed = new AtomicInteger();
+        volatile String status = "RUNNING";
+
+        ReanalysisJob(int total) { this.total = total; }
+    }
 
     public IngestionController(
             IngestionService ingestionService,
@@ -47,6 +62,42 @@ public class IngestionController {
 
         ingestionService.deleteFiles(deleteDto.filePaths());
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/images/reanalyze-context")
+    public ResponseEntity<Map<String, Object>> reanalyzeImageContext() {
+        List<FileEntity> images = fileRepository.findAll().stream()
+                .filter(file -> file.getImageData() != null && file.getImageData().length > 0)
+                .filter(file -> file.getFileType() != null && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
+                .toList();
+        UUID jobId = UUID.randomUUID();
+        ReanalysisJob job = new ReanalysisJob(images.size());
+        reanalysisJobs.put(jobId, job);
+        CompletableFuture.runAsync(() -> {
+            for (FileEntity image : images) {
+                try {
+                    ingestionService.reanalyzeExistingImage(image);
+                    job.completed.incrementAndGet();
+                } catch (Exception e) {
+                    job.failed.incrementAndGet();
+                }
+            }
+            job.status = "COMPLETED";
+        });
+        return ResponseEntity.accepted().body(reanalysisStatus(jobId, job));
+    }
+
+    @GetMapping("/images/reanalyze-context/{jobId}")
+    public ResponseEntity<Map<String, Object>> reanalysisStatus(@PathVariable UUID jobId) {
+        ReanalysisJob job = reanalysisJobs.get(jobId);
+        if (job == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(reanalysisStatus(jobId, job));
+    }
+
+    private Map<String, Object> reanalysisStatus(UUID jobId, ReanalysisJob job) {
+        return Map.of("jobId", jobId, "status", job.status, "total", job.total,
+                "completed", job.completed.get(), "failed", job.failed.get(),
+                "remaining", Math.max(0, job.total - job.completed.get() - job.failed.get()));
     }
 
     @Transactional
@@ -168,6 +219,27 @@ public class IngestionController {
                 ).toList();
 
         return ResponseEntity.ok(files);
+    }
+
+    /** Streams an image/document for native clients instead of forcing Base64 in a list response. */
+    @GetMapping("/files/content")
+    public ResponseEntity<byte[]> getFileContent(@RequestParam("path") String path) {
+        Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
+        if (fileOpt.isEmpty() || fileOpt.get().getImageData() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        FileEntity file = fileOpt.get();
+        MediaType mediaType;
+        try {
+            mediaType = MediaType.parseMediaType(file.getFileType() == null
+                    ? MediaType.APPLICATION_OCTET_STREAM_VALUE : file.getFileType());
+        } catch (Exception ignored) {
+            mediaType = MediaType.APPLICATION_OCTET_STREAM;
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + file.getFileName() + "\"")
+                .contentType(mediaType)
+                .body(file.getImageData());
     }
 
     private List<String> getEmbeddingChunks(String path) {

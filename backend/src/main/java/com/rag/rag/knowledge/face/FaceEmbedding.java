@@ -7,6 +7,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -28,7 +29,7 @@ public class FaceEmbedding {
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "entity_id", nullable = false)
+    @JoinColumn(name = "entity_id")
     private KnowledgeEntity entity;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -41,6 +42,10 @@ public class FaceEmbedding {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb", nullable = false)
     private float[] embedding;
+
+    @Column(name = "embedding_vector", columnDefinition = "vector(512)")
+    @ColumnTransformer(write = "?::vector")
+    private String embeddingVector;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")

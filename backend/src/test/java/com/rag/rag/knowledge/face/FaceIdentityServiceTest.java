@@ -19,7 +19,7 @@ class FaceIdentityServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new FaceIdentityService(null, null, null, null);
+        service = new FaceIdentityService(null, null, null, null, null);
         ReflectionTestUtils.setField(service, "suggestionThreshold", 0.50);
         ReflectionTestUtils.setField(service, "minMargin", 0.08);
     }
@@ -45,7 +45,7 @@ class FaceIdentityServiceTest {
         KnowledgeEntity entityB = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("B").build();
 
         List<FaceEmbedding> stored = List.of(
-                FaceEmbedding.builder().entity(entityA).embedding(new float[] {0.95f, 0.05f, 0f}).build(),
+                FaceEmbedding.builder().entity(entityA).embedding(new float[] {0.80f, 0.60f, 0f}).build(),
                 FaceEmbedding.builder().entity(entityA).embedding(new float[] {0.5f, 0.5f, 0f}).build(),
                 FaceEmbedding.builder().entity(entityB).embedding(new float[] {0.99f, 0.01f, 0f}).build()
         );

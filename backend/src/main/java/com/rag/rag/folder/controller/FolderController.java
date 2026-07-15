@@ -2,8 +2,11 @@ package com.rag.rag.folder.controller;
 
 import com.rag.rag.folder.dto.UploadResultDto;
 import com.rag.rag.folder.dto.FolderDto;
+import com.rag.rag.folder.dto.FileDto;
 import com.rag.rag.folder.entity.FolderEntity;
+import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FolderRepository;
+import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.ingestion.service.IngestionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +28,7 @@ import java.util.UUID;
 public class FolderController {
 
     private final FolderRepository folderRepository;
+    private final FileRepository fileRepository;
     private final IngestionService ingestionService;
 
     @PostMapping("/create")
@@ -44,6 +48,18 @@ public class FolderController {
     @GetMapping
     public List<FolderEntity> findAll() {
         return folderRepository.findAll();
+    }
+
+    /** Mobile-friendly folder listing that avoids returning every image in the database. */
+    @GetMapping("/{id}/files")
+    public List<FileDto> files(@PathVariable UUID id) {
+        FolderEntity folder = folderRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Folder not found."));
+        String prefix = "dir://" + folder.getName() + "/";
+        return fileRepository.findAll().stream()
+                .filter(file -> file.getPath() != null && file.getPath().startsWith(prefix))
+                .map(file -> new FileDto(file.getPath(), file.getFileName(), null, file.getFileType(), null))
+                .toList();
     }
 
     @PostMapping("/{id}/upload")

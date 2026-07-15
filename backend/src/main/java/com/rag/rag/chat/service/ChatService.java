@@ -39,6 +39,9 @@ public interface ChatService {
        who appears in the image. A signed person like Igor must be named, not described only as "mężczyzna".
     10. For questions with @file reference, answer from graph sections first. Use document fragments
        only to supplement scene details missing from the graph.
+    11. When the user asks for BOTH a document description AND who is in a photo (two @ references),
+       answer in two parts: first summarize the document, then list named people from
+       [Osoby z grafu wiedzy na pliku]. Never replace graph names with generic descriptions.
 
     FORMATTING RULES:
     - Go straight to the answer, no intro phrases.

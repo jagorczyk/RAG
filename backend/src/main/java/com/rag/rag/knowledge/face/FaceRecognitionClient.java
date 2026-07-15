@@ -32,24 +32,38 @@ public class FaceRecognitionClient {
     }
 
     public List<DetectedFaceDto> analyze(byte[] imageBytes, String fileName) {
-        if (!enabled || imageBytes == null || imageBytes.length == 0) {
+        FaceAnalyzeResponse response = analyzeResponse(imageBytes, fileName);
+        if (response == null || response.faces() == null) {
             return List.of();
         }
+        return response.faces().stream()
+                .map(face -> face.withImageDimensions(response.imageWidth() == null ? 0 : response.imageWidth(), response.imageHeight() == null ? 0 : response.imageHeight()))
+                .toList();
+    }
 
+    public FaceAnalyzeResponse analyzeResponse(byte[] imageBytes, String fileName) {
         try {
-            String resolvedFileName = StringUtils.hasText(fileName) ? fileName : "image.jpg";
-            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            body.add("file", new NamedByteArrayResource(imageBytes, resolvedFileName));
-
-            FaceAnalyzeResponse response = restTemplate.postForObject(analyzeUrl, body, FaceAnalyzeResponse.class);
-            if (response == null || response.faces() == null) {
-                return List.of();
-            }
-            return response.faces();
+            return analyzeResponseOrThrow(imageBytes, fileName);
         } catch (Exception e) {
             log.warn("Face recognition service call failed: {}", e.getMessage());
-            return List.of();
+            return new FaceAnalyzeResponse(List.of(), 0, 0, 0);
         }
+    }
+
+    public FaceAnalyzeResponse analyzeResponseOrThrow(byte[] imageBytes, String fileName) {
+        if (!enabled || imageBytes == null || imageBytes.length == 0) {
+            return new FaceAnalyzeResponse(List.of(), 0, 0, 0);
+        }
+
+        String resolvedFileName = StringUtils.hasText(fileName) ? fileName : "image.jpg";
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("file", new NamedByteArrayResource(imageBytes, resolvedFileName));
+
+        FaceAnalyzeResponse response = restTemplate.postForObject(analyzeUrl, body, FaceAnalyzeResponse.class);
+        if (response == null || response.faces() == null) {
+            return new FaceAnalyzeResponse(List.of(), 0, 0, 0);
+        }
+        return response;
     }
 
     public boolean isHealthy() {

@@ -53,8 +53,9 @@ public class LlmDocumentReranker {
             String response = chatLanguageModel.generate(prompt);
             Map<Integer, Double> scoreByIndex = parseScores(response, rerankCandidates.size());
 
-            if (scoreByIndex.isEmpty()) {
-                log.warn("Reranker returned no usable scores, keeping original order");
+            if (scoreByIndex.size() != rerankCandidates.size()) {
+                log.warn("Reranker returned incomplete scores ({}/{}), keeping original order",
+                        scoreByIndex.size(), rerankCandidates.size());
                 return candidates;
             }
 
@@ -143,7 +144,9 @@ public class LlmDocumentReranker {
         Map<String, Object> metadata = new HashMap<>(segment.metadata().toMap());
         metadata.put("retrieval_score", metadata.getOrDefault("score", "0"));
         metadata.put("rerank_score", String.valueOf(rerankScore));
-        metadata.put("score", String.valueOf(rerankScore));
+        // Keep the vector score as the public source score. Rerank score is
+        // auxiliary metadata and must not turn missing/partial LLM scores
+        // into artificial zero-score sources.
         return Content.from(TextSegment.from(segment.text(), Metadata.from(metadata)));
     }
 

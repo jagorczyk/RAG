@@ -1,0 +1,2 @@
+Hasło do routera: testABC_1234!
+IP routera: 192.168.0.1

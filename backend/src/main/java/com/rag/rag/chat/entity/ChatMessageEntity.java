@@ -1,5 +1,6 @@
 package com.rag.rag.chat.entity;
 
+import com.rag.rag.chat.dto.QueryEvidenceDto;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -36,6 +37,16 @@ public class ChatMessageEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "scores", columnDefinition = "jsonb")
     private List<Double> scores;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "evidence", columnDefinition = "jsonb")
+    private List<QueryEvidenceDto> evidence;
+
+    @Column(name = "answer_kind")
+    private String answerKind;
+
+    @Column(name = "uncertain")
+    private Boolean uncertain;
 
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

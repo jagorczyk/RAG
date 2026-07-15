@@ -32,14 +32,13 @@ function applyTheme(theme: Theme) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("light");
-  const [mounted, setMounted] = useState(false);
+  const [theme, setThemeState] = useState<Theme>(() =>
+    typeof window === "undefined" ? "light" : readStoredTheme()
+  );
+  const [mounted] = useState(() => typeof window !== "undefined");
 
   useEffect(() => {
-    const initial = readStoredTheme();
-    setThemeState(initial);
-    applyTheme(initial);
-    setMounted(true);
+    applyTheme(theme);
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const onChange = () => {
@@ -52,12 +51,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, []);
+  }, [theme]);
 
   useEffect(() => {
-    if (mounted) {
-      applyTheme(theme);
-    }
+    if (mounted) applyTheme(theme);
   }, [theme, mounted]);
 
   const toggleTheme = () => {

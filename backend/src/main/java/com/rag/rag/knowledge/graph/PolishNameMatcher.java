@@ -64,7 +64,7 @@ public final class PolishNameMatcher {
     }
 
     private static void addPolishNameInflections(String normalized, Set<String> variants) {
-        if (normalized.endsWith("ek") && normalized.length() > 4) {
+        if (normalized.endsWith("ek") && normalized.length() > 3) {
             String stem = normalized.substring(0, normalized.length() - 2);
             variants.add(stem + "ka");
             variants.add(stem + "ku");

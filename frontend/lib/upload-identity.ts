@@ -2,7 +2,6 @@ import {
   detectFacesForFile,
   EntityMention,
   getMentionsForFile,
-  getPendingSuggestions,
 } from "@/lib/knowledge-api";
 import type { UploadResult } from "@/lib/api";
 import type { IdentityReviewFile } from "@/components/knowledge/UploadIdentityPrompt";
@@ -26,14 +25,8 @@ function isGenericName(name: string): boolean {
 }
 
 function mentionNeedsReview(mention: EntityMention): boolean {
-  if (mention.status === "REJECTED") {
-    return false;
-  }
-  if (mention.status === "CONFIRMED") {
-    const name = mention.entityDisplayName || mention.label;
-    return isGenericName(name);
-  }
-  return true;
+  const name = (mention.entityDisplayName ?? mention.label ?? "").trim().toLowerCase();
+  return name.startsWith("osoba ") || name === "osoba" || mention.status !== "CONFIRMED";
 }
 
 export async function buildIdentityReviewQueue(
@@ -45,7 +38,6 @@ export async function buildIdentityReviewQueue(
     return [];
   }
 
-  const pendingSuggestions = await getPendingSuggestions();
   const queue: IdentityReviewFile[] = [];
 
   for (const upload of imageUploads) {
@@ -61,11 +53,7 @@ export async function buildIdentityReviewQueue(
       }
     }
 
-    const fileSuggestions = pendingSuggestions.filter(
-      (suggestion) =>
-        suggestion.mentionA.filePath === upload.path ||
-        suggestion.mentionB.filePath === upload.path
-    );
+    const fileSuggestions = [];
 
     const needsReview =
       mentions.some(mentionNeedsReview) || fileSuggestions.length > 0;

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { getAllEntities, KnowledgeEntity, renameEntity } from "@/lib/knowledge-api";
 import { Check, Edit2, X } from "lucide-react";
 
@@ -64,18 +64,20 @@ export function EntitiesPanel() {
     [entities]
   );
 
-  useEffect(() => {
-    loadEntities();
-  }, []);
-
-  const loadEntities = async () => {
+  const loadEntities = useCallback(async () => {
     try {
       const data = await getAllEntities();
       setEntities(data);
     } catch (e) {
       console.error(e);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // Data loading is the external synchronization this effect is responsible for.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadEntities();
+  }, [loadEntities]);
 
   const startEdit = (entity: KnowledgeEntity) => {
     setEditingId(entity.id);
@@ -87,7 +89,7 @@ export function EntitiesPanel() {
     try {
       await renameEntity(editingId, editValue);
       setEditingId(null);
-      loadEntities();
+      void loadEntities();
     } catch (e) {
       console.error(e);
     }

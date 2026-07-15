@@ -16,4 +16,11 @@ public interface IdentitySuggestionRepository extends JpaRepository<IdentitySugg
     @Modifying
     @Query("DELETE FROM IdentitySuggestion s WHERE s.mentionA.id IN :mentionIds OR s.mentionB.id IN :mentionIds")
     void deleteByMentionIds(@Param("mentionIds") Collection<UUID> mentionIds);
+
+    @Query("""
+            SELECT COUNT(s) > 0 FROM IdentitySuggestion s
+            WHERE (s.mentionA.id = :mentionAId AND s.mentionB.id = :mentionBId)
+               OR (s.mentionA.id = :mentionBId AND s.mentionB.id = :mentionAId)
+            """)
+    boolean existsBetweenMentions(@Param("mentionAId") UUID mentionAId, @Param("mentionBId") UUID mentionBId);
 }

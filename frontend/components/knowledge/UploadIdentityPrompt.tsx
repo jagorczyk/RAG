@@ -10,10 +10,10 @@ import {
   EntityMention,
   getAllEntities,
   getMentionsForFile,
-  getPendingSuggestions,
   IdentitySuggestion,
   KnowledgeEntity,
   mergeSuggestion,
+  rejectMention,
   renameMention,
   splitSuggestion,
 } from "@/lib/knowledge-api";
@@ -49,14 +49,8 @@ function isGenericName(name: string): boolean {
 }
 
 function mentionNeedsReview(mention: EntityMention): boolean {
-  if (mention.status === "REJECTED") {
-    return false;
-  }
-  if (mention.status === "CONFIRMED") {
-    const name = mention.entityDisplayName || mention.label;
-    return isGenericName(name);
-  }
-  return true;
+  const name = (mention.entityDisplayName ?? mention.label ?? "").trim().toLowerCase();
+  return name.startsWith("osoba ") || name === "osoba" || mention.status !== "CONFIRMED";
 }
 
 
@@ -89,12 +83,7 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
         }
       }
 
-      const pending = await getPendingSuggestions();
-      const fileSuggestions = pending.filter(
-        (suggestion) =>
-          suggestion.mentionA.filePath === currentFile.path ||
-          suggestion.mentionB.filePath === currentFile.path
-      );
+      const fileSuggestions: IdentitySuggestion[] = [];
 
       setMentions(mentionData);
       setSuggestions(fileSuggestions);
@@ -277,10 +266,10 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                             wykryto: {mention.label}
                           </span>
                         </div>
-                        <div className="flex flex-col gap-2 sm:flex-row">
+                        <div className="relative z-20 flex flex-col gap-2 sm:flex-row">
                           <input
                             type="text"
-                            list="upload-entity-suggestions"
+                            list={`upload-entity-suggestions-${mention.id}`}
                             value={nameInputs[mention.id] ?? ""}
                             onChange={(event) =>
                               setNameInputs((prev) => ({
@@ -289,8 +278,13 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                               }))
                             }
                             placeholder="Wpisz imię (np. Igor)"
-                            className="flex-1 rounded-[6px] border border-border bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+                            className="relative z-20 flex-1 rounded-[6px] border border-border bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:border-accent"
                           />
+                          <datalist id={`upload-entity-suggestions-${mention.id}`}>
+                            {personEntities.map((entity) => (
+                              <option key={entity.id} value={entity.displayName} />
+                            ))}
+                          </datalist>
                           <button
                             type="button"
                             onClick={() => saveMentionName(mention.id)}
@@ -299,6 +293,22 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                           >
                             <Check size={14} className="mr-1" />
                             {savingId === mention.id ? "Zapisuję..." : "Potwierdź"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setSavingId(mention.id);
+                              try {
+                                await rejectMention(mention.id);
+                                await loadFileData();
+                              } finally {
+                                setSavingId(null);
+                              }
+                            }}
+                            disabled={savingId === mention.id}
+                            className="btn-secondary h-auto px-3 py-2 text-sm text-error"
+                          >
+                            Odrzuć detekcję
                           </button>
                         </div>
                         {mention.entityDisplayName &&
@@ -323,11 +333,6 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                       </div>
                     );
                   })}
-                  <datalist id="upload-entity-suggestions">
-                    {personEntities.map((entity) => (
-                      <option key={entity.id} value={entity.displayName} />
-                    ))}
-                  </datalist>
                 </div>
               )}
 

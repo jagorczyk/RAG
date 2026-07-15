@@ -2,6 +2,7 @@ package com.rag.rag.chat.service;
 
 import com.rag.rag.chat.dto.MessageRequest;
 import com.rag.rag.chat.dto.MessageResponse;
+import com.rag.rag.chat.dto.QueryEvidenceDto;
 import com.rag.rag.chat.entity.ChatMessageEntity;
 import com.rag.rag.chat.repository.ChatMemoryRepository;
 import com.rag.rag.chat.repository.ChatMessageRepository;
@@ -9,9 +10,13 @@ import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
 import com.rag.rag.knowledge.graph.GraphQueryService;
 import com.rag.rag.knowledge.graph.PolishNameMatcher;
+import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.query.VisualQueryMatch;
+import com.rag.rag.knowledge.query.DynamicVisualMatcher;
 import dev.langchain4j.service.Result;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +25,7 @@ import java.util.*;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -33,10 +39,14 @@ public class ChatInteractionService {
     private final QueryRouter queryRouter;
     private final GraphQueryService graphQueryService;
     private final ChatEntityReferenceService chatEntityReferenceService;
+    private final DynamicVisualMatcher dynamicVisualMatcher;
 
     private static final Pattern GRAPH_FILE_PATH_PATTERN = Pattern.compile("plik: (.*)");
     private static final Pattern DIR_PATH_PATTERN = Pattern.compile("dir://[^\\s\\]\\),]+");
     private static final Pattern PHOTO_COUNT_PATTERN = Pattern.compile("(?i)(\\d+)\\s*zdj");
+
+    @Value("${rag.retrieval.photo-min-score:0.55}")
+    private double photoMinScore = 0.55;
 
     @Transactional
     public MessageResponse processChatMessage(UUID chatId, MessageRequest messageRequest) {
@@ -57,6 +67,16 @@ public class ChatInteractionService {
         String question = messageRequest.message();
         QueryRouter.QueryRoute route = queryRouter.classify(question);
         log.info("Query Route for question '{}': {}", question, route);
+
+        if (queryRouter.isExactPhotoListQuestion(question, route)) {
+            return processGraphPhotoQuery(chatId, question);
+        }
+        if (dynamicVisualMatcher != null
+                && (route == QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH
+                || route == QueryRouter.QueryRoute.HYBRID)
+                && dynamicVisualMatcher.isVisualSelectionQuestion(question)) {
+            return processDynamicVisualQuery(chatId, question);
+        }
 
         String fullQuestion = question;
         String graphContext = buildGraphContext(chatId, question, route);
@@ -82,11 +102,123 @@ public class ChatInteractionService {
         List<SourceDto> filteredSources = extractSourcesFromResponse(result, aiResponse, graphContext, route, question);
         boolean uncertain = isUncertainGraphAnswer(graphContext);
         
-        String cleanedResponse = cleanUpAiResponse(aiResponse, filteredSources);
+        String cleanedResponse = route == QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH
+                ? formatPhotoSearchResponse(
+                        filteredSources,
+                        hasPhotoQualifier(question, graphQueryService.findEntityNameInQuestion(question)))
+                : cleanUpAiResponse(aiResponse, filteredSources);
 
-        saveAiMessage(chatId, cleanedResponse, filteredSources);
+        String answerKind = route == QueryRouter.QueryRoute.DOCUMENT ? "DOCUMENT"
+                : route == QueryRouter.QueryRoute.HYBRID ? "HYBRID" : "GRAPH_QUERY";
+        saveAiMessage(chatId, cleanedResponse, filteredSources, List.of(), answerKind, uncertain);
 
-        return new MessageResponse(cleanedResponse, filteredSources, uncertain);
+        return new MessageResponse(cleanedResponse, filteredSources, uncertain, List.of(), answerKind);
+    }
+
+    private MessageResponse processGraphPhotoQuery(UUID chatId, String question) {
+        List<String> entities = orderEntitiesByQuestion(
+                graphQueryService.findAllEntityNamesInQuestion(question), question);
+        List<GraphQueryService.PhotoMatch> matches = graphQueryService.findPhotoMatchesForEntities(entities);
+        List<GraphQueryService.PhotoMatch> confirmed = matches.stream()
+                .filter(match -> match.status() == MentionStatus.CONFIRMED).toList();
+        List<GraphQueryService.PhotoMatch> suggested = matches.stream()
+                .filter(match -> match.status() == MentionStatus.SUGGESTED).toList();
+
+        List<SourceDto> sources = matches.stream()
+                .map(match -> ingestionService.createGraphFactSourceDto(
+                        match.filePath(), fileNameFromPath(match.filePath()), match.confidence().doubleValue()))
+                .toList();
+        List<QueryEvidenceDto> evidence = matches.stream()
+                .map(match -> new QueryEvidenceDto(
+                        match.filePath(), match.confidence(),
+                        List.of("Graf potwierdza obecność: " + String.join(", ", match.entityNames())),
+                        match.status().name()))
+                .toList();
+
+        String names = joinEntityNames(entities);
+        String response = formatGraphPhotoResponse(names, entities.size(), confirmed.size(), suggested.size());
+        boolean uncertain = !suggested.isEmpty();
+        saveAiMessage(chatId, response, sources, evidence, "GRAPH_QUERY", uncertain);
+        return new MessageResponse(response, sources, uncertain, evidence,
+                matches.isEmpty() ? "NO_EVIDENCE" : "GRAPH_QUERY");
+    }
+
+    private String formatGraphPhotoResponse(String names, int entityCount, int confirmed, int suggested) {
+        StringBuilder response = new StringBuilder();
+        if (entityCount > 1) {
+            if (confirmed == 0) {
+                response.append("Nie znaleziono potwierdzonych wspólnych zdjęć, na których występują ")
+                        .append(names).append(".");
+            } else {
+                response.append("Znaleziono ").append(confirmed).append(" ")
+                        .append(photoWord(confirmed)).append(", na których wspólnie występują ")
+                        .append(names).append(".");
+            }
+        } else {
+            if (confirmed == 0) {
+                response.append("Nie znaleziono potwierdzonych zdjęć, na których występuje ")
+                        .append(names).append(".");
+            } else {
+                response.append("Znaleziono ").append(confirmed).append(" ")
+                        .append(photoWord(confirmed)).append(", na których występuje ")
+                        .append(names).append(".");
+            }
+        }
+        if (suggested > 0) {
+            response.append(" Dodatkowo znaleziono ").append(suggested).append(" ")
+                    .append(photoWord(suggested)).append(" z niepewnym rozpoznaniem.");
+        }
+        return response.toString();
+    }
+
+    private String photoWord(int count) {
+        int mod100 = count % 100;
+        int mod10 = count % 10;
+        return count == 1 ? "zdjęcie"
+                : mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)
+                ? "zdjęcia" : "zdjęć";
+    }
+
+    private String joinEntityNames(List<String> names) {
+        if (names == null || names.isEmpty()) return "wskazane osoby";
+        if (names.size() == 1) return names.get(0);
+        if (names.size() == 2) return names.get(0) + " i " + names.get(1);
+        return String.join(", ", names.subList(0, names.size() - 1))
+                + " i " + names.get(names.size() - 1);
+    }
+
+    private List<String> orderEntitiesByQuestion(List<String> entities, String question) {
+        return entities.stream()
+                .sorted(Comparator.comparingInt(entity -> firstEntityOccurrence(question, entity)))
+                .toList();
+    }
+
+    private int firstEntityOccurrence(String question, String entity) {
+        int first = Integer.MAX_VALUE;
+        for (String variant : PolishNameMatcher.generateVariants(entity)) {
+            int index = question.toLowerCase(Locale.ROOT).indexOf(variant.toLowerCase(Locale.ROOT));
+            if (index >= 0) first = Math.min(first, index);
+        }
+        return first;
+    }
+
+    private MessageResponse processDynamicVisualQuery(UUID chatId, String question) {
+        List<VisualQueryMatch> matches = dynamicVisualMatcher.findMatches(question);
+        List<SourceDto> sources = matches.stream()
+                .map(match -> ingestionService.createSourceDto(match.filePath(), null,
+                        match.confidence().doubleValue()))
+                .toList();
+        List<QueryEvidenceDto> evidence = matches.stream()
+                .map(match -> new QueryEvidenceDto(match.filePath(), match.confidence(), match.reasons(), "CONFIRMED"))
+                .toList();
+        String response = matches.isEmpty()
+                ? "Nie znalazłem zdjęcia spełniającego wszystkie warunki pytania."
+                : "Znalazłem " + matches.size() + (matches.size() == 1
+                    ? " zdjęcie spełniające wszystkie warunki pytania."
+                    : " zdjęcia spełniające wszystkie warunki pytania.");
+        saveAiMessage(chatId, response, sources, evidence, "GRAPH_QUERY", false);
+        return new MessageResponse(response, sources, false, evidence,
+                matches.isEmpty() ? "NO_EVIDENCE" : "GRAPH_QUERY");
     }
 
     private String buildGraphContext(UUID chatId, String question, QueryRouter.QueryRoute route) {
@@ -96,6 +228,9 @@ public class ChatInteractionService {
             case ENTITY_SPATIAL_RIGHT -> graphQueryService.buildSpatialRightContextForQuestion(question);
             case ENTITY_FILES, ENTITY_LIST -> graphQueryService.buildFileListContextForQuestion(question);
             case ENTITY_CO_OCCURRENCE -> graphQueryService.buildCoOccurrenceContextForQuestion(question);
+            // DynamicVisualMatcher handles semantic conditions. This graph
+            // context remains a compatibility fallback for older clients.
+            case ENTITY_PHOTO_SEARCH -> graphQueryService.buildFileListContextForQuestion(question);
             case ENTITY_DESCRIPTION -> buildDescriptionContext(chatId, question);
             case ENTITY_ACTIVITY -> buildEntityContext(question);
             case HYBRID -> buildEntityContext(question);
@@ -134,6 +269,20 @@ public class ChatInteractionService {
     }
 
     private String buildFileScopedGraphContext(UUID chatId, String question) {
+        StringBuilder contextBuilder = new StringBuilder();
+        for (String imagePath : graphQueryService.resolveImageFilePathsFromQuestion(question)) {
+            String imageContext = graphQueryService.buildFullContextForFile(imagePath);
+            if (!imageContext.isBlank()) {
+                if (!contextBuilder.isEmpty()) {
+                    contextBuilder.append("\n");
+                }
+                contextBuilder.append(imageContext);
+            }
+        }
+        if (!contextBuilder.isEmpty()) {
+            return contextBuilder.toString();
+        }
+
         Optional<String> filePath = graphQueryService.resolveFilePathFromQuestion(question);
         if (filePath.isEmpty()) {
             filePath = chatEntityReferenceService.resolveRecentSourceFilePath(chatId);
@@ -148,6 +297,9 @@ public class ChatInteractionService {
             QueryRouter.QueryRoute route,
             String question
     ) {
+        if (route == QueryRouter.QueryRoute.ENTITY_PHOTO_SEARCH) {
+            return extractPhotoSearchSources(result, graphContext, question);
+        }
         boolean noInfo = aiResponse.toLowerCase().contains("nie znaleziono informacji") || aiResponse.trim().isEmpty();
 
         if (noInfo) {
@@ -207,6 +359,63 @@ public class ChatInteractionService {
 
         log.info("FILTERED SOURCES COUNT: 0");
         return List.of();
+    }
+
+    private List<SourceDto> extractPhotoSearchSources(
+            Result<String> result,
+            String graphContext,
+            String question
+    ) {
+        List<SourceDto> graphSources = extractGraphSources(graphContext);
+        if (graphSources.isEmpty()) {
+            return List.of();
+        }
+
+        Optional<String> entityName = graphQueryService.findEntityNameInQuestion(question);
+        if (!hasPhotoQualifier(question, entityName)) {
+            return dedupeSources(graphSources);
+        }
+
+        Set<String> graphPaths = graphSources.stream()
+                .map(SourceDto::path)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        List<SourceDto> matching = ingestionService.getSources(result).stream()
+                .filter(source -> source.path() != null && graphPaths.contains(source.path()))
+                .filter(source -> source.score() != null && source.score() >= photoMinScore)
+                .sorted(Comparator.comparingDouble(source -> source.score() == null ? 0.0 : -source.score()))
+                .toList();
+
+        return dedupeSources(matching);
+    }
+
+    private boolean hasPhotoQualifier(String question, Optional<String> entityName) {
+        Set<String> ignored = Set.of(
+                "daj", "podaj", "zwróć", "zwroc", "mi", "pokaz", "pokaż", "znajdz", "znajdź", "wyswietl", "wyświetl",
+                "zdjęcie", "zdjecie", "zdjęcia", "zdjecia", "foto", "fotkę", "fotke",
+                "obraz", "wszystkie", "wszystkim", "pasujące", "pasujace", "jakimś", "jakims", "z"
+        );
+        Set<String> entityVariants = new HashSet<>();
+        entityName.ifPresent(name -> entityVariants.addAll(PolishNameMatcher.generateVariants(name)));
+        return PolishNameMatcher.extractEntityTokens(question).stream()
+                .filter(token -> !entityVariants.contains(token))
+                .anyMatch(token -> !ignored.contains(token));
+    }
+
+    private String formatPhotoSearchResponse(List<SourceDto> sources, boolean qualified) {
+        int count = sources.size();
+        if (count == 0) {
+            return "Nie znalazłem zdjęcia pasującego do opisu.";
+        }
+        if (count == 1) {
+            return qualified ? "Znalazłem pasujące zdjęcie." : "Znalazłem 1 zdjęcie.";
+        }
+        if (!qualified) {
+            return "Znalazłem " + count + " zdjęć.";
+        }
+        return "Znalazłem " + count + (count < 5
+                ? " pasujące zdjęcia."
+                : " pasujących zdjęć.");
     }
 
     private List<SourceDto> filterRetrievalByQuestionContext(
@@ -537,6 +746,16 @@ public class ChatInteractionService {
     }
 
     private void saveAiMessage(UUID chatId, String textContext, List<SourceDto> sources) {
+        saveAiMessage(chatId, textContext, sources, List.of(), "DOCUMENT", false);
+    }
+
+    private void saveAiMessage(UUID chatId, String textContext, List<SourceDto> sources,
+                               List<QueryEvidenceDto> evidence) {
+        saveAiMessage(chatId, textContext, sources, evidence, "DOCUMENT", false);
+    }
+
+    private void saveAiMessage(UUID chatId, String textContext, List<SourceDto> sources,
+                               List<QueryEvidenceDto> evidence, String answerKind, boolean uncertain) {
         List<String> paths = sources.stream().map(SourceDto::path).toList();
         List<Double> scores = sources.stream().map(SourceDto::score).toList();
 
@@ -546,6 +765,9 @@ public class ChatInteractionService {
                 .textContext(textContext)
                 .imagePaths(paths)
                 .scores(scores)
+                .evidence(evidence)
+                .answerKind(answerKind)
+                .uncertain(uncertain)
                 .build();
 
         chatMessageRepository.save(aiMsg);
