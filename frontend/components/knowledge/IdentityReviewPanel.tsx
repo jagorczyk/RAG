@@ -55,8 +55,13 @@ export function IdentityReviewPanel() {
   };
 
   return (
-    <div className="rounded-[10px] border border-border bg-surface p-4">
-      <h3 className="mb-4 text-lg font-semibold text-ink">Oczekujące potwierdzenia tożsamości</h3>
+    <div className="panel p-4 sm:p-5">
+      <h3 className="mb-1 text-xl font-extrabold tracking-tight text-ink">
+        Oczekujące potwierdzenia
+      </h3>
+      <p className="mb-4 text-sm text-ink-muted">
+        Potwierdź lub rozdziel sugerowane tożsamości na zdjęciach.
+      </p>
       {loading ? (
         <p className="text-sm text-ink-muted">Ładowanie sugestii...</p>
       ) : suggestions.length === 0 ? (

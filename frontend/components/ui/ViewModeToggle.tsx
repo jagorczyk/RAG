@@ -1,33 +1,35 @@
 "use client";
 
 import { LayoutGrid, List } from "lucide-react";
-import type { ViewMode } from "@/hooks/useViewMode";
 
-interface ViewModeToggleProps {
+type ViewMode = "list" | "grid";
+
+export function ViewModeToggle({
+  value,
+  onChange,
+}: {
   value: ViewMode;
   onChange: (mode: ViewMode) => void;
-}
-
-export function ViewModeToggle({ value, onChange }: ViewModeToggleProps) {
+}) {
   return (
     <div className="view-mode-toggle" role="group" aria-label="Tryb widoku">
       <button
         type="button"
         className={value === "list" ? "is-active" : ""}
         onClick={() => onChange("list")}
-        title="Lista"
         aria-pressed={value === "list"}
+        aria-label="Lista"
       >
-        <List size={18} />
+        <List size={17} />
       </button>
       <button
         type="button"
         className={value === "grid" ? "is-active" : ""}
         onClick={() => onChange("grid")}
-        title="Siatka"
         aria-pressed={value === "grid"}
+        aria-label="Siatka"
       >
-        <LayoutGrid size={18} />
+        <LayoutGrid size={17} />
       </button>
     </div>
   );

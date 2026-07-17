@@ -78,7 +78,7 @@ export function FaceAnnotatedImage({ src, alt, faces }: FaceAnnotatedImageProps)
         src={src}
         alt={alt}
         onLoad={updateMetrics}
-        className="mx-auto block max-h-[70vh] rounded-[8px] object-contain"
+        className="mx-auto block max-h-[70vh] rounded-2xl object-contain"
       />
       {metrics &&
         faces.map((face) => {
@@ -101,17 +101,21 @@ export function FaceAnnotatedImage({ src, alt, faces }: FaceAnnotatedImageProps)
           return (
             <div
               key={face.id}
-              className="pointer-events-none absolute z-10 box-border"
+              className="pointer-events-none absolute z-10 box-border rounded-sm p-0.5"
               style={{
                 left,
                 top,
                 width,
                 height,
                 border: `3px solid ${color.border}`,
-                backgroundColor: color.bg,
               }}
               aria-hidden="true"
-            />
+            >
+              <div
+                className="h-full w-full rounded-[1px]"
+                style={{ border: `1px solid ${color.inner ?? "#fff"}` }}
+              />
+            </div>
           );
         })}
     </div>

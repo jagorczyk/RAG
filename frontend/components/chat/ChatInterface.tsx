@@ -2,11 +2,14 @@
 
 import { useState, useEffect, useRef } from "react";
 import {
-  Loader2,
   FileText,
   FolderOpen,
   AtSign,
-  SendHorizonal,
+  ArrowUp,
+  ChevronLeft,
+  Image as ImageIcon,
+  File,
+  X,
 } from "lucide-react";
 import {
   getMessagesForChat,
@@ -22,7 +25,9 @@ import {
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { ImagePreview } from "@/components/ui/ImagePreview";
-import { ChatMessageBubble } from "@/components/chat/ChatMessageBubble";
+import { ChatMessageBubble, TypingIndicator } from "@/components/chat/ChatMessageBubble";
+import { BottomSheet } from "@/components/ui/BottomSheet";
+import { Loading } from "@/components/ui/Loading";
 
 interface ChatInterfaceProps {
   chatId?: string;
@@ -35,6 +40,12 @@ type Suggestion = {
   url?: string;
 };
 
+function sourceIcon(type: Source["type"]) {
+  if (type === "IMAGE") return <ImageIcon size={18} />;
+  if (type === "PDF") return <FileText size={18} />;
+  return <File size={18} />;
+}
+
 export function ChatInterface({ chatId }: ChatInterfaceProps) {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -43,6 +54,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<FilePreview | null>(null);
+  const [sheetSources, setSheetSources] = useState<Source[] | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -187,8 +199,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         e.preventDefault();
         const nextIndex = historyIndex + 1;
         if (nextIndex < userMessages.length) {
-          const msg =
-            userMessages[userMessages.length - 1 - nextIndex].content;
+          const msg = userMessages[userMessages.length - 1 - nextIndex].content;
           setHistoryIndex(nextIndex);
           setInputValue(msg);
           if (inputRef.current) {
@@ -208,8 +219,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         e.preventDefault();
         const nextIndex = historyIndex - 1;
         if (nextIndex >= 0) {
-          const msg =
-            userMessages[userMessages.length - 1 - nextIndex].content;
+          const msg = userMessages[userMessages.length - 1 - nextIndex].content;
           setHistoryIndex(nextIndex);
           setInputValue(msg);
           if (inputRef.current) inputRef.current.innerText = msg;
@@ -296,6 +306,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
   };
 
   const openSourcePreview = async (source: Source) => {
+    setSheetSources(null);
     const imageUrl = getSourceImageUrl(source);
     if (imageUrl) {
       setPreviewFile({
@@ -326,7 +337,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
           {part.split(/(\*\*.*?\*\*)/g).map((subPart, subIdx) => {
             if (subPart.startsWith("**") && subPart.endsWith("**")) {
               return (
-                <strong key={subIdx} className="font-semibold text-ink">
+                <strong key={subIdx} className="font-semibold">
                   {subPart.slice(2, -2)}
                 </strong>
               );
@@ -362,7 +373,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
                 if (folder) router.push(`/folders/${folder.id}`);
               }
             }}
-            className="chip chip-accent mx-0.5 cursor-pointer px-1.5 py-0.5 font-medium"
+            className="mx-0.5 inline rounded-md bg-soft px-1.5 py-0.5 font-semibold"
           >
             @{mentionName}
           </button>
@@ -374,44 +385,70 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     return <span key={key}>{part}</span>;
   };
 
+  const canSend = !!inputValue.trim() && !isSending && !!chatId;
+
   return (
     <div className="relative flex h-full flex-col bg-surface">
-      <header className="shrink-0 border-b border-border bg-surface-raised px-6 py-4">
-        <h1 className="text-2xl font-semibold tracking-[-0.02em] text-ink">Czat</h1>
+      <header className="flex min-h-[3.6rem] shrink-0 items-center border-b border-border px-4">
+        <button
+          type="button"
+          onClick={() => router.push("/chats")}
+          className="icon-button -ml-1 shadow-none md:hidden"
+          aria-label="Wróć do rozmów"
+        >
+          <ChevronLeft size={26} />
+        </button>
+        <div className="min-w-0 flex-1 text-center md:text-left md:pl-1">
+          <h1 className="truncate text-[17px] font-extrabold text-ink">Rozmowa</h1>
+          <p className="text-xs text-ink-muted">
+            {isSending ? "Analizuję dokumenty…" : "Twoja baza wiedzy"}
+          </p>
+        </div>
+        <div className="w-9 md:hidden" />
       </header>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 md:px-6">
-        {isInitialLoading && (
-          <div className="mx-auto max-w-3xl space-y-3">
-            <div className="skeleton h-16 w-2/3" />
-            <div className="skeleton ml-auto h-12 w-1/2" />
-            <div className="skeleton h-20 w-3/4" />
-          </div>
-        )}
+      <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
+        {isInitialLoading && <Loading label="Ładowanie wiadomości" />}
 
         {!isInitialLoading && messages.length === 0 && chatId && (
-          <div className="mx-auto flex h-full max-w-xl items-center justify-center py-12 text-sm text-ink-muted">
-            <p>
-              <kbd className="kbd">@folder</kbd>{" "}
-              <kbd className="kbd">@plik</kbd>
+          <div className="flex h-full flex-col items-center justify-center px-8 pb-16 text-center">
+            <div className="mb-4 flex h-[58px] w-[58px] items-center justify-center rounded-[18px] bg-soft">
+              <AtSign size={26} className="text-ink" />
+            </div>
+            <h2 className="text-[23px] font-extrabold tracking-tight text-ink">
+              W czym mogę pomóc?
+            </h2>
+            <p className="mt-2 max-w-sm text-sm leading-5 text-ink-muted">
+              Zapytaj o informacje z dodanych dokumentów. Użyj @ aby wskazać folder lub plik.
             </p>
           </div>
         )}
 
         {!isInitialLoading && (
-          <div className="mx-auto max-w-4xl space-y-5">
+          <div className="mx-auto max-w-3xl">
             {sendError && (
-              <p role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-800 dark:text-red-200">
-                {sendError}
-              </p>
+              <div
+                role="alert"
+                className="mb-4 flex items-center gap-3 rounded-xl border border-error/40 bg-[#FFF1F1] px-3 py-2.5 text-sm text-error"
+              >
+                <span className="flex-1">{sendError}</span>
+                <button
+                  type="button"
+                  className="font-extrabold text-ink"
+                  onClick={(e) => handleSubmit(e)}
+                >
+                  Ponów
+                </button>
+              </div>
             )}
-            {messages.map((msg) => (
+            {messages.map((msg, index) => (
               <ChatMessageBubble
                 key={msg.id}
                 message={msg}
                 sources={msg.sources}
                 uncertain={msg.uncertain}
-                onSourceClick={openSourcePreview}
+                onSourcesOpen={setSheetSources}
+                index={index}
               >
                 {msg.content
                   .split(/(@[\w\-\.\/\u00C0-\u017F]+)/g)
@@ -419,25 +456,18 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               </ChatMessageBubble>
             ))}
 
-            {isSending && (
-              <ChatMessageBubble
-                message={{ id: "pending", role: "assistant", content: "" }}
-              >
-                <span className="inline-flex items-center gap-2 text-xs text-ink-muted">
-                  <Loader2 size={16} className="animate-spin text-accent" />
-                </span>
-              </ChatMessageBubble>
-            )}
+            {isSending && <TypingIndicator />}
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="relative shrink-0 border-t border-border bg-surface-raised px-4 py-3 md:px-6">
+      <div className="relative shrink-0 border-t border-border bg-surface px-3 pb-3 pt-2.5 md:px-5">
         {showSuggestions && filteredSuggestions.length > 0 && (
-          <div className="absolute bottom-full left-4 right-4 z-20 mb-2 max-h-56 overflow-y-auto rounded-[10px] border border-border bg-surface-raised shadow-md md:left-6 md:right-6">
-            <div className="flex items-center gap-2 border-b border-border bg-sidebar px-3 py-2 text-xs text-ink-muted">
+          <div className="absolute bottom-full left-3 right-3 z-20 mb-2 max-h-56 overflow-y-auto rounded-2xl border border-border bg-surface-raised shadow-float md:left-5 md:right-5">
+            <div className="flex items-center gap-2 border-b border-border bg-soft px-3 py-2 text-xs font-semibold text-ink-muted">
               <AtSign size={14} />
+              Wybierz folder lub plik
             </div>
             {filteredSuggestions.map((suggestion, index) => (
               <button
@@ -445,97 +475,99 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
                 type="button"
                 onClick={() => selectSuggestion(suggestion)}
                 onMouseEnter={() => setSelectedIndex(index)}
-                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors ${
-                  index === selectedIndex
-                    ? "bg-accent-subtle text-ink"
-                    : "hover:bg-accent-subtle/40"
+                className={`flex w-full items-center gap-3 px-3 py-3 text-left text-sm transition-colors ${
+                  index === selectedIndex ? "bg-soft" : "hover:bg-soft/70"
                 }`}
               >
-                <span className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-accent-muted text-accent">
+                <span className="flex h-9 w-9 items-center justify-center rounded-[11px] bg-soft text-ink">
                   {suggestion.type === "folder" ? (
-                    <FolderOpen size={15} />
+                    <FolderOpen size={17} />
                   ) : suggestion.url ? (
-                    <span className="h-4 w-4 overflow-hidden rounded-sm">
-                      <img
-                        src={suggestion.url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
+                    <span className="h-7 w-7 overflow-hidden rounded-md">
+                      <img src={suggestion.url} alt="" className="h-full w-full object-cover" />
                     </span>
                   ) : (
-                    <FileText size={15} />
+                    <FileText size={17} />
                   )}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{suggestion.name}</span>
+                  <span className="block truncate font-bold">{suggestion.name}</span>
+                  <span className="text-xs text-ink-muted">
+                    {suggestion.type === "folder" ? "Folder" : "Plik"}
+                  </span>
                 </span>
               </button>
             ))}
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="relative mx-auto flex max-w-4xl items-end gap-2">
-          <div className="relative min-h-[52px] flex-1 rounded-[14px] border border-border bg-sidebar/80 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20">
+        <form
+          onSubmit={handleSubmit}
+          className="mx-auto flex max-w-3xl items-end gap-0 rounded-3xl border border-border bg-surface-raised py-1.5 pl-4 pr-1.5"
+        >
+          <div className="relative min-h-[2.4rem] flex-1">
             {!inputValue && (
-              <div className="pointer-events-none absolute left-4 top-3.5 z-20 text-sm text-ink-muted">
-                {chatId ? "Wiadomość…" : "Wybierz rozmowę"}
+              <div className="pointer-events-none absolute left-0 top-2 z-20 text-[15px] text-ink-muted">
+                {chatId ? "Napisz wiadomość…" : "Wybierz rozmowę"}
               </div>
             )}
-
-            <div className="pointer-events-none absolute inset-0 z-10 whitespace-pre-wrap break-words px-4 py-3.5 text-sm leading-[inherit]">
-              {inputValue
-                .split(/(@[\w\-\.\/\u00C0-\u017F]+)/g)
-                .map((part, i) => {
-                  const isMention = part.startsWith("@");
-                  const mentionName = isMention ? part.slice(1) : "";
-                  const exists =
-                    isMention &&
-                    (allFolders.some((f) => f.name === mentionName) ||
-                      allFiles.some((f) => f.name === mentionName));
-                  if (exists) {
-                    return (
-                      <span
-                        key={i}
-                        className="rounded-sm bg-accent-muted text-accent"
-                        style={{ boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" }}
-                      >
-                        {part}
-                      </span>
-                    );
-                  }
-                  return (
-                    <span key={i} className="text-ink">
-                      {part}
-                    </span>
-                  );
-                })}
-              {inputValue.endsWith(" ") && <span>&nbsp;</span>}
-            </div>
-
             <div
               ref={inputRef}
               contentEditable={!isSending && !!chatId}
               onInput={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              className="relative z-20 block min-h-[52px] w-full bg-transparent px-4 py-3.5 text-sm text-transparent caret-ink outline-none"
+              className="relative z-20 block max-h-28 min-h-[2.4rem] w-full overflow-y-auto bg-transparent py-2 pr-2 text-[15px] text-ink caret-ink outline-none"
               spellCheck={false}
               role="textbox"
-              aria-multiline="false"
+              aria-multiline="true"
               aria-label="Wiadomość do asystenta"
             />
           </div>
-
           <button
             type="submit"
-            disabled={!inputValue.trim() || isSending || !chatId}
-            className="btn-primary shrink-0 px-3 py-3 disabled:opacity-45"
+            disabled={!canSend}
+            className={`mb-0.5 flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full transition-colors ${
+              canSend ? "bg-ink text-white" : "bg-border text-white"
+            }`}
             aria-label="Wyślij wiadomość"
           >
-            <SendHorizonal size={18} />
+            <ArrowUp size={20} strokeWidth={2.4} />
           </button>
         </form>
       </div>
+
+      <BottomSheet
+        open={!!sheetSources}
+        onClose={() => setSheetSources(null)}
+        title={sheetSources ? `Źródła (${sheetSources.length})` : "Źródła"}
+      >
+        <div className="-mx-1">
+          {(sheetSources || []).map((item, index) => (
+            <button
+              key={`${item.path}-${index}`}
+              type="button"
+              onClick={() => openSourcePreview(item)}
+              className="flex min-h-[4.1rem] w-full items-center gap-3 border-b border-border px-1 text-left last:border-b-0 transition-opacity active:opacity-55"
+            >
+              <span className="flex h-9.5 w-9.5 items-center justify-center rounded-[11px] bg-soft text-ink">
+                {sourceIcon(item.type)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-bold text-ink">{item.fileName}</span>
+                <span className="mt-0.5 block text-[13px] text-ink-muted">Otwórz podgląd</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setSheetSources(null)}
+          className="btn-ghost mt-2 w-full"
+        >
+          <X size={16} /> Zamknij
+        </button>
+      </BottomSheet>
 
       {previewFile && (
         <ImagePreview preview={previewFile} onClose={() => setPreviewFile(null)} />

@@ -1,23 +1,19 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/layout/Sidebar";
+import { AppShell } from "@/components/layout/AppShell";
 import { ThemeProvider } from "@/lib/ThemeContext";
 import { ThemeScript } from "@/components/ThemeScript";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const inter = Inter({
+  variable: "--font-inter",
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 export const metadata: Metadata = {
   title: "RAG",
-  description: "Dokumenty i czat",
+  description: "Biblioteka dokumentów i czat z bazą wiedzy",
 };
 
 export default function RootLayout({
@@ -26,20 +22,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="pl"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-      suppressHydrationWarning
-    >
-      <body className="h-screen w-screen overflow-hidden bg-surface text-ink">
+    <html lang="pl" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>
+      <body className="h-screen w-screen overflow-hidden bg-surface font-sans text-ink">
         <ThemeScript />
         <ThemeProvider>
-          <div className="app-shell h-full w-full">
-            <Sidebar />
-            <main className="app-main">
-              {children}
-            </main>
-          </div>
+          <AppShell>{children}</AppShell>
         </ThemeProvider>
       </body>
     </html>

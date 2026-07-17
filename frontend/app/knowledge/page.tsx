@@ -2,38 +2,28 @@
 
 import { IdentityReviewPanel } from "@/components/knowledge/IdentityReviewPanel";
 import { EntitiesPanel } from "@/components/knowledge/EntitiesPanel";
-import { ArrowLeft, Network, Users } from "lucide-react";
+import { Network } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { IconButton } from "@/components/ui/IconButton";
 
 export default function KnowledgePage() {
   const router = useRouter();
 
   return (
     <div className="page-shell">
-      <header className="page-header">
-        <div className="mx-auto max-w-6xl">
-          <button onClick={() => router.push("/")} className="btn-ghost -ml-2 mb-2 px-2">
-            <ArrowLeft size={16} /> Powrót
-          </button>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-accent-muted text-accent">
-                <Users size={20} />
-              </span>
-              <h1 className="page-title">Osoby</h1>
-            </div>
-            <button
-              type="button"
-              onClick={() => router.push("/knowledge/graph")}
-              className="btn-secondary"
-            >
-              <Network size={16} />
-              Mapa relacji
-            </button>
-          </div>
+      <header className="flex items-start justify-between gap-3 px-5 pt-4 pb-2">
+        <div>
+          <h1 className="page-title">Osoby</h1>
+          <p className="page-subtitle">Rozpoznane twarze w Twojej bibliotece</p>
         </div>
+        <IconButton
+          label="Mapa relacji"
+          onClick={() => router.push("/knowledge/graph")}
+        >
+          <Network size={18} />
+        </IconButton>
       </header>
-      <div className="page-body mx-auto max-w-6xl space-y-6">
+      <div className="page-body mx-auto max-w-5xl space-y-8 !pt-3">
         <EntitiesPanel />
         <IdentityReviewPanel />
       </div>

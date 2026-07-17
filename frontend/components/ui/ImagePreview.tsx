@@ -3,9 +3,15 @@
 import { X, Edit2, Check } from "lucide-react";
 import { FilePreview } from "@/lib/api";
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { getMentionsForFile, detectFacesForFile, EntityMention, renameMention } from "@/lib/knowledge-api";
+import {
+  getMentionsForFile,
+  detectFacesForFile,
+  EntityMention,
+  renameMention,
+} from "@/lib/knowledge-api";
 import { FaceAnnotatedImage } from "@/components/ui/FaceAnnotatedImage";
-import { getFaceColor } from "@/lib/face-colors";
+import { FadeModal } from "@/components/ui/FadeModal";
+import { motion, useReducedMotion } from "motion/react";
 
 interface FilePreviewModalProps {
   preview: FilePreview;
@@ -20,12 +26,14 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
   const [mentions, setMentions] = useState<EntityMention[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const reduced = useReducedMotion();
 
   const loadMentions = useCallback(async () => {
     if (!preview.path) return;
     try {
       let data = await getMentionsForFile(preview.path);
-      const needsFaceDetection = data.some((mention) => !mention.bbox || mention.bbox.length < 4);
+      const needsFaceDetection =
+        data.some((mention) => !mention.bbox || mention.bbox.length < 4);
       if (data.length > 0 && needsFaceDetection) {
         try {
           data = await detectFacesForFile(preview.path);
@@ -41,7 +49,6 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
 
   useEffect(() => {
     if (preview.path) {
-      // Data loading is the external synchronization this effect is responsible for.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void loadMentions();
     }
@@ -77,107 +84,104 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/85 p-4"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Podgląd pliku"
-    >
-      <button
-        type="button"
-        className="btn-ghost absolute right-4 top-4 text-surface-raised hover:bg-surface-raised/10 hover:text-surface-raised"
-        onClick={onClose}
-        aria-label="Zamknij podgląd"
-      >
-        <X size={28} />
-      </button>
-      <div
-        className="w-full max-w-5xl rounded-[10px] border border-border bg-surface-raised shadow-md flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header className="flex items-center justify-between border-b border-border px-4 py-3 shrink-0">
-          <h3 className="truncate text-sm font-semibold text-ink">{preview.title}</h3>
-          <span className="font-mono text-[11px] text-ink-muted">{preview.mimeType}</span>
-        </header>
-        <div className="flex flex-col md:flex-row max-h-[78vh] overflow-hidden">
-          <div className="flex-1 overflow-auto p-4 bg-surface-raised">
-            {preview.kind === "image" ? (
-              <FaceAnnotatedImage
-                src={preview.content}
-                alt={`Podgląd ${preview.title}`}
-                faces={annotatedFaces}
-              />
-            ) : (
-              <pre className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
-                {preview.content}
-              </pre>
-            )}
-          </div>
-          {mentions.length > 0 && (
-            <div className="w-full md:w-80 shrink-0 border-t md:border-t-0 md:border-l border-border bg-surface p-4 overflow-y-auto">
-              <h4 className="text-sm font-medium text-ink mb-3">Rozpoznane na tym zdjęciu:</h4>
-              <div className="space-y-3">
-                {mentions.map((mention, index) => {
-                  const color = getFaceColor(index);
-                  return (
-                    <div
-                      key={mention.id}
-                      className="rounded bg-surface-raised p-2 text-sm"
-                      style={{ border: `2px solid ${color.border}` }}
-                    >
-                      <div className="mb-1.5 flex items-center gap-1.5">
-                        <span
-                          className="inline-block h-3 w-3 shrink-0 rounded-sm"
-                          style={{ backgroundColor: color.border }}
-                          aria-hidden="true"
-                        />
-                        <span className="text-[10px] font-medium uppercase tracking-wide" style={{ color: color.text }}>
-                          Osoba {index + 1}
-                        </span>
-                      </div>
-                      {editingId === mention.id ? (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            className="flex-1 w-full rounded border border-border px-1.5 py-0.5 text-xs text-ink outline-none"
-                            style={{ borderColor: color.border }}
-                            autoFocus
-                          />
-                          <button onClick={saveEdit} className="btn-primary p-1 h-auto">
-                            <Check size={12} />
-                          </button>
-                          <button onClick={() => setEditingId(null)} className="btn-secondary p-1 h-auto text-error">
-                            <X size={12} />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="font-medium text-ink break-words">{mentionDisplayName(mention)}</p>
-                            <p className="text-[10px] text-ink-muted mt-1 leading-tight">
-                              Wizualnie:{" "}
-                              {mention.visualCues ? mention.visualCues.substring(0, 40) + "..." : "brak"}
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => startEdit(mention)}
-                            className="p-1 text-ink-muted hover:text-ink shrink-0"
-                          >
-                            <Edit2 size={12} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+    <FadeModal open onClose={onClose} variant="fullscreen" contentClassName="bg-surface">
+      <header className="flex min-h-[3.4rem] shrink-0 items-center gap-3 border-b border-border px-4">
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-[17px] font-semibold text-ink"
+        >
+          Gotowe
+        </button>
+        <h3 className="min-w-0 flex-1 truncate text-center text-[17px] font-bold text-ink">
+          {preview.title}
+        </h3>
+        <button
+          type="button"
+          onClick={onClose}
+          className="icon-button shadow-none"
+          aria-label="Zamknij podgląd"
+        >
+          <X size={22} />
+        </button>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
+        <motion.div
+          className="flex flex-1 items-center justify-center overflow-auto bg-soft p-4"
+          initial={reduced ? false : { opacity: 0, scale: 0.985 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.18 }}
+        >
+          {preview.kind === "image" ? (
+            <FaceAnnotatedImage
+              src={preview.content}
+              alt={`Podgląd ${preview.title}`}
+              faces={annotatedFaces}
+            />
+          ) : (
+            <pre className="w-full max-w-3xl whitespace-pre-wrap text-[15px] leading-6 text-ink">
+              {preview.content}
+            </pre>
           )}
-        </div>
+        </motion.div>
+
+        {mentions.length > 0 && (
+          <aside className="max-h-[40vh] w-full shrink-0 overflow-y-auto border-t border-border bg-surface p-4 md:max-h-none md:w-80 md:border-l md:border-t-0">
+            <h4 className="mb-3 text-sm font-extrabold text-ink">Osoby na zdjęciu</h4>
+            <div className="list-panel">
+              {mentions.map((mention, index) => (
+                <div key={mention.id} className="list-row !min-h-[3.8rem]">
+                  {editingId === mention.id ? (
+                    <div className="flex w-full items-center gap-2">
+                      <input
+                        type="text"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        className="input-field !min-h-9 flex-1 !text-sm"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void saveEdit();
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                      />
+                      <button type="button" onClick={saveEdit} className="btn-primary !min-h-9 px-2">
+                        <Check size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(null)}
+                        className="btn-secondary !min-h-9 px-2"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-bold text-ink">
+                          {mentionDisplayName(mention) || `Osoba ${index + 1}`}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-ink-muted">
+                          {mention.visualCues || "Dotknij, aby przypisać nazwę"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(mention)}
+                        className="p-1.5 text-ink-muted hover:text-ink"
+                        aria-label="Edytuj nazwę"
+                      >
+                        <Edit2 size={15} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </aside>
+        )}
       </div>
-    </div>
+    </FadeModal>
   );
 }

@@ -1,58 +1,15 @@
+"use client";
+
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getAllEntities, KnowledgeEntity, renameEntity } from "@/lib/knowledge-api";
-import { Check, Edit2, X } from "lucide-react";
-
-const MAX_COLLAGE_PHOTOS = 4;
+import { Check, Edit2, X, Search } from "lucide-react";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { AnimatedItem } from "@/components/ui/AnimatedList";
+import { motion, useReducedMotion } from "motion/react";
 
 function photoUrl(photo: NonNullable<KnowledgeEntity["photos"]>[number]) {
   return `data:${photo.fileType};base64,${photo.imageBase64}`;
-}
-
-function entityTypeLabel(type: string) {
-  return type === "PERSON" ? "Osoba" : "Zwierzę";
-}
-
-function collageGridClass(count: number): string {
-  if (count === 1) {
-    return "grid-cols-1 grid-rows-1";
-  }
-  if (count === 2) {
-    return "grid-cols-2 grid-rows-1";
-  }
-  return "grid-cols-2 grid-rows-2";
-}
-
-function collageCellClass(count: number, index: number): string {
-  if (count === 3 && index === 2) {
-    return "col-span-2";
-  }
-  return "";
-}
-
-function EntityPhotoCollage({ photos }: { photos: NonNullable<KnowledgeEntity["photos"]> }) {
-  const items = photos.slice(0, MAX_COLLAGE_PHOTOS);
-
-  return (
-    <div
-      className={`entity-collage mt-3 grid aspect-square w-full gap-px overflow-hidden rounded-[8px] border border-border bg-border ${collageGridClass(items.length)}`}
-      aria-label={`Kolaż ${items.length} zdjęć`}
-    >
-      {items.map((photo, index) => (
-        <div
-          key={photo.path}
-          className={`relative min-h-0 min-w-0 bg-surface-raised ${collageCellClass(items.length, index)}`}
-        >
-          <img
-            src={photoUrl(photo)}
-            alt=""
-            className="absolute inset-0 h-full w-full object-cover"
-            loading="lazy"
-          />
-        </div>
-      ))}
-    </div>
-  );
 }
 
 export function EntitiesPanel() {
@@ -60,28 +17,38 @@ export function EntitiesPanel() {
   const [entities, setEntities] = useState<KnowledgeEntity[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const reduced = useReducedMotion();
 
-  const visibleEntities = useMemo(
-    () => entities.filter((entity) => (entity.photos?.length ?? 0) > 0),
-    [entities]
-  );
+  const visibleEntities = useMemo(() => {
+    const phrase = search.trim().toLocaleLowerCase("pl");
+    return entities.filter(
+      (entity) =>
+        (entity.photos?.length ?? 0) > 0 &&
+        (!phrase || entity.displayName.toLocaleLowerCase("pl").includes(phrase))
+    );
+  }, [entities, search]);
 
   const loadEntities = useCallback(async () => {
+    setLoading(true);
     try {
       const data = await getAllEntities();
       setEntities(data);
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // Data loading is the external synchronization this effect is responsible for.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadEntities();
   }, [loadEntities]);
 
-  const startEdit = (entity: KnowledgeEntity) => {
+  const startEdit = (entity: KnowledgeEntity, e: React.MouseEvent) => {
+    e.stopPropagation();
     setEditingId(entity.id);
     setEditValue(entity.displayName);
   };
@@ -98,127 +65,133 @@ export function EntitiesPanel() {
   };
 
   const openEntityAlbum = (entityId: string) => {
+    if (editingId) return;
     router.push(`/knowledge/${entityId}`);
   };
 
   return (
-    <section className="rounded-[10px] border border-border bg-surface p-4 sm:p-5">
-      <div className="mb-4 flex items-end justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-semibold text-ink text-balance">
-            Rozpoznane postacie i zwierzęta
-          </h3>
-          <p className="mt-0.5 text-sm text-ink-muted">
-            {visibleEntities.length > 0
-              ? `${visibleEntities.length} ${visibleEntities.length === 1 ? "wpis" : visibleEntities.length < 5 ? "wpisy" : "wpisów"} · kliknij osobę, aby zobaczyć wszystkie zdjęcia`
-              : "Encje wykryte na zdjęciach"}
-          </p>
-        </div>
+    <section>
+      <div className="search-field mb-5">
+        <Search size={17} className="shrink-0 text-ink-muted" aria-hidden />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Szukaj osoby"
+          aria-label="Szukaj osoby"
+        />
       </div>
 
-      {visibleEntities.length === 0 ? (
-        <p className="text-sm text-ink-muted">Brak encji ze zdjęciami.</p>
-      ) : (
+      {loading && (
+        <div className="entity-grid">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="skeleton aspect-square w-full rounded-[15px]" />
+          ))}
+        </div>
+      )}
+
+      {!loading && visibleEntities.length === 0 && (
+        <EmptyState
+          icon="👤"
+          title={search ? "Nie znaleziono osoby" : "Brak rozpoznanych osób"}
+          description={
+            search
+              ? "Spróbuj wyszukać inną nazwę."
+              : "Dodaj zdjęcia do folderów, aby rozpocząć rozpoznawanie."
+          }
+        />
+      )}
+
+      {!loading && visibleEntities.length > 0 && (
         <ul className="entity-grid m-0 list-none p-0">
-          {visibleEntities.map((entity) => {
+          {visibleEntities.map((entity, index) => {
             const photos = entity.photos ?? [];
+            const cover = photos[0];
             const photoCount = photos.length;
 
             return (
-              <li key={entity.id}>
-                <article
-                  className={`entity-card flex h-full flex-col rounded-[10px] border border-border bg-surface-raised p-3 transition-colors ${
-                    editingId === entity.id
-                      ? ""
-                      : "cursor-pointer hover:border-border-strong hover:bg-surface"
-                  }`}
-                  onClick={() => {
-                    if (editingId !== entity.id) {
-                      openEntityAlbum(entity.id);
-                    }
-                  }}
-                  onKeyDown={(ev) => {
-                    if (editingId === entity.id) return;
-                    if (ev.key === "Enter" || ev.key === " ") {
-                      ev.preventDefault();
-                      openEntityAlbum(entity.id);
-                    }
-                  }}
-                  role={editingId === entity.id ? undefined : "link"}
-                  tabIndex={editingId === entity.id ? undefined : 0}
-                  aria-label={
-                    editingId === entity.id
-                      ? undefined
-                      : `Otwórz album: ${entity.displayName}`
-                  }
-                >
-                  {editingId === entity.id ? (
-                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="text"
-                        value={editValue}
-                        onChange={(ev) => setEditValue(ev.target.value)}
-                        className="w-full flex-1 rounded-[6px] border border-border bg-surface px-2 py-1.5 text-sm text-ink outline-none focus:border-border-strong"
-                        autoFocus
-                        onKeyDown={(ev) => {
-                          if (ev.key === "Enter") saveEdit();
-                          if (ev.key === "Escape") setEditingId(null);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={saveEdit}
-                        className="btn-primary h-8 w-8 shrink-0 p-0"
-                        aria-label="Zapisz nazwę"
-                      >
-                        <Check size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingId(null)}
-                        className="btn-secondary h-8 w-8 shrink-0 p-0 text-error"
-                        aria-label="Anuluj edycję"
-                      >
-                        <X size={14} />
-                      </button>
+              <AnimatedItem key={entity.id} index={index}>
+                <li>
+                  <motion.article
+                    whileTap={reduced || editingId === entity.id ? undefined : { scale: 0.98 }}
+                    className="entity-card cursor-pointer"
+                    onClick={() => openEntityAlbum(entity.id)}
+                    role="link"
+                    tabIndex={0}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter" || ev.key === " ") {
+                        ev.preventDefault();
+                        openEntityAlbum(entity.id);
+                      }
+                    }}
+                    aria-label={`Pokaż zdjęcia osoby ${entity.displayName}`}
+                  >
+                    <div className="relative aspect-square w-full overflow-hidden rounded-[15px] bg-soft">
+                      {cover && (
+                        <img
+                          src={photoUrl(cover)}
+                          alt=""
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      )}
                     </div>
-                  ) : (
-                    <>
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <h4 className="truncate text-sm font-medium text-ink">
-                            {entity.displayName}
-                          </h4>
-                          <p className="mt-0.5 text-xs text-ink-muted">
-                            {entityTypeLabel(entity.type)}
-                            <span className="text-ink-muted">
-                              {" · "}
+                    <div className="px-0.5 pt-2">
+                      {editingId === entity.id ? (
+                        <div
+                          className="flex items-center gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(ev) => setEditValue(ev.target.value)}
+                            className="input-field !min-h-8 flex-1 !px-2 !text-sm"
+                            autoFocus
+                            onKeyDown={(ev) => {
+                              if (ev.key === "Enter") void saveEdit();
+                              if (ev.key === "Escape") setEditingId(null);
+                            }}
+                          />
+                          <button type="button" onClick={saveEdit} className="btn-primary !min-h-8 px-2">
+                            <Check size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingId(null)}
+                            className="btn-secondary !min-h-8 px-2"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-start justify-between gap-1">
+                          <div className="min-w-0">
+                            <h4 className="truncate text-[15px] font-bold tracking-tight text-ink">
+                              {entity.displayName}
+                            </h4>
+                            <p className="mt-0.5 text-[13px] text-ink-muted">
                               {photoCount}{" "}
                               {photoCount === 1
                                 ? "zdjęcie"
                                 : photoCount < 5
                                   ? "zdjęcia"
                                   : "zdjęć"}
-                            </span>
-                          </p>
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => startEdit(entity, e)}
+                            className="shrink-0 p-1 text-ink-muted hover:text-ink"
+                            aria-label={`Edytuj ${entity.displayName}`}
+                          >
+                            <Edit2 size={15} />
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            startEdit(entity);
-                          }}
-                          className="btn-ghost h-8 w-8 shrink-0 p-0 text-ink-muted hover:text-ink"
-                          aria-label={`Edytuj ${entity.displayName}`}
-                        >
-                          <Edit2 size={15} />
-                        </button>
-                      </div>
-                      <EntityPhotoCollage photos={photos} />
-                    </>
-                  )}
-                </article>
-              </li>
+                      )}
+                    </div>
+                  </motion.article>
+                </li>
+              </AnimatedItem>
             );
           })}
         </ul>

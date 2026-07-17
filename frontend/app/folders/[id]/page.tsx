@@ -341,63 +341,61 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
       onDragOver={handleDrag}
       onDrop={handleDrop}
     >
-      <header className="page-header">
-        <div className="mx-auto max-w-6xl">
-          <button
-            type="button"
-            onClick={() => router.push("/folders")}
-            className="btn-ghost -ml-2 mb-2 px-2"
-          >
-            <ArrowLeft size={16} />
-            <span>Powrót do folderów</span>
-          </button>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h1 className="page-title">{folder.name}</h1>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <ViewModeToggle value={viewMode} onChange={setViewMode} />
+      <header className="flex flex-col gap-3 border-b border-border px-4 pt-3 pb-3 md:px-6">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => router.push("/folders")}
+              className="icon-button -ml-1 shadow-none"
+              aria-label="Wróć do biblioteki"
+            >
+              <ArrowLeft size={20} />
+            </button>
+            <h1 className="page-title truncate text-[1.5rem] md:text-[1.875rem]">{folder.name}</h1>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <ViewModeToggle value={viewMode} onChange={setViewMode} />
+            <label className="btn-secondary cursor-pointer !min-h-10 px-3">
+              <FolderPlus size={17} />
+              <span className="hidden sm:inline">Folder</span>
               <input
-                type="text"
-                placeholder="Tag osoby (np. Igor) — pomiń potwierdzenie"
-                value={entityTag}
-                onChange={(e) => setEntityTag(e.target.value)}
-                className="rounded-[6px] border border-border bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-accent"
+                type="file"
+                className="hidden"
+                onChange={handleFileUpload}
                 disabled={isUploading}
+                {...({
+                  webkitdirectory: "",
+                  directory: "",
+                } as unknown as React.InputHTMLAttributes<HTMLInputElement>)}
               />
-              <label className="btn-secondary cursor-pointer">
-                <FolderPlus size={18} />
-                <span>Wgraj folder</span>
-                <input
-                  type="file"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                  disabled={isUploading}
-                  {...({
-                    webkitdirectory: "",
-                    directory: "",
-                  } as unknown as React.InputHTMLAttributes<HTMLInputElement>)}
-                />
-              </label>
-              <label className="btn-primary cursor-pointer">
-                {isUploading ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <Upload size={18} />
-                )}
-                <span>Wgraj plik</span>
-                <input
-                  type="file"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                  disabled={isUploading}
-                  multiple
-                  accept=".pdf,.txt,.png,.jpg,.jpeg"
-                />
-              </label>
-            </div>
+            </label>
+            <label className="btn-primary cursor-pointer !min-h-10 px-3">
+              {isUploading ? (
+                <Loader2 size={17} className="animate-spin" />
+              ) : (
+                <Upload size={17} />
+              )}
+              <span className="hidden sm:inline">Dodaj</span>
+              <input
+                type="file"
+                className="hidden"
+                onChange={handleFileUpload}
+                disabled={isUploading}
+                multiple
+                accept=".pdf,.txt,.png,.jpg,.jpeg"
+              />
+            </label>
           </div>
         </div>
+        <input
+          type="text"
+          placeholder="Tag osoby (opcjonalnie) — pomiń potwierdzenie tożsamości"
+          value={entityTag}
+          onChange={(e) => setEntityTag(e.target.value)}
+          className="input-field !min-h-10"
+          disabled={isUploading}
+        />
       </header>
 
       <div className="page-body">
@@ -406,12 +404,19 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
         )}
 
         {dragActive && (
-          <div className="mb-4 rounded-[10px] border border-dashed border-accent bg-accent-subtle/60 px-4 py-3 text-sm text-ink-muted">
-            Upuść pliki
+          <div className="mb-4 rounded-2xl border border-dashed border-ink bg-soft px-4 py-3 text-sm font-semibold text-ink">
+            Upuść pliki tutaj
           </div>
         )}
 
-        <div className="data-table" role="region" aria-label={`Pliki w folderze ${folder.name}`}>
+        {isUploading && (
+          <div className="toast-bar mb-4">
+            <Upload size={18} />
+            Dodawanie plików…
+          </div>
+        )}
+
+        <div className="list-panel" role="region" aria-label={`Pliki w folderze ${folder.name}`}>
           {viewMode === "list" ? (
             <div className="data-table-head grid-cols-[52px_1fr_auto_auto] md:grid-cols-[52px_1fr_140px_auto]">
               <span className="flex items-center justify-center">

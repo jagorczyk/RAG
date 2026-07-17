@@ -1,5 +1,7 @@
 "use client";
 
+import { BookOpen, ChevronUp } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import type { Message, Source } from "@/lib/api";
 
 interface ChatMessageBubbleProps {
@@ -7,7 +9,8 @@ interface ChatMessageBubbleProps {
   children: React.ReactNode;
   sources?: Source[];
   uncertain?: boolean;
-  onSourceClick?: (source: Source) => void;
+  onSourcesOpen?: (sources: Source[]) => void;
+  index?: number;
 }
 
 export function ChatMessageBubble({
@@ -15,112 +18,76 @@ export function ChatMessageBubble({
   children,
   sources,
   uncertain = false,
-  onSourceClick,
+  onSourcesOpen,
+  index = 0,
 }: ChatMessageBubbleProps) {
   const isUser = message.role === "user";
+  const reduced = useReducedMotion();
+  const sourceCount = sources?.length ?? 0;
 
-  const renderSourceIcon = (type: Source["type"]) => {
-    switch (type) {
-      case "IMAGE":
-        return "IMG";
-      case "PDF":
-        return "PDF";
-      case "TEXT":
-        return "TXT";
-      case "GRAPH_FACT":
-        return "GRF";
-      default:
-        return "SRC";
-    }
-  };
-
-  const getSourceImageUrl = (source: Source) => {
-    if (source.type === "IMAGE" && source.base64) {
-      const mime = source.fileName.toLowerCase().endsWith(".png")
-        ? "image/png"
-        : "image/jpeg";
-      return `data:${mime};base64,${source.base64}`;
-    }
-    return null;
-  };
-
-  // Visual sources are emitted only after confirmation; no provisional group is rendered.
-  const suggestedPaths = new Set<string>();
-
-  const renderSources = (items: Source[], label?: string) => {
-    if (items.length === 0) return null;
-    return (
-      <div className="flex w-full max-w-[min(100%,46rem)] flex-wrap gap-1.5 pt-0.5">
-        {label && (
-          <span className="basis-full text-[11px] font-medium text-ink-muted">{label}</span>
-        )}
-        {items.map((source, idx) => {
-          const imageUrl = getSourceImageUrl(source);
-          const clickable = !!(imageUrl || source.path) && onSourceClick;
-          return (
-            <button
-              key={`${source.path}-${idx}`}
-              type="button"
-              onClick={() => clickable && onSourceClick?.(source)}
-              className={`chip ${clickable ? "cursor-pointer" : "cursor-default"}`}
-              title={`${source.fileName} · score ${source.score.toFixed(4)}`}
-            >
-              {imageUrl ? (
-                <span className="h-4 w-4 overflow-hidden rounded-sm bg-border">
-                  <img src={imageUrl} alt="" className="h-full w-full object-cover" />
-                </span>
-              ) : (
-                <span className="text-[9px] font-mono">{renderSourceIcon(source.type)}</span>
-              )}
-              <span className="max-w-[140px] truncate font-mono text-[11px]">{source.fileName}</span>
-            </button>
-          );
-        })}
-      </div>
-    );
-  };
+  const sourceLabel =
+    sourceCount === 1
+      ? "1 źródło"
+      : sourceCount > 1 && sourceCount < 5
+        ? `${sourceCount} źródła`
+        : `${sourceCount} źródeł`;
 
   return (
-    <article
-      className={`flex flex-col gap-1.5 ${
-        isUser ? "items-end" : "items-start"
-      }`}
+    <motion.article
+      className={`mb-4.5 flex flex-col ${isUser ? "items-end" : "items-start"}`}
+      initial={reduced ? { opacity: 0 } : { opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: reduced ? 0.01 : 0.18,
+        delay: reduced ? 0 : Math.min(index, 8) * 0.03,
+        ease: [0.22, 1, 0.36, 1],
+      }}
     >
-      <div
-        className={`w-full max-w-[min(100%,46rem)] rounded-[10px] border px-4 py-3 ${
-          isUser
-            ? "border-border bg-surface-raised"
-            : "border-border bg-sidebar/70"
-        }`}
-      >
-        <div className="max-w-[65ch] whitespace-pre-wrap text-sm leading-relaxed text-ink text-pretty">
-          {children}
+      {isUser ? (
+        <div className="max-w-[86%] rounded-[20px] rounded-br-[5px] bg-ink px-3.5 py-2.5 text-[15px] leading-[1.45] text-white">
+          <div className="whitespace-pre-wrap text-pretty">{children}</div>
         </div>
-        {!isUser && uncertain && (
-          <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-200">
-            Odpowiedź może być niepełna — tożsamość lub pewność danych z grafu jest niska.
-          </p>
-        )}
-      </div>
-
-      {sources && sources.length > 0 && (
-        <>
-          {renderSources(sources.filter((source) => !suggestedPaths.has(source.path)), "Potwierdzone")}
-          {renderSources(sources.filter((source) => suggestedPaths.has(source.path)), "Niepewne")}
-        </>
-      )}
-
-      {message.evidence && message.evidence.length > 0 && (
-        <div className="w-full max-w-[min(100%,46rem)] space-y-1 text-[11px] text-ink-muted">
-          {message.evidence.map((item) => (
-            <p key={`${item.path}-${item.reasons.join("|")}`}>
-              <span className="font-medium">Dowód:</span> {item.reasons.join("; ")}
-              {` (${Math.round(item.confidence * 100)}%)`}
+      ) : (
+        <div className="max-w-[94%] py-0.5 text-[15px] leading-[1.45] text-ink">
+          <div className="whitespace-pre-wrap text-pretty">{children}</div>
+          {uncertain && (
+            <p className="mt-2 text-xs text-ink-muted">
+              Odpowiedź może być niepewna.
             </p>
-          ))}
+          )}
         </div>
       )}
 
-    </article>
+      {sourceCount > 0 && onSourcesOpen && (
+        <button
+          type="button"
+          onClick={() => onSourcesOpen(sources!)}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-soft px-2.5 py-1.5 text-[13px] font-bold text-ink transition-opacity active:opacity-60"
+        >
+          <BookOpen size={15} />
+          {sourceLabel}
+          <ChevronUp size={14} />
+        </button>
+      )}
+    </motion.article>
+  );
+}
+
+export function TypingIndicator() {
+  return (
+    <div className="mb-4.5 flex items-start">
+      <div className="flex gap-1 py-1.5" aria-label="Asystent pisze">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="h-1.5 w-1.5 rounded-full bg-ink"
+            style={{
+              animation: "typing-pulse 1.4s ease-in-out infinite",
+              animationDelay: `${i * 0.18}s`,
+            }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }

@@ -35,38 +35,39 @@ export default function PersonGraphPage() {
 
   return (
     <div className="page-shell">
-      <header className="page-header">
-        <div className="mx-auto max-w-6xl">
-          <button onClick={() => router.push("/knowledge")} className="btn-ghost -ml-2 mb-2 px-2">
-            <ArrowLeft size={16} /> Powrót do osób
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 pt-4 pb-4">
+        <div className="flex min-w-0 items-start gap-2">
+          <button
+            type="button"
+            onClick={() => router.push("/knowledge")}
+            className="icon-button -ml-1 mt-0.5 shadow-none"
+            aria-label="Wróć do osób"
+          >
+            <ArrowLeft size={20} />
           </button>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-accent-muted text-accent">
-                <Network size={20} />
-              </span>
-              <div>
-                <h1 className="page-title">Mapa relacji</h1>
-                <p className="mt-0.5 text-sm text-ink-muted">
-                  Klik w osobę powiększa linie do sąsiadów · zoom kółkiem / +− · 2× klik otwiera album
-                </p>
-              </div>
-            </div>
-            {graph && !isLoading && (
-              <p className="text-xs text-ink-muted">
-                {graph.nodes.length}{" "}
-                {graph.nodes.length === 1 ? "osoba" : graph.nodes.length < 5 ? "osoby" : "osób"}
-                {" · "}
-                {graph.edges.length}{" "}
-                {graph.edges.length === 1
-                  ? "relacja"
-                  : graph.edges.length < 5
-                    ? "relacje"
-                    : "relacji"}
-              </p>
-            )}
+          <div>
+            <h1 className="page-title flex items-center gap-2">
+              <Network size={22} className="shrink-0" />
+              Mapa relacji
+            </h1>
+            <p className="page-subtitle">
+              Klik w osobę powiększa linie · zoom kółkiem · 2× klik otwiera album
+            </p>
           </div>
         </div>
+        {graph && !isLoading && (
+          <p className="text-xs font-semibold text-ink-muted">
+            {graph.nodes.length}{" "}
+            {graph.nodes.length === 1 ? "osoba" : graph.nodes.length < 5 ? "osoby" : "osób"}
+            {" · "}
+            {graph.edges.length}{" "}
+            {graph.edges.length === 1
+              ? "relacja"
+              : graph.edges.length < 5
+                ? "relacje"
+                : "relacji"}
+          </p>
+        )}
       </header>
 
       <div className="page-body mx-auto flex max-w-6xl flex-1 flex-col">

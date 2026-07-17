@@ -1,8 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { FolderOpen, Plus, Trash2, FolderPlus, Loader2, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  FolderOpen,
+  Plus,
+  Trash2,
+  FolderPlus,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  ArrowUp,
+  MoreHorizontal,
+  Settings2,
+} from "lucide-react";
 import {
   getFolders,
   createFolder,
@@ -13,16 +25,31 @@ import {
   startContextReanalysis,
   getContextReanalysisStatus,
   ReanalysisStatus,
+  getChats,
+  createChat,
+  type Chat,
 } from "@/lib/api";
-import { ViewModeToggle } from "@/components/ui/ViewModeToggle";
-import { useViewMode } from "@/hooks/useViewMode";
+import { SearchField } from "@/components/ui/SearchField";
+import { SectionTitle } from "@/components/ui/SectionTitle";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Loading } from "@/components/ui/Loading";
+import { BottomSheet } from "@/components/ui/BottomSheet";
+import { SheetAction } from "@/components/ui/SheetAction";
+import { Button } from "@/components/ui/Button";
+import { IconButton } from "@/components/ui/IconButton";
+import { AnimatedItem } from "@/components/ui/AnimatedList";
+import { FadeModal } from "@/components/ui/FadeModal";
+
+type FolderSort = "recent" | "asc" | "desc";
 
 function formatFolderDate(value: string) {
-  return value ? new Date(value).toLocaleDateString("pl-PL") : "—";
+  return value ? new Date(value).toLocaleDateString("pl-PL") : "Folder dokumentów";
 }
 
 export default function FoldersPage() {
+  const router = useRouter();
   const [folders, setFolders] = useState<FolderType[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
   const [isUploadingFolder, setIsUploadingFolder] = useState(false);
@@ -31,18 +58,45 @@ export default function FoldersPage() {
   const [clearConfirmText, setClearConfirmText] = useState("");
   const [newFolderName, setNewFolderName] = useState("");
   const [reanalysis, setReanalysis] = useState<ReanalysisStatus | null>(null);
-  const { viewMode, setViewMode } = useViewMode();
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<FolderSort>("recent");
+  const [sorting, setSorting] = useState(false);
+  const [selected, setSelected] = useState<FolderType | null>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [creatingChat, setCreatingChat] = useState(false);
 
   useEffect(() => {
-    getFolders()
-      .then(setFolders)
+    Promise.all([getFolders(), getChats().catch(() => [] as Chat[])])
+      .then(([f, c]) => {
+        setFolders(f);
+        setChats(c);
+      })
       .finally(() => setIsLoading(false));
   }, []);
 
-  const handleCreateFolder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newFolderName.trim()) return;
+  const needle = query.trim().toLocaleLowerCase("pl-PL");
+  const visibleFolders = useMemo(() => {
+    return [...folders]
+      .filter((folder) => !needle || folder.name.toLocaleLowerCase("pl-PL").includes(needle))
+      .sort((a, b) => {
+        if (sort === "asc") return a.name.localeCompare(b.name, "pl");
+        if (sort === "desc") return b.name.localeCompare(a.name, "pl");
+        return (
+          (b.updatedAt || "").localeCompare(a.updatedAt || "") ||
+          a.name.localeCompare(b.name, "pl")
+        );
+      });
+  }, [folders, needle, sort]);
 
+  const visibleChats = useMemo(() => {
+    return chats
+      .filter((chat) => !needle || chat.title.toLocaleLowerCase("pl-PL").includes(needle))
+      .slice(0, 3);
+  }, [chats, needle]);
+
+  const handleCreateFolder = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!newFolderName.trim()) return;
     try {
       const folder = await createFolder(newFolderName.trim());
       setFolders((prev) => [...prev, folder]);
@@ -55,17 +109,15 @@ export default function FoldersPage() {
 
   const handleFolderUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
-
     setIsUploadingFolder(true);
+    setToolsOpen(false);
     try {
       const firstFile = e.target.files[0];
       const relativePath = (firstFile as unknown as { webkitRelativePath: string })
         .webkitRelativePath;
       const folderName = relativePath.split("/")[0] || "Nowy folder";
-
       const newFolder = await createFolder(folderName);
       setFolders((prev) => [...prev, newFolder]);
-
       for (let i = 0; i < e.target.files.length; i++) {
         const file = e.target.files[i];
         if (!file.name.startsWith(".")) {
@@ -81,15 +133,12 @@ export default function FoldersPage() {
     }
   };
 
-  const handleDeleteFolder = async (id: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (!confirm("Czy na pewno chcesz usunąć ten folder?")) return;
-
+  const handleDeleteFolder = async (folder: FolderType) => {
+    setSelected(null);
+    if (!confirm(`Usunąć folder „${folder.name}” i jego pliki?`)) return;
     try {
-      await deleteFolder(id);
-      setFolders((prev) => prev.filter((f) => f.id !== id));
+      await deleteFolder(folder.id);
+      setFolders((prev) => prev.filter((f) => f.id !== folder.id));
     } catch (error) {
       console.error("Failed to delete folder", error);
     }
@@ -97,7 +146,6 @@ export default function FoldersPage() {
 
   const handleClearAllData = async () => {
     if (clearConfirmText !== "WYCZYSC") return;
-
     setIsClearingAll(true);
     try {
       await clearAllData();
@@ -113,6 +161,7 @@ export default function FoldersPage() {
   };
 
   const handleReanalysis = async () => {
+    setToolsOpen(false);
     if (!confirm("Przeliczyć kontekst wszystkich zapisanych zdjęć?")) return;
     try {
       let status = await startContextReanalysis();
@@ -128,299 +177,323 @@ export default function FoldersPage() {
     }
   };
 
+  const handleNewChat = async () => {
+    setCreatingChat(true);
+    try {
+      const chat = await createChat();
+      router.push(`/chat/${chat.id}`);
+    } catch {
+      alert("Nie udało się utworzyć rozmowy.");
+    } finally {
+      setCreatingChat(false);
+    }
+  };
+
   return (
     <div className="page-shell">
-      <header className="page-header">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="page-title">Foldery</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <ViewModeToggle value={viewMode} onChange={setViewMode} />
-            <label className="btn-secondary cursor-pointer">
-              {isUploadingFolder ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <FolderPlus size={18} />
-              )}
-              <span>Wgraj folder</span>
-              <input
-                type="file"
-                className="hidden"
-                onChange={handleFolderUpload}
-                disabled={isUploadingFolder}
-                {...({
-                  webkitdirectory: "",
-                  directory: "",
-                } as unknown as React.InputHTMLAttributes<HTMLInputElement>)}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={handleReanalysis}
-              className="btn-secondary"
-              disabled={reanalysis?.status === "RUNNING"}
-              title="Uzupełnij czynności, obiekty, scenę i napisy na zdjęciach"
-            >
-              {reanalysis?.status === "RUNNING" ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-              <span>Analizuj kontekst</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsAdding(true)}
-              className="btn-primary"
-            >
-              <Plus size={18} />
-              <span>Nowy folder</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowClearModal(true)}
-              className="btn-ghost text-error"
-              disabled={isClearingAll}
-              title="Wyczyść wszystkie foldery, pliki i embeddingi"
-            >
-              {isClearingAll ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <Trash2 size={18} />
-              )}
-              <span>Wyczyść wszystko</span>
-            </button>
-          </div>
+      <header className="flex items-center justify-between gap-3 px-5 pt-3.5 pb-2">
+        <h1 className="page-title">Biblioteka</h1>
+        <div className="flex items-center gap-2">
+          <IconButton label="Narzędzia" onClick={() => setToolsOpen(true)}>
+            <Settings2 size={18} />
+          </IconButton>
+          <IconButton label="Nowy folder" onClick={() => setIsAdding(true)}>
+            <Plus size={20} />
+          </IconButton>
         </div>
       </header>
 
-      <div className="page-body">
+      <div className="page-body max-w-3xl !pt-2">
+        <SearchField
+          value={query}
+          onChange={setQuery}
+          placeholder="Szukaj folderów i rozmów"
+        />
+
+        <button
+          type="button"
+          onClick={handleNewChat}
+          disabled={creatingChat}
+          className="ask-card mt-4 w-full text-left"
+        >
+          <span className="ask-card-icon">
+            {creatingChat ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <Sparkles size={18} />
+            )}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-extrabold text-ink">
+              O co chcesz zapytać?
+            </span>
+            <span className="mt-0.5 block text-[13px] text-ink-muted">
+              Przeszukaj swoją bazę wiedzy
+            </span>
+          </span>
+          <ArrowUp size={18} className="shrink-0 text-ink" />
+        </button>
+
         {reanalysis && (
-          <div className="status-banner" role="status">
-            <RefreshCw size={18} className={reanalysis.status === "RUNNING" ? "animate-spin" : ""} />
-            <span>Analiza kontekstu: {reanalysis.completed}/{reanalysis.total}, błędy: {reanalysis.failed}</span>
+          <div className="status-banner mt-4" role="status">
+            <RefreshCw
+              size={18}
+              className={reanalysis.status === "RUNNING" ? "animate-spin" : ""}
+            />
+            <span>
+              Analiza kontekstu: {reanalysis.completed}/{reanalysis.total}, błędy:{" "}
+              {reanalysis.failed}
+            </span>
           </div>
         )}
         {isUploadingFolder && (
-          <div className="status-banner" role="status">
-            <Loader2 size={18} className="animate-spin text-accent" />
+          <div className="status-banner mt-4" role="status">
+            <Loader2 size={18} className="animate-spin" />
+            <span>Wgrywanie folderu…</span>
           </div>
         )}
 
-        {isAdding && (
-          <div className="mb-4 rounded-[10px] border border-border bg-surface-raised p-4">
-            <h2 className="text-sm font-semibold text-ink">Nowy folder</h2>
-            <form onSubmit={handleCreateFolder} className="mt-3 flex flex-col gap-2 sm:flex-row">
-              <input
-                type="text"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                placeholder="Nazwa folderu"
-                autoFocus
-                className="input-field flex-1"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  disabled={!newFolderName.trim()}
-                  className="btn-primary"
-                >
-                  Utwórz
+        <SectionTitle
+          action={
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setSorting(true)}
+                className="text-sm font-bold text-ink"
+                aria-label="Sortuj foldery"
+              >
+                Sortuj
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsAdding(true)}
+                className="text-sm font-bold text-ink"
+              >
+                Dodaj
+              </button>
+            </div>
+          }
+        >
+          Foldery
+        </SectionTitle>
+
+        {isLoading && <Loading />}
+
+        {!isLoading && visibleFolders.length === 0 && (
+          <EmptyState
+            icon="📁"
+            title={needle ? "Brak wyników" : "Brak folderów"}
+            description={
+              needle
+                ? "Spróbuj innej nazwy."
+                : "Dodaj pierwszy folder, aby przechowywać dokumenty i zdjęcia."
+            }
+            action={
+              !needle ? (
+                <button type="button" className="btn-primary" onClick={() => setIsAdding(true)}>
+                  <Plus size={18} /> Nowy folder
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAdding(false);
-                    setNewFolderName("");
-                  }}
-                  className="btn-secondary"
-                >
-                  Anuluj
-                </button>
-              </div>
-            </form>
-          </div>
+              ) : undefined
+            }
+          />
         )}
 
-        {viewMode === "list" ? (
-        <div className="data-table" role="region" aria-label="Lista folderów">
-          <div className="data-table-head grid-cols-[minmax(0,1fr)_4rem] gap-x-4 sm:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_4rem]">
-            <span>Nazwa</span>
-            <span className="hidden sm:block">Utworzono</span>
-            <span className="hidden sm:block">Zmodyfikowano</span>
-            <span className="text-right">Akcje</span>
-          </div>
-
-          {isLoading && (
-            <div className="space-y-0">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="border-b border-border px-4 py-3 last:border-b-0">
-                  <div className="skeleton h-5 w-48" />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {!isLoading && folders.length === 0 && !isAdding && (
-            <div className="px-4 py-10 text-center">
-              <FolderOpen size={32} className="mx-auto text-ink-muted" />
-              <p className="mt-3 text-sm text-ink-muted">Brak folderów</p>
-              <button
-                type="button"
-                onClick={() => setIsAdding(true)}
-                className="btn-primary mt-4"
-              >
-                <Plus size={18} />
-                Nowy folder
-              </button>
-            </div>
-          )}
-
-          {!isLoading &&
-            folders.map((folder) => (
-              <div
-                key={folder.id}
-                className="data-table-row grid-cols-[minmax(0,1fr)_4rem] gap-x-4 sm:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_4rem] group"
-              >
-                <Link
-                  href={`/folders/${folder.id}`}
-                  className="flex min-w-0 items-center gap-2.5 text-ink hover:text-accent"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] bg-accent-muted text-accent">
-                    <FolderOpen size={16} />
-                  </span>
-                  <span className="truncate font-medium">{folder.name}</span>
-                </Link>
-                <span className="hidden whitespace-nowrap font-mono text-xs text-ink-muted sm:block">
-                  {formatFolderDate(folder.createdAt)}
-                </span>
-                <span className="hidden whitespace-nowrap font-mono text-xs text-ink-muted sm:block">
-                  {formatFolderDate(folder.updatedAt)}
-                </span>
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={(e) => handleDeleteFolder(folder.id, e)}
-                    className="btn-ghost p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                    title="Usuń folder"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            ))}
-        </div>
-        ) : (
-        <div className="data-table" role="region" aria-label="Siatka folderów">
-          {isLoading && (
-            <div className="item-grid">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="item-grid-card">
-                  <div className="skeleton h-14 w-14 rounded-[8px]" />
-                  <div className="skeleton h-4 w-20" />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {!isLoading && folders.length === 0 && !isAdding && (
-            <div className="px-4 py-10 text-center">
-              <FolderOpen size={32} className="mx-auto text-ink-muted" />
-              <p className="mt-3 text-sm text-ink-muted">Brak folderów</p>
-              <button
-                type="button"
-                onClick={() => setIsAdding(true)}
-                className="btn-primary mt-4"
-              >
-                <Plus size={18} />
-                Nowy folder
-              </button>
-            </div>
-          )}
-
-          {!isLoading && folders.length > 0 && (
-            <div className="item-grid">
-              {folders.map((folder) => (
-                <div key={folder.id} className="item-grid-card group">
-                  <button
-                    type="button"
-                    onClick={(e) => handleDeleteFolder(folder.id, e)}
-                    className="btn-ghost absolute right-1 top-1 p-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
-                    title="Usuń folder"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+        {!isLoading && visibleFolders.length > 0 && (
+          <div className="list-panel">
+            {visibleFolders.map((folder, index) => (
+              <AnimatedItem key={folder.id} index={index}>
+                <div className="list-row group">
                   <Link
                     href={`/folders/${folder.id}`}
-                    className="flex w-full min-w-0 flex-col items-center gap-2"
+                    className="flex min-w-0 flex-1 items-center gap-3"
                   >
-                    <span className="item-grid-icon">
-                      <FolderOpen size={28} />
+                    <span className="list-row-icon">
+                      <FolderOpen size={18} />
                     </span>
-                    <span className="item-grid-name" title={folder.name}>
-                      {folder.name}
-                    </span>
-                    <span className="item-grid-meta">
-                      {formatFolderDate(folder.updatedAt)}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-base font-bold text-ink">
+                        {folder.name}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-ink-muted">
+                        {formatFolderDate(folder.updatedAt)}
+                      </span>
                     </span>
                   </Link>
+                  <button
+                    type="button"
+                    className="p-1 text-ink-muted"
+                    aria-label={`Opcje folderu ${folder.name}`}
+                    onClick={() => setSelected(folder)}
+                  >
+                    <MoreHorizontal size={20} />
+                  </button>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              </AnimatedItem>
+            ))}
+          </div>
+        )}
+
+        <SectionTitle>Ostatnie rozmowy</SectionTitle>
+        {visibleChats.length === 0 ? (
+          <p className="py-2.5 text-sm text-ink-muted">Nie masz jeszcze rozmów.</p>
+        ) : (
+          <div className="list-panel">
+            {visibleChats.map((chat, index) => (
+              <AnimatedItem key={chat.id} index={index}>
+                <Link href={`/chat/${chat.id}`} className="list-row">
+                  <span className="list-row-icon">
+                    <Sparkles size={16} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-bold text-ink">{chat.title}</span>
+                    <span className="mt-0.5 block text-xs text-ink-muted">
+                      {chat.updatedAt
+                        ? new Date(chat.updatedAt).toLocaleDateString("pl-PL")
+                        : "Rozmowa"}
+                    </span>
+                  </span>
+                </Link>
+              </AnimatedItem>
+            ))}
+          </div>
         )}
       </div>
 
-      {showClearModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="clear-all-title"
-        >
-          <div className="w-full max-w-md rounded-[14px] border border-border bg-surface-raised p-5 shadow-md">
-            <h3 id="clear-all-title" className="text-base font-semibold text-ink">
-              Wyczyścić wszystkie dane?
-            </h3>
-            <p className="mt-2 text-sm text-ink-muted">
-              Zostaną usunięte foldery, pliki, embeddingi i graf wiedzy. Wpisz{" "}
-              <span className="font-mono font-semibold text-ink">WYCZYSC</span>, aby potwierdzić.
-            </p>
-            <input
-              type="text"
-              value={clearConfirmText}
-              onChange={(e) => setClearConfirmText(e.target.value)}
-              placeholder="WYCZYSC"
-              className="input-field mt-4 w-full"
-              autoFocus
+      <BottomSheet
+        open={isAdding}
+        onClose={() => setIsAdding(false)}
+        title="Nowy folder"
+        description="Nadaj nazwę swojej kolekcji."
+      >
+        <form onSubmit={handleCreateFolder}>
+          <input
+            type="text"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            placeholder="Np. Umowy 2026"
+            autoFocus
+            className="input-field mb-3"
+          />
+          <div className="flex gap-2.5">
+            <Button label="Anuluj" secondary onClick={() => setIsAdding(false)} />
+            <Button
+              label="Utwórz"
+              type="submit"
+              disabled={!newFolderName.trim()}
             />
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowClearModal(false);
-                  setClearConfirmText("");
-                }}
-                className="btn-secondary"
-                disabled={isClearingAll}
-              >
-                Anuluj
-              </button>
-              <button
-                type="button"
-                onClick={handleClearAllData}
-                className="btn-primary bg-error hover:bg-error/90"
-                disabled={isClearingAll || clearConfirmText !== "WYCZYSC"}
-              >
-                {isClearingAll ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Trash2 size={16} />
-                )}
-                <span>Wyczyść wszystko</span>
-              </button>
-            </div>
           </div>
+        </form>
+      </BottomSheet>
+
+      <BottomSheet
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        title="Opcje folderu"
+        description={selected?.name}
+      >
+        <SheetAction
+          icon={<Trash2 size={20} />}
+          label="Usuń folder"
+          destructive
+          onClick={() => selected && handleDeleteFolder(selected)}
+        />
+      </BottomSheet>
+
+      <BottomSheet open={sorting} onClose={() => setSorting(false)} title="Sortuj foldery">
+        {(
+          [
+            { key: "recent", label: "Ostatnio zmieniane" },
+            { key: "asc", label: "Nazwa: A–Z" },
+            { key: "desc", label: "Nazwa: Z–A" },
+          ] as { key: FolderSort; label: string }[]
+        ).map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            onClick={() => {
+              setSort(option.key);
+              setSorting(false);
+            }}
+            className="flex min-h-12 w-full items-center justify-between text-left text-base text-ink"
+          >
+            {option.label}
+            {option.key === sort && <span className="font-bold">✓</span>}
+          </button>
+        ))}
+      </BottomSheet>
+
+      <BottomSheet open={toolsOpen} onClose={() => setToolsOpen(false)} title="Narzędzia">
+        <label className="flex min-h-[3.25rem] w-full cursor-pointer items-center gap-3.5 text-left font-bold">
+          <FolderPlus size={20} />
+          <span>Wgraj folder</span>
+          <input
+            type="file"
+            className="hidden"
+            onChange={handleFolderUpload}
+            disabled={isUploadingFolder}
+            {...({
+              webkitdirectory: "",
+              directory: "",
+            } as unknown as React.InputHTMLAttributes<HTMLInputElement>)}
+          />
+        </label>
+        <SheetAction
+          icon={<RefreshCw size={20} />}
+          label="Analizuj kontekst zdjęć"
+          onClick={handleReanalysis}
+        />
+        <SheetAction
+          icon={<Trash2 size={20} />}
+          label="Wyczyść wszystkie dane"
+          destructive
+          onClick={() => {
+            setToolsOpen(false);
+            setShowClearModal(true);
+          }}
+        />
+      </BottomSheet>
+
+      <FadeModal
+        open={showClearModal}
+        onClose={() => {
+          if (!isClearingAll) {
+            setShowClearModal(false);
+            setClearConfirmText("");
+          }
+        }}
+        variant="card"
+      >
+        <h3 className="text-lg font-extrabold text-ink">Wyczyścić wszystkie dane?</h3>
+        <p className="mt-2 text-sm text-ink-muted">
+          Zostaną usunięte foldery, pliki, embeddingi i graf wiedzy. Wpisz{" "}
+          <span className="font-semibold text-ink">WYCZYSC</span>, aby potwierdzić.
+        </p>
+        <input
+          type="text"
+          value={clearConfirmText}
+          onChange={(e) => setClearConfirmText(e.target.value)}
+          placeholder="WYCZYSC"
+          className="input-field mt-4"
+          autoFocus
+        />
+        <div className="mt-4 flex gap-2">
+          <Button
+            label="Anuluj"
+            secondary
+            disabled={isClearingAll}
+            onClick={() => {
+              setShowClearModal(false);
+              setClearConfirmText("");
+            }}
+          />
+          <Button
+            label={isClearingAll ? "Czyszczenie…" : "Wyczyść wszystko"}
+            disabled={isClearingAll || clearConfirmText !== "WYCZYSC"}
+            onClick={handleClearAllData}
+            className="!border-error !bg-error hover:!bg-error/90"
+          />
         </div>
-      )}
+      </FadeModal>
     </div>
   );
 }

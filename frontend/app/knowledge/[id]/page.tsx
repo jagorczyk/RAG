@@ -92,28 +92,31 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
 
   return (
     <div className="page-shell">
-      <header className="page-header">
-        <div className="mx-auto max-w-6xl">
-          <button onClick={() => router.push("/knowledge")} className="btn-ghost -ml-2 mb-2 px-2">
-            <ArrowLeft size={16} /> Powrót do osób
-          </button>
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-accent-muted text-accent">
-              <User size={20} />
-            </span>
-            <div className="min-w-0">
-              <h1 className="page-title truncate">
-                {entity?.displayName ?? (isLoading ? "Ładowanie…" : "Album osoby")}
-              </h1>
-              {!isLoading && entity && (
-                <p className="mt-0.5 text-sm text-ink-muted">
-                  Wszystkie zdjęcia z zaznaczoną twarzą · {photoLabel}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
+      <header className="flex min-h-[3.25rem] items-center gap-2 border-b border-border px-4">
+        <button
+          type="button"
+          onClick={() => router.push("/knowledge")}
+          className="icon-button -ml-1 shadow-none"
+          aria-label="Wróć do osób"
+        >
+          <ArrowLeft size={20} />
+        </button>
+        <h1 className="min-w-0 flex-1 truncate text-center text-[17px] font-bold text-ink">
+          {entity?.displayName ?? (isLoading ? "Ładowanie…" : "Album osoby")}
+        </h1>
+        <div className="w-9" />
       </header>
+      {!isLoading && entity && (
+        <div className="flex flex-col items-center px-5 pt-6 pb-2">
+          <span className="mb-2.5 flex h-[76px] w-[76px] items-center justify-center rounded-full bg-soft text-ink">
+            <User size={34} />
+          </span>
+          <h2 className="text-[25px] font-extrabold tracking-tight text-ink">
+            {entity.displayName}
+          </h2>
+          <p className="mt-1 text-sm text-ink-muted">{photoLabel}</p>
+        </div>
+      )}
 
       <div className="page-body mx-auto max-w-6xl">
         {isLoading ? (
@@ -135,38 +138,39 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
         ) : appearances.length === 0 ? (
           <p className="text-sm text-ink-muted">Brak zdjęć z tą osobą.</p>
         ) : (
-          <ul className="entity-grid m-0 list-none p-0">
-            {appearances.map((appearance) => {
-              const thumb = thumbnails[appearance.filePath];
-              return (
-                <li key={appearance.mentionId}>
-                  <button
-                    type="button"
-                    onClick={() => void openPreview(appearance)}
-                    className="entity-card group flex w-full flex-col overflow-hidden rounded-[10px] border border-border bg-surface-raised text-left transition-colors hover:border-border-strong hover:bg-surface"
-                  >
-                    <div className="relative aspect-square w-full bg-surface">
-                      {thumb ? (
-                        <img
-                          src={thumb}
-                          alt={appearance.fileName}
-                          className="absolute inset-0 h-full w-full object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="absolute inset-0 flex items-center justify-center text-ink-muted">
-                          <ImageIcon size={28} />
-                        </div>
-                      )}
-                    </div>
-                    <div className="truncate px-3 py-2 text-xs text-ink-muted group-hover:text-ink">
-                      {appearance.fileName}
-                    </div>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <div>
+            <h3 className="mb-3 px-1 text-xl font-extrabold text-ink">Zdjęcia</h3>
+            <ul className="m-0 grid list-none grid-cols-3 gap-0.5 p-0 sm:grid-cols-4 md:grid-cols-5">
+              {appearances.map((appearance) => {
+                const thumb = thumbnails[appearance.filePath];
+                return (
+                  <li key={appearance.mentionId}>
+                    <button
+                      type="button"
+                      onClick={() => void openPreview(appearance)}
+                      className="group w-full overflow-hidden rounded-sm text-left transition-transform active:scale-[0.98]"
+                      aria-label={`Otwórz ${appearance.fileName}`}
+                    >
+                      <div className="relative aspect-square w-full bg-soft">
+                        {thumb ? (
+                          <img
+                            src={thumb}
+                            alt={appearance.fileName}
+                            className="absolute inset-0 h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="absolute inset-0 flex items-center justify-center text-ink-muted">
+                            <ImageIcon size={24} />
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
       </div>
 
