@@ -10,7 +10,9 @@ import {
   EntityMention,
   getAllEntities,
   getMentionsForFile,
+  hasFaceBbox,
   IdentitySuggestion,
+  IdentityConflictError,
   KnowledgeEntity,
   mergeSuggestion,
   rejectMention,
@@ -72,10 +74,8 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
     setLoading(true);
     try {
       let mentionData = await getMentionsForFile(currentFile.path);
-      const needsFaceDetection = mentionData.some(
-        (mention) => !mention.bbox || mention.bbox.length < 4
-      );
-      if (mentionData.length > 0 && needsFaceDetection) {
+      const needsFaceDetection = !mentionData.some(hasFaceBbox);
+      if (needsFaceDetection) {
         try {
           mentionData = await detectFacesForFile(currentFile.path);
         } catch (detectError) {
@@ -114,22 +114,25 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
     loadFileData();
   }, [loadFileData]);
 
-  const reviewMentions = useMemo(
-    () => mentions.filter(mentionNeedsReview),
+  const faceMentions = useMemo(
+    () => mentions.filter(hasFaceBbox),
     [mentions]
+  );
+
+  const reviewMentions = useMemo(
+    () => faceMentions.filter(mentionNeedsReview),
+    [faceMentions]
   );
 
   const annotatedFaces = useMemo(
     () =>
-      mentions
-        .map((mention, index) => ({ mention, index }))
-        .filter(({ mention }) => mention.bbox && mention.bbox.length >= 4)
-        .map(({ mention, index }) => ({
+      faceMentions.map((mention, index) => ({
           id: mention.id,
           bbox: mention.bbox as number[],
           colorIndex: index,
+          label: String(index + 1),
         })),
-    [mentions]
+    [faceMentions]
   );
 
   const personEntities = useMemo(
@@ -157,17 +160,24 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
       return;
     }
     setSavingId(mentionId);
+    const existing = personEntities.find(
+      (entity) => entity.displayName.toLowerCase() === name.toLowerCase()
+    );
+    const save = (allowDuplicateOnFile: boolean) =>
+      existing
+        ? confirmMention(mentionId, existing.id, allowDuplicateOnFile)
+        : renameMention(mentionId, name, allowDuplicateOnFile);
     try {
-      const existing = personEntities.find(
-        (entity) => entity.displayName.toLowerCase() === name.toLowerCase()
-      );
-      if (existing) {
-        await confirmMention(mentionId, existing.id);
-      } else {
-        await renameMention(mentionId, name);
-      }
+      await save(false);
       await loadFileData();
     } catch (error) {
+      if (error instanceof IdentityConflictError && window.confirm(
+        "Ta osoba jest już przypisana do innej twarzy na tym zdjęciu. Potwierdzić celowy wyjątek?"
+      )) {
+        await save(true);
+        await loadFileData();
+        return;
+      }
       console.error("Failed to save mention identity", error);
       alert("Nie udało się zapisać tożsamości.");
     } finally {
@@ -180,6 +190,13 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
       await mergeSuggestion(suggestionId);
       await loadFileData();
     } catch (error) {
+      if (error instanceof IdentityConflictError && window.confirm(
+        "Ta sama osoba pojawi się dwa razy na jednym zdjęciu. Potwierdzić celowy wyjątek?"
+      )) {
+        await mergeSuggestion(suggestionId, true);
+        await loadFileData();
+        return;
+      }
       console.error(error);
       alert("Nie udało się połączyć tożsamości.");
     }
@@ -246,7 +263,7 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                   <h4 className="text-sm font-medium text-ink">Podpisz wykryte osoby</h4>
                   {reviewMentions.map((mention, index) => {
                     const color = getFaceColor(
-                      mentions.findIndex((item) => item.id === mention.id)
+                      faceMentions.findIndex((item) => item.id === mention.id)
                     );
                     return (
                       <div

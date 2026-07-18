@@ -7,6 +7,7 @@ export interface AnnotatedFace {
   id: string;
   bbox: number[];
   colorIndex: number;
+  label?: string;
 }
 
 interface FaceAnnotatedImageProps {
@@ -111,6 +112,18 @@ export function FaceAnnotatedImage({ src, alt, faces }: FaceAnnotatedImageProps)
               }}
               aria-hidden="true"
             >
+              {face.label && (
+                <span
+                  className="absolute left-0 top-0 flex min-h-5 min-w-5 -translate-x-[3px] -translate-y-[3px] items-center justify-center rounded-br-md px-1 text-[11px] font-extrabold leading-5 shadow-sm"
+                  style={{
+                    backgroundColor: color.border,
+                    color: color.text,
+                    boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.95)",
+                  }}
+                >
+                  {face.label}
+                </span>
+              )}
               <div
                 className="h-full w-full rounded-[1px]"
                 style={{ border: `1px solid ${color.inner ?? "#fff"}` }}

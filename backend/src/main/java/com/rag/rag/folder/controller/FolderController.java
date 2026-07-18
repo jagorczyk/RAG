@@ -8,9 +8,11 @@ import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FolderRepository;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.ingestion.service.IngestionService;
+import com.rag.rag.ingestion.service.InvalidImageException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
@@ -18,6 +20,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -84,6 +87,13 @@ public class FolderController {
             log.error("Failed to upload file to folder {}", folder.getName(), e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to process the uploaded file.");
         }
+    }
+
+    @ExceptionHandler(InvalidImageException.class)
+    public ResponseEntity<Map<String, String>> handleInvalidImage(InvalidImageException exception) {
+        log.warn("Rejected invalid image upload: {}", exception.getMessage());
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                .body(Map.of("message", exception.getMessage()));
     }
 
     private boolean isImageFile(String fileName, String contentType) {

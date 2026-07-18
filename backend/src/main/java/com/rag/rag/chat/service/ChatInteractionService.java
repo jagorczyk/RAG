@@ -9,6 +9,7 @@ import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
 import com.rag.rag.knowledge.graph.GraphQueryService;
+import com.rag.rag.knowledge.graph.GraphEvidenceResult;
 import com.rag.rag.knowledge.query.DynamicVisualMatcher;
 import com.rag.rag.knowledge.query.VisualMatchDecision;
 import com.rag.rag.knowledge.query.VisualQueryMatch;
@@ -72,7 +73,9 @@ public class ChatInteractionService {
     }
 
     private MessageResponse processTextOrGraphPlan(UUID chatId, QueryPlan plan) {
-        String graphContext = buildGraphContext(plan);
+        GraphEvidenceResult graphEvidence = graphQueryService.buildEvidence(
+                plan.entities(), plan.fileScope(), plan.entityMatchMode());
+        String graphContext = graphEvidence.context();
         String prompt = graphContext.isBlank() ? plan.question() : """
                 [Kontekst zweryfikowany]
                 %s
@@ -88,11 +91,13 @@ public class ChatInteractionService {
         if (answer == null || answer.isBlank()) {
             answer = "Nie udało się przygotować odpowiedzi na podstawie dostępnych danych.";
         }
-        List<SourceDto> sources = mergeSources(result, plan);
+        List<SourceDto> sources = mergeSources(result, plan, graphEvidence);
         String cleaned = removeTechnicalReferences(answer, sources);
         boolean uncertain = plan.ambiguous() || (sources.isEmpty() && !graphContext.isBlank());
-        if (plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH && sources.isEmpty() && graphContext.isBlank()) {
-            cleaned = "Nie znaleziono pewnych informacji w grafie wiedzy.";
+        if (plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH && !graphEvidence.hasEvidence()) {
+            cleaned = plan.entityMatchMode() == com.rag.rag.knowledge.graph.EntityMatchMode.ALL_SAME_FILE
+                    ? "Nie znaleziono potwierdzonego wspólnego zdjęcia tych osób."
+                    : "Nie znaleziono pewnych informacji w grafie wiedzy.";
             uncertain = true;
         }
         saveAiMessage(chatId, cleaned, sources, List.of(), plan.retrievalMode().name(), uncertain);
@@ -129,18 +134,8 @@ public class ChatInteractionService {
                 QueryPlan.RetrievalMode.VISUAL_VALIDATION.name());
     }
 
-    private String buildGraphContext(QueryPlan plan) {
-        List<String> contexts = new ArrayList<>();
-        String entityContext = graphQueryService.buildContextForEntities(plan.entities());
-        if (entityContext != null && !entityContext.isBlank()) contexts.add(entityContext);
-        for (String path : plan.fileScope()) {
-            String context = graphQueryService.buildFullContextForFile(path);
-            if (context != null && !context.isBlank()) contexts.add(context);
-        }
-        return String.join("\n", contexts);
-    }
-
-    private List<SourceDto> mergeSources(Result<String> result, QueryPlan plan) {
+    private List<SourceDto> mergeSources(Result<String> result, QueryPlan plan,
+                                         GraphEvidenceResult graphEvidence) {
         Map<String, SourceDto> unique = new LinkedHashMap<>();
         QueryPlan.RetrievalMode mode = plan.retrievalMode();
 
@@ -151,28 +146,12 @@ public class ChatInteractionService {
         }
 
         if (mode != QueryPlan.RetrievalMode.DOCUMENT) {
-            for (String path : certainGraphPaths(plan)) {
+            for (String path : graphEvidence.certainPaths()) {
                 addSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0));
             }
         }
 
         return List.copyOf(unique.values());
-    }
-
-    /** Graph sources only when certain evidence exists (principle 2). */
-    private List<String> certainGraphPaths(QueryPlan plan) {
-        List<String> paths = new ArrayList<>();
-        for (String path : plan.fileScope()) {
-            if (graphQueryService.hasCertainEvidenceForFile(path, plan.entities())) {
-                paths.add(path);
-            }
-        }
-        for (String path : graphQueryService.imagePathsForEntities(plan.entities())) {
-            if (!paths.contains(path) && graphQueryService.hasCertainEvidenceForFile(path, plan.entities())) {
-                paths.add(path);
-            }
-        }
-        return paths;
     }
 
     private void addSource(Map<String, SourceDto> unique, SourceDto source) {

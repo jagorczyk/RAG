@@ -7,8 +7,9 @@ import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.fact.Fact;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
+import com.rag.rag.knowledge.repository.FactRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
-import jakarta.persistence.EntityManager;
+import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,7 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -33,13 +35,12 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class GraphQueryService {
-    private final EntityManager entityManager;
     private final KnowledgeEntityRepository entityRepository;
     private final EntityMentionRepository mentionRepository;
     private final FileRepository fileRepository;
-
-    @Value("${rag.graph.min-mention-confidence:0.75}")
-    private double minMentionConfidence = 0.75;
+    private final FactRepository factRepository;
+    private final MentionEvidencePolicy mentionEvidencePolicy;
+    private final IdentityResolutionService identityResolutionService;
 
     @Value("${rag.graph.min-fact-confidence:0.75}")
     private double minFactConfidence = 0.75;
@@ -47,6 +48,10 @@ public class GraphQueryService {
     @Transactional(readOnly = true)
     public List<String> availableEntityNames() {
         return entityRepository.findAll().stream()
+                .filter(entity -> !"PERSON".equalsIgnoreCase(entity.getType())
+                        || !identityResolutionService.isGenericPersonLabel(entity.getDisplayName()))
+                .filter(entity -> mentionRepository.findByEntityId(entity.getId()).stream()
+                        .anyMatch(this::isCertainMention))
                 .map(KnowledgeEntity::getDisplayName)
                 .filter(name -> name != null && !name.isBlank())
                 .sorted(String.CASE_INSENSITIVE_ORDER)
@@ -92,6 +97,57 @@ public class GraphQueryService {
     }
 
     @Transactional(readOnly = true)
+    public List<String> imagePathsForAllEntities(List<String> entityNames) {
+        List<String> validated = validateEntityNames(entityNames);
+        if (validated.isEmpty()) return List.of();
+
+        Set<String> intersection = null;
+        for (String name : validated) {
+            Optional<KnowledgeEntity> entity = entityRepository.findFirstByDisplayNameIgnoreCase(name);
+            if (entity.isEmpty()) return List.of();
+            Set<String> paths = mentionRepository.findByEntityId(entity.get().getId()).stream()
+                    .filter(this::isCertainMention)
+                    .map(EntityMention::getFilePath)
+                    .filter(this::isImagePath)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+            if (intersection == null) intersection = paths;
+            else intersection.retainAll(paths);
+            if (intersection.isEmpty()) return List.of();
+        }
+        return intersection == null ? List.of() : List.copyOf(intersection);
+    }
+
+    @Transactional(readOnly = true)
+    public GraphEvidenceResult buildEvidence(List<String> entityNames, List<String> fileScope,
+                                             EntityMatchMode entityMatchMode) {
+        List<String> validatedEntities = validateEntityNames(entityNames);
+        List<String> validatedScope = validateFilePaths(fileScope);
+        EntityMatchMode mode = entityMatchMode == null ? EntityMatchMode.ANY : entityMatchMode;
+        LinkedHashSet<String> certainPaths = new LinkedHashSet<>();
+        List<String> contexts = new ArrayList<>();
+
+        if (mode == EntityMatchMode.ALL_SAME_FILE && !validatedEntities.isEmpty()) {
+            certainPaths.addAll(imagePathsForAllEntities(validatedEntities));
+            if (!validatedScope.isEmpty()) certainPaths.retainAll(validatedScope);
+            for (String path : certainPaths) {
+                contexts.add("- współwystępowanie=" + String.join(", ", validatedEntities) + "; file=" + path);
+                String fileContext = buildFullContextForFile(path);
+                if (!fileContext.isBlank()) contexts.add(fileContext);
+            }
+        } else {
+            String entityContext = buildContextForEntities(validatedEntities);
+            if (!entityContext.isBlank()) contexts.add(entityContext);
+            certainPaths.addAll(imagePathsForEntities(validatedEntities));
+            for (String path : validatedScope) {
+                String fileContext = buildFullContextForFile(path);
+                if (!fileContext.isBlank()) contexts.add(fileContext);
+                if (hasCertainEvidenceForFile(path, validatedEntities)) certainPaths.add(path);
+            }
+        }
+        return new GraphEvidenceResult(String.join("\n", contexts), List.copyOf(certainPaths));
+    }
+
+    @Transactional(readOnly = true)
     public BigDecimal entityConfidenceForFile(List<String> entityNames, String filePath) {
         if (entityNames == null || entityNames.isEmpty() || filePath == null) return BigDecimal.ZERO;
         return mentionRepository.findByFilePath(filePath).stream()
@@ -99,7 +155,7 @@ public class GraphQueryService {
                 .filter(mention -> mention.getEntity() != null)
                 .filter(mention -> entityNames.stream().anyMatch(name ->
                         mention.getEntity().getDisplayName().equalsIgnoreCase(name)))
-                .map(EntityMention::getConfidence)
+                .map(mentionEvidencePolicy::evidenceConfidence)
                 .filter(value -> value != null)
                 .max(Comparator.naturalOrder()).orElse(BigDecimal.ZERO);
     }
@@ -123,8 +179,7 @@ public class GraphQueryService {
     @Transactional(readOnly = true)
     public boolean hasCertainEvidenceForFile(String filePath, List<String> entityNames) {
         if (entityNames != null && !entityNames.isEmpty()) {
-            return entityConfidenceForFile(entityNames, filePath).compareTo(BigDecimal.ZERO) > 0
-                    || hasCertainEvidenceForFile(filePath);
+            return entityConfidenceForFile(entityNames, filePath).compareTo(BigDecimal.ZERO) > 0;
         }
         return hasCertainEvidenceForFile(filePath);
     }
@@ -160,18 +215,11 @@ public class GraphQueryService {
 
     @Transactional(readOnly = true)
     public List<Fact> getCertainFactsForFile(String filePath) {
-        return entityManager.createNativeQuery("""
-                SELECT f.* FROM facts f JOIN entity_mentions em ON f.mention_id = em.id
-                WHERE f.file_path = :filePath
-                  AND em.status = 'CONFIRMED'
-                  AND em.confidence >= :minMention
-                  AND f.confidence >= :minFact
-                ORDER BY f.created_at
-                """, Fact.class)
-                .setParameter("filePath", filePath)
-                .setParameter("minMention", BigDecimal.valueOf(minMentionConfidence))
-                .setParameter("minFact", BigDecimal.valueOf(minFactConfidence))
-                .getResultList();
+        if (filePath == null || filePath.isBlank()) return List.of();
+        return factRepository.findByFilePath(filePath).stream()
+                .filter(this::isCertainFact)
+                .sorted(Comparator.comparing(Fact::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
     }
 
     private void appendEntityContext(StringBuilder context, KnowledgeEntity entity) {
@@ -193,8 +241,14 @@ public class GraphQueryService {
     private void appendFact(StringBuilder context, Fact fact) {
         String name = fact.getMention().getEntity() == null ? fact.getMention().getLabel()
                 : fact.getMention().getEntity().getDisplayName();
+        String value = fact.getObject();
+        if (fact.getTargetMention() != null) {
+            value = fact.getTargetMention().getEntity() == null
+                    ? fact.getTargetMention().getLabel()
+                    : fact.getTargetMention().getEntity().getDisplayName();
+        }
         context.append("- entity=").append(name).append("; predicate=").append(fact.getAction())
-                .append("; value=").append(fact.getObject()).append("; confidence=")
+                .append("; value=").append(value).append("; confidence=")
                 .append(fact.getConfidence()).append("; file=").append(fact.getFilePath()).append('\n');
     }
 
@@ -209,14 +263,14 @@ public class GraphQueryService {
 
     /** Certain mention: CONFIRMED status and confidence at or above threshold. */
     private boolean isCertainMention(EntityMention mention) {
-        if (mention == null || mention.getStatus() != MentionStatus.CONFIRMED) {
-            return false;
-        }
-        BigDecimal confidence = mention.getConfidence();
-        if (confidence == null) {
-            return false;
-        }
-        return confidence.doubleValue() >= minMentionConfidence;
+        return mentionEvidencePolicy.isCertain(mention);
+    }
+
+    private boolean isCertainFact(Fact fact) {
+        return fact != null
+                && fact.getConfidence() != null
+                && fact.getConfidence().compareTo(BigDecimal.valueOf(minFactConfidence)) >= 0
+                && isCertainMention(fact.getMention());
     }
 
     private boolean isImagePath(String path) {

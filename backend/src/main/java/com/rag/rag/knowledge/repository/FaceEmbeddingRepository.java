@@ -17,15 +17,18 @@ public interface FaceEmbeddingRepository extends JpaRepository<FaceEmbedding, UU
 
     List<FaceEmbedding> findByEntityId(UUID entityId);
 
+    void deleteByEntityId(UUID entityId);
+
+    @EntityGraph(attributePaths = {"mention", "mention.entity"})
     List<FaceEmbedding> findByFilePath(String filePath);
 
     java.util.Optional<FaceEmbedding> findFirstByMention_Id(UUID mentionId);
 
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query("DELETE FROM FaceEmbedding fe WHERE fe.filePath = :filePath")
     void deleteByFilePath(@Param("filePath") String filePath);
 
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query("DELETE FROM FaceEmbedding fe WHERE fe.mention.id IN :mentionIds")
     void deleteByMentionIdIn(@Param("mentionIds") List<UUID> mentionIds);
 

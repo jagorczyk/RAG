@@ -5,11 +5,14 @@ import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.identity.IdentityResolutionService;
+import com.rag.rag.knowledge.graph.MentionEvidencePolicy;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
 import com.rag.rag.knowledge.repository.FaceObservationRepository;
-import lombok.RequiredArgsConstructor;
+import com.rag.rag.knowledge.repository.FactRepository;
+import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,7 +32,6 @@ import java.math.RoundingMode;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class FaceIdentityService {
 
     private static final int TOP_EMBEDDINGS_PER_ENTITY = 2;
@@ -42,7 +44,38 @@ public class FaceIdentityService {
     private final FaceObservationRepository faceObservationRepository;
     private final EntityMentionRepository mentionRepository;
     private final IdentityResolutionService identityResolutionService;
+    private final MentionEvidencePolicy mentionEvidencePolicy;
+    private final IdentitySuggestionRepository suggestionRepository;
+    private final FactRepository factRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Autowired
+    public FaceIdentityService(FaceRecognitionClient faceClient,
+                               FaceEmbeddingRepository faceEmbeddingRepository,
+                               FaceObservationRepository faceObservationRepository,
+                               EntityMentionRepository mentionRepository,
+                               IdentityResolutionService identityResolutionService,
+                               MentionEvidencePolicy mentionEvidencePolicy,
+                               IdentitySuggestionRepository suggestionRepository,
+                               FactRepository factRepository) {
+        this.faceClient = faceClient;
+        this.faceEmbeddingRepository = faceEmbeddingRepository;
+        this.faceObservationRepository = faceObservationRepository;
+        this.mentionRepository = mentionRepository;
+        this.identityResolutionService = identityResolutionService;
+        this.mentionEvidencePolicy = mentionEvidencePolicy;
+        this.suggestionRepository = suggestionRepository;
+        this.factRepository = factRepository;
+    }
+
+    FaceIdentityService(FaceRecognitionClient faceClient,
+                        FaceEmbeddingRepository faceEmbeddingRepository,
+                        FaceObservationRepository faceObservationRepository,
+                        EntityMentionRepository mentionRepository,
+                        IdentityResolutionService identityResolutionService) {
+        this(faceClient, faceEmbeddingRepository, faceObservationRepository, mentionRepository,
+                identityResolutionService, new MentionEvidencePolicy(), null, null);
+    }
 
     @Value("${face.match.threshold:0.55}")
     private double matchThreshold;
@@ -65,35 +98,36 @@ public class FaceIdentityService {
     @Value("${face.match.batch-cluster-threshold:0.48}")
     private double batchClusterThreshold;
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRED)
     public void replaceFaceEmbeddingsForFile(
             byte[] imageBytes,
             String filePath,
             String fileName,
             List<EntityMention> personMentions
     ) {
-        faceEmbeddingRepository.deleteByFilePath(filePath);
-        faceObservationRepository.deleteByFilePath(filePath);
         processImageFaces(imageBytes, filePath, fileName, personMentions);
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRED)
     public void processImageFaces(byte[] imageBytes, String filePath, String fileName, List<EntityMention> personMentions) {
-        List<DetectedFaceDto> faces = faceClient.analyze(imageBytes, fileName);
+        FaceAnalyzeResponse response = faceClient.analyzeResponseOrThrow(imageBytes, fileName);
+        List<DetectedFaceDto> faces = response.faces() == null ? List.of() : response.faces().stream()
+                .map(face -> face.withImageDimensions(
+                        response.imageWidth() == null ? 0 : response.imageWidth(),
+                        response.imageHeight() == null ? 0 : response.imageHeight()))
+                .toList();
         processDetectedFaces(faces, filePath, fileName, personMentions);
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional(propagation = Propagation.REQUIRED)
     public void processDetectedFaces(List<DetectedFaceDto> faces, String filePath, String fileName, List<EntityMention> personMentions) {
-        // Face analysis may be retried after a failed request or cache refresh.
-        // Replace the file's results instead of accumulating duplicate boxes.
+        // Preserve the previous face-to-mention mapping before replacing artifacts.
+        // A retry must reuse the same mention instead of creating another unknown person.
+        List<ExistingFaceLink> existingFaceLinks = loadExistingFaceLinks(filePath);
         faceEmbeddingRepository.deleteByFilePath(filePath);
         faceObservationRepository.deleteByFilePath(filePath);
-        if (faces.isEmpty()) {
-            return;
-        }
 
-        faces = suppressOverlappingFaces(faces);
+        faces = suppressOverlappingFaces(faces == null ? List.of() : faces);
 
         // Use the mentions produced by the current vision pass. They can still be
         // uncommitted in the outer upload transaction, so reloading here would
@@ -102,58 +136,82 @@ public class FaceIdentityService {
                 .filter(this::isPersonMention)
                 .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
                 .toList();
-        List<FaceAssignment> assignments = assignMentionsToFaces(faces, personOnlyMentions);
+        List<FaceAssignment> assignments = assignMentionsToFaces(faces, personOnlyMentions, existingFaceLinks);
         Set<UUID> matchedMentionIds = new HashSet<>();
+        Set<UUID> usedEntityIds = personOnlyMentions.stream()
+                .filter(mentionEvidencePolicy::isCertain)
+                .map(EntityMention::getEntity)
+                .filter(java.util.Objects::nonNull)
+                .map(KnowledgeEntity::getId)
+                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
 
-        for (FaceAssignment assignment : assignments) {
+        List<PreparedFaceAssignment> preparedAssignments = assignments.stream()
+                .filter(assignment -> assignment.face().detScore() >= minDetScore)
+                .map(assignment -> {
+                    float[] embedding = normalizeEmbedding(assignment.face().embeddingArray());
+                    Optional<EntityMatch> candidate = embedding.length == 0
+                            ? Optional.empty()
+                            : findBestEntityMatch(embedding, filePath, suggestionThreshold);
+                    return new PreparedFaceAssignment(assignment, embedding, candidate);
+                })
+                .filter(prepared -> prepared.embedding().length > 0)
+                .sorted(Comparator.comparingDouble((PreparedFaceAssignment prepared) -> prepared.candidate()
+                        .map(EntityMatch::rankingScore).orElse(-1.0)).reversed())
+                .toList();
+
+        for (PreparedFaceAssignment prepared : preparedAssignments) {
+            FaceAssignment assignment = prepared.assignment();
             DetectedFaceDto face = assignment.face();
-            if (face.detScore() < minDetScore) {
-                log.debug("Skipping low-confidence face (det_score={}) in {}", face.detScore(), filePath);
-                continue;
-            }
-
-            float[] embedding = normalizeEmbedding(face.embeddingArray());
-            if (embedding.length == 0) {
-                continue;
-            }
-
-            Optional<EntityMatch> existingMatch = findBestEntityMatch(embedding, filePath, suggestionThreshold);
+            float[] embedding = prepared.embedding();
+            Optional<EntityMatch> existingMatch = prepared.candidate();
             EntityMention mention = assignment.mention();
             KnowledgeEntity entity = null;
 
-            if (existingMatch.isPresent() && existingMatch.get().score() >= matchThreshold) {
-                entity = existingMatch.get().entity();
+            boolean automaticMatch = existingMatch.isPresent()
+                    && existingMatch.get().score() >= matchThreshold
+                    && usedEntityIds.add(existingMatch.get().entity().getId());
+            if (automaticMatch) {
+                EntityMatch match = existingMatch.get();
+                entity = match.entity();
                 if (mention != null) {
-                    identityResolutionService.confirmFaceMatch(mention, entity, mention.getLabel());
+                    identityResolutionService.confirmFaceMatch(
+                            mention, entity, mention.getLabel(), match.score(), match.margin());
                 } else {
                     mention = EntityMention.builder()
                             .filePath(filePath)
                             .label(entity.getDisplayName())
                             .entityType("PERSON")
                             .confidence(confidence(face.detScore()))
+                            .identityConfidence(confidence(match.score()))
+                            .identityMargin(confidence(match.margin()))
+                            .identitySource(com.rag.rag.knowledge.entity.IdentityEvidenceSource.FACE_MATCH)
                             .status(MentionStatus.CONFIRMED)
                             .entity(entity)
                             .build();
                     mention = mentionRepository.save(mention);
                 }
-            } else if (mention != null && mention.getEntity() != null) {
+            } else if (mention != null && mentionEvidencePolicy.isCertain(mention)) {
                 entity = mention.getEntity();
-            } else if (mention != null) {
-                entity = identityResolutionService.createUnconfirmedEntity(uniqueUnknownName(filePath), "PERSON");
-                mention.setEntity(entity);
-                mention.setStatus(MentionStatus.CONFIRMED);
-                mentionRepository.save(mention);
             } else {
-                entity = identityResolutionService.createUnconfirmedEntity(uniqueUnknownName(filePath), "PERSON");
-                mention = EntityMention.builder()
-                        .filePath(filePath)
-                        .label(entity.getDisplayName())
-                        .entityType("PERSON")
-                        .confidence(confidence(face.detScore()))
-                        .status(MentionStatus.CONFIRMED)
-                        .entity(entity)
-                        .build();
+                if (mention == null) {
+                    mention = EntityMention.builder()
+                            .filePath(filePath)
+                            .label(uniqueUnknownName(filePath))
+                            .entityType("PERSON")
+                            .confidence(confidence(face.detScore()))
+                            .status(MentionStatus.PENDING)
+                            .build();
+                } else {
+                    mention.setStatus(MentionStatus.PENDING);
+                    mention.setIdentitySource(null);
+                    mention.setIdentityConfidence(null);
+                    mention.setIdentityMargin(null);
+                }
                 mention = mentionRepository.save(mention);
+                if (existingMatch.isPresent()) {
+                    identityResolutionService.suggestFaceMatch(
+                            mention, existingMatch.get().entity(), existingMatch.get().score());
+                }
             }
 
             if (mention != null && mention.getId() != null) {
@@ -174,6 +232,7 @@ public class FaceIdentityService {
         if (!unmatchedMentions.isEmpty()) {
             log.debug("Mentions without matched face in {}: {}", filePath, unmatchedMentions);
         }
+        removeEvidenceFreeOrphans(filePath, matchedMentionIds);
     }
 
     private void saveFaceEmbedding(
@@ -320,7 +379,7 @@ public class FaceIdentityService {
             }
             double centroidScore = centroidWeight == 0.0 ? bestScore : centroidSum / centroidWeight;
             double aggregateScore = (0.65 * bestScore) + (0.20 * weightedScore) + (0.15 * centroidScore);
-            ranked.add(new EntityMatch(entity, bestScore, aggregateScore));
+            ranked.add(new EntityMatch(entity, bestScore, aggregateScore, 0.0));
         }
 
         ranked.removeIf(match -> match.score() < threshold);
@@ -329,20 +388,21 @@ public class FaceIdentityService {
             return Optional.empty();
         }
 
-        if (ranked.size() >= 2) {
-            double margin = ranked.get(0).rankingScore() - ranked.get(1).rankingScore();
-            if (margin < minMargin) {
-                log.debug(
-                        "Skipping ambiguous face match: best={} second={} margin={}",
-                        ranked.get(0).rankingScore(),
-                        ranked.get(1).rankingScore(),
-                        margin
-                );
-                return Optional.empty();
-            }
+        double margin = ranked.size() >= 2
+                ? ranked.get(0).rankingScore() - ranked.get(1).rankingScore()
+                : ranked.get(0).rankingScore();
+        if (margin < minMargin) {
+            log.debug(
+                    "Skipping ambiguous face match: best={} second={} margin={}",
+                    ranked.get(0).rankingScore(),
+                    ranked.size() >= 2 ? ranked.get(1).rankingScore() : null,
+                    margin
+            );
+            return Optional.empty();
         }
 
-        return Optional.of(ranked.get(0));
+        EntityMatch best = ranked.get(0);
+        return Optional.of(new EntityMatch(best.entity(), best.score(), best.rankingScore(), margin));
     }
 
     /** Returns the threshold used when linking faces inside one upload batch. */
@@ -350,46 +410,87 @@ public class FaceIdentityService {
         return batchClusterThreshold;
     }
 
+    private List<ExistingFaceLink> loadExistingFaceLinks(String filePath) {
+        List<ExistingFaceLink> links = new ArrayList<>();
+        for (FaceEmbedding embedding : faceEmbeddingRepository.findByFilePath(filePath)) {
+            if (embedding.getMention() != null && embedding.getBbox() != null && embedding.getBbox().length >= 4) {
+                links.add(new ExistingFaceLink(embedding.getMention(), normalizeBboxLength(embedding.getBbox())));
+            }
+        }
+        for (FaceObservation observation : faceObservationRepository.findByFilePath(filePath)) {
+            if (observation.getMention() != null && observation.getBbox() != null
+                    && observation.getBbox().length >= 4 && "PENDING".equals(observation.getStatus())) {
+                links.add(new ExistingFaceLink(observation.getMention(), normalizeBboxLength(observation.getBbox())));
+            }
+        }
+        return links;
+    }
+
+    private void removeEvidenceFreeOrphans(String filePath, Set<UUID> currentFaceMentionIds) {
+        if (suggestionRepository == null || factRepository == null) {
+            return;
+        }
+        List<UUID> orphanIds = mentionRepository.findByFilePath(filePath).stream()
+                .filter(mention -> mention.getId() != null)
+                .filter(mention -> !currentFaceMentionIds.contains(mention.getId()))
+                .filter(mention -> mention.getStatus() == MentionStatus.PENDING)
+                .filter(mention -> mention.getEntity() == null)
+                .filter(mention -> isEmptyEvidence(mention.getBbox()))
+                .filter(mention -> isEmptyEvidence(mention.getVisualCues()))
+                .filter(mention -> isEmptyEvidence(mention.getContextObjects()))
+                .filter(mention -> isEmptyEvidence(mention.getNearbyText()))
+                .filter(mention -> !factRepository.existsByMentionOrTargetMentionId(mention.getId()))
+                .map(EntityMention::getId)
+                .toList();
+        if (orphanIds.isEmpty()) {
+            return;
+        }
+
+        suggestionRepository.deleteByMentionIds(orphanIds);
+        faceObservationRepository.deleteByMentionIds(orphanIds);
+        faceEmbeddingRepository.deleteByMentionIdIn(orphanIds);
+        mentionRepository.deleteAllByIdInBatch(orphanIds);
+        log.info("Removed {} evidence-free duplicate face mentions from {}", orphanIds.size(), filePath);
+    }
+
+    private boolean isEmptyEvidence(String value) {
+        return value == null || value.isBlank() || "[]".equals(value.trim()) || "{}".equals(value.trim());
+    }
+
     private List<FaceAssignment> assignMentionsToFaces(List<DetectedFaceDto> faces, List<EntityMention> personMentions) {
+        return assignMentionsToFaces(faces, personMentions, List.of());
+    }
+
+    private List<FaceAssignment> assignMentionsToFaces(
+            List<DetectedFaceDto> faces,
+            List<EntityMention> personMentions,
+            List<ExistingFaceLink> existingFaceLinks
+    ) {
         List<DetectedFaceDto> sortedFaces = new ArrayList<>(faces);
         sortedFaces.sort(Comparator.comparingDouble(this::bboxCenterX));
-        if (personMentions == null || personMentions.isEmpty()) {
-            return sortedFaces.stream().map(face -> new FaceAssignment(face, null)).toList();
-        }
 
         int imageWidth = sortedFaces.stream().mapToInt(DetectedFaceDto::imageWidth).filter(value -> value > 0).findFirst().orElse(0);
         int imageHeight = sortedFaces.stream().mapToInt(DetectedFaceDto::imageHeight).filter(value -> value > 0).findFirst().orElse(0);
-        List<MentionCandidate> mentionCandidates = personMentions.stream()
+        List<MentionCandidate> mentionCandidates = (personMentions == null ? List.<EntityMention>of() : personMentions).stream()
                 .sorted(Comparator.comparing(EntityMention::getCreatedAt))
                 .map(mention -> new MentionCandidate(mention, parseMentionBbox(mention, imageWidth, imageHeight)))
                 .toList();
-
-        boolean hasMentionBbox = mentionCandidates.stream().anyMatch(candidate -> candidate.bbox().length == 4);
-        if (!hasMentionBbox) {
-            return assignSequentially(sortedFaces, mentionCandidates);
-        }
+        List<MentionCandidate> previousFaceCandidates = (existingFaceLinks == null
+                ? List.<ExistingFaceLink>of() : existingFaceLinks).stream()
+                .filter(link -> link.mention() != null && link.bbox() != null && link.bbox().length == 4)
+                .map(link -> new MentionCandidate(
+                        link.mention(), normalizeBboxCoordinates(link.bbox().clone(), imageWidth, imageHeight)))
+                .toList();
 
         List<FaceAssignment> assignments = new ArrayList<>();
         Set<UUID> usedMentions = new HashSet<>();
         for (DetectedFaceDto face : sortedFaces) {
-            MentionCandidate best = null;
-            double bestScore = 0.0;
             float[] faceBbox = toBboxArray(face);
-            for (MentionCandidate candidate : mentionCandidates) {
-                UUID mentionId = candidate.mention().getId();
-                if (mentionId != null && usedMentions.contains(mentionId)) {
-                    continue;
-                }
-                if (candidate.bbox().length != 4 || faceBbox.length != 4) {
-                    continue;
-                }
-                double score = bboxMatchScore(faceBbox, candidate.bbox());
-                if (score > bestScore) {
-                    bestScore = score;
-                    best = candidate;
-                }
+            MentionCandidate best = bestBboxCandidate(faceBbox, previousFaceCandidates, usedMentions);
+            if (best == null) {
+                best = bestBboxCandidate(faceBbox, mentionCandidates, usedMentions);
             }
-            if (best != null && bestScore >= MIN_BBOX_MATCH_SCORE) {
+            if (best != null) {
                 if (best.mention().getId() != null) {
                     usedMentions.add(best.mention().getId());
                 }
@@ -399,32 +500,31 @@ public class FaceIdentityService {
             }
         }
 
-        List<EntityMention> remainingMentions = mentionCandidates.stream()
-                .map(MentionCandidate::mention)
-                .filter(mention -> mention.getId() == null || !usedMentions.contains(mention.getId()))
-                .toList();
-        if (!remainingMentions.isEmpty()) {
-            List<Integer> unassignedFaceIndexes = new ArrayList<>();
-            for (int i = 0; i < assignments.size(); i++) {
-                if (assignments.get(i).mention() == null) {
-                    unassignedFaceIndexes.add(i);
-                }
-            }
-            for (int i = 0; i < Math.min(unassignedFaceIndexes.size(), remainingMentions.size()); i++) {
-                int faceIndex = unassignedFaceIndexes.get(i);
-                assignments.set(faceIndex, new FaceAssignment(assignments.get(faceIndex).face(), remainingMentions.get(i)));
-            }
-        }
         return assignments;
     }
 
-    private List<FaceAssignment> assignSequentially(List<DetectedFaceDto> sortedFaces, List<MentionCandidate> mentionCandidates) {
-        List<FaceAssignment> assignments = new ArrayList<>();
-        for (int i = 0; i < sortedFaces.size(); i++) {
-            EntityMention mention = i < mentionCandidates.size() ? mentionCandidates.get(i).mention() : null;
-            assignments.add(new FaceAssignment(sortedFaces.get(i), mention));
+    private MentionCandidate bestBboxCandidate(
+            float[] faceBbox,
+            List<MentionCandidate> candidates,
+            Set<UUID> usedMentions
+    ) {
+        MentionCandidate best = null;
+        double bestScore = MIN_BBOX_MATCH_SCORE;
+        for (MentionCandidate candidate : candidates) {
+            UUID mentionId = candidate.mention().getId();
+            if (mentionId != null && usedMentions.contains(mentionId)) {
+                continue;
+            }
+            if (candidate.bbox().length != 4 || faceBbox.length != 4) {
+                continue;
+            }
+            double score = bboxMatchScore(faceBbox, candidate.bbox());
+            if (score >= bestScore) {
+                bestScore = score;
+                best = candidate;
+            }
         }
-        return assignments;
+        return best;
     }
 
     private float[] parseMentionBbox(EntityMention mention, int imageWidth, int imageHeight) {
@@ -584,7 +684,9 @@ public class FaceIdentityService {
         if (identityResolutionService.isGenericPersonLabel(entity.getDisplayName())) {
             return false;
         }
-        return embedding.getDetScore() == null || embedding.getDetScore().doubleValue() >= minDetScore;
+        return (embedding.getDetScore() == null || embedding.getDetScore().doubleValue() >= minDetScore)
+                && embedding.getMention() != null
+                && mentionEvidencePolicy.isCertain(embedding.getMention());
     }
 
     private String uniqueUnknownName(String filePath) {
@@ -637,7 +739,9 @@ public class FaceIdentityService {
     }
 
     record MentionCandidate(EntityMention mention, float[] bbox) {}
+    record ExistingFaceLink(EntityMention mention, float[] bbox) {}
     record FaceAssignment(DetectedFaceDto face, EntityMention mention) {}
+    record PreparedFaceAssignment(FaceAssignment assignment, float[] embedding, Optional<EntityMatch> candidate) {}
     record ScoredEmbedding(double score, double quality) {}
-    public record EntityMatch(KnowledgeEntity entity, double score, double rankingScore) {}
+    public record EntityMatch(KnowledgeEntity entity, double score, double rankingScore, double margin) {}
 }

@@ -75,7 +75,10 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
     setPreviewLoading(true);
     try {
       const file = await getFilePreview(appearance.filePath);
-      setPreview({ file, bbox: appearance.bbox });
+      setPreview({
+        file,
+        bbox: appearance.bboxSource === "FACE" ? appearance.bbox : null,
+      });
     } catch (e) {
       console.error(e);
     } finally {

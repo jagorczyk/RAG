@@ -41,6 +41,13 @@ interface ViewTransform {
   ty: number;
 }
 
+interface RenderSnapshot {
+  nodes: SimNode[];
+  edges: SimEdge[];
+  width: number;
+  height: number;
+}
+
 const NODE_RADIUS = 30;
 const REPULSION = 5200;
 const SPRING = 0.022;
@@ -70,13 +77,25 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
   const selectedIdRef = useRef<string | null>(null);
   const viewRef = useRef<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
 
-  const [renderTick, setRenderTick] = useState(0);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
   const [view, setView] = useState<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [renderSnapshot, setRenderSnapshot] = useState<RenderSnapshot>({
+    nodes: [],
+    edges: [],
+    width: 800,
+    height: 560,
+  });
 
-  selectedIdRef.current = selectedId;
-  viewRef.current = view;
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
 
   const nodeIds = useMemo(() => nodes.map((n) => n.id).join(","), [nodes]);
   const edgeKey = useMemo(
@@ -101,7 +120,7 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
     const cy = height / 2;
     const radius = Math.min(width, height) * 0.3;
 
-    simNodesRef.current = nodes.map((node, index) => {
+    const nextNodes = nodes.map((node, index) => {
       const angle = (index / Math.max(nodes.length, 1)) * Math.PI * 2;
       return {
         id: node.id,
@@ -113,16 +132,18 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
         vy: 0,
       };
     });
-    simEdgesRef.current = edges.map((edge) => ({
+    const nextEdges = edges.map((edge) => ({
       sourceId: edge.sourceId,
       targetId: edge.targetId,
       relation: edge.relation,
       weight: edge.weight,
       kind: edge.kind,
     }));
+    simNodesRef.current = nextNodes;
+    simEdgesRef.current = nextEdges;
+    setRenderSnapshot({ nodes: nextNodes, edges: nextEdges, width, height });
     setSelectedId(null);
     setView({ scale: 1, tx: 0, ty: 0 });
-    setRenderTick((t) => t + 1);
   }, [nodeIds, edgeKey, nodes, edges]);
 
   useEffect(() => {
@@ -239,7 +260,12 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
         node.y = Math.min(height - pad, Math.max(pad, node.y));
       }
 
-      setRenderTick((t) => t + 1);
+      setRenderSnapshot({
+        nodes: simNodes.map((node) => ({ ...node })),
+        edges: simEdges,
+        width,
+        height,
+      });
       frameRef.current = requestAnimationFrame(step);
     };
 
@@ -293,6 +319,7 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
       return;
     }
     panningRef.current = true;
+    setIsPanning(true);
     panStartRef.current = {
       x: event.clientX,
       y: event.clientY,
@@ -311,6 +338,7 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
     const node = simNodesRef.current.find((n) => n.id === nodeId);
     if (!node) return;
     dragIdRef.current = nodeId;
+    setDraggingId(nodeId);
     dragMovedRef.current = false;
     dragStartClientRef.current = { x: event.clientX, y: event.clientY };
     dragOffsetRef.current = { x: node.x - pt.x, y: node.y - pt.y };
@@ -355,11 +383,13 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
   const onPointerUp = (event: ReactPointerEvent) => {
     if (panningRef.current) {
       panningRef.current = false;
+      setIsPanning(false);
       return;
     }
     const draggedId = dragIdRef.current;
     const wasClick = draggedId != null && !dragMovedRef.current;
     dragIdRef.current = null;
+    setDraggingId(null);
     if (wasClick && draggedId) {
       const selecting = selectedIdRef.current !== draggedId;
       setSelectedId((prev) => (prev === draggedId ? null : draggedId));
@@ -378,11 +408,8 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
     void event;
   };
 
-  const { width, height } = sizeRef.current;
-  const simNodes = simNodesRef.current;
-  const simEdges = simEdgesRef.current;
+  const { width, height, nodes: simNodes, edges: simEdges } = renderSnapshot;
   const byId = new Map(simNodes.map((n) => [n.id, n]));
-  void renderTick;
 
   if (nodes.length === 0) {
     return (
@@ -441,7 +468,7 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
         height="100%"
         viewBox={`0 0 ${width} ${height}`}
         className="absolute inset-0 h-full w-full touch-none"
-        style={{ cursor: panningRef.current ? "grabbing" : "grab" }}
+        style={{ cursor: isPanning ? "grabbing" : "grab" }}
         onWheel={onWheel}
         onPointerDown={onBackgroundPointerDown}
         onPointerMove={onPointerMove}
@@ -539,7 +566,7 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
             const isNeighbor = neighborIds.has(node.id);
             const dimmed = selectedId != null && !isNeighbor;
             const active =
-              isSelected || hoveredId === node.id || dragIdRef.current === node.id;
+              isSelected || hoveredId === node.id || draggingId === node.id;
             const radius = isSelected ? NODE_RADIUS + 6 : NODE_RADIUS;
 
             return (

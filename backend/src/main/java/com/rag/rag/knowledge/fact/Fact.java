@@ -28,6 +28,10 @@ public class Fact {
     @JoinColumn(name = "mention_id", nullable = false)
     private EntityMention mention;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "target_mention_id")
+    private EntityMention targetMention;
+
     @Column(nullable = false)
     private String action;
 

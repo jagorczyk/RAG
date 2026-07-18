@@ -3,6 +3,7 @@ package com.rag.rag.knowledge.identity;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.entity.IdentityEvidenceSource;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
@@ -163,13 +164,30 @@ class IdentityResolutionServiceTest {
                 .thenReturn(Optional.empty());
         when(aliasRepository.save(any())).thenReturn(null);
 
-        service.confirmFaceMatch(mention, igor, mention.getLabel());
+        service.confirmFaceMatch(mention, igor, mention.getLabel(), 0.72, 0.12);
 
         ArgumentCaptor<EntityMention> mentionCaptor = ArgumentCaptor.forClass(EntityMention.class);
         verify(mentionRepository).save(mentionCaptor.capture());
         assertEquals(MentionStatus.CONFIRMED, mentionCaptor.getValue().getStatus());
         assertEquals(igor, mentionCaptor.getValue().getEntity());
+        assertEquals(IdentityEvidenceSource.FACE_MATCH, mentionCaptor.getValue().getIdentitySource());
+        assertEquals("0.720", mentionCaptor.getValue().getIdentityConfidence().toPlainString());
         verify(aliasRepository).save(any());
+    }
+
+    @Test
+    void manualAssignmentStoresAuthoritativeIdentityEvidence() {
+        KnowledgeEntity person = KnowledgeEntity.builder().id(UUID.randomUUID())
+                .displayName("Bartek").type("PERSON").build();
+        EntityMention mention = EntityMention.builder().id(UUID.randomUUID())
+                .label("Bartek").confidence(new java.math.BigDecimal("0.736")).build();
+
+        service.confirmUserAssignment(mention, person);
+
+        assertEquals(MentionStatus.CONFIRMED, mention.getStatus());
+        assertEquals(IdentityEvidenceSource.USER, mention.getIdentitySource());
+        assertEquals("1.000", mention.getIdentityConfidence().toPlainString());
+        assertEquals("0.736", mention.getConfidence().toPlainString());
     }
 
     @Test

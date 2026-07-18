@@ -50,9 +50,7 @@ public class PersonRelationGraphService {
     private final EntityMentionRepository mentionRepository;
     private final FactRepository factRepository;
     private final IdentityResolutionService identityResolutionService;
-
-    @Value("${rag.graph.min-mention-confidence:0.75}")
-    private double minMentionConfidence = 0.75;
+    private final MentionEvidencePolicy mentionEvidencePolicy;
 
     @Value("${rag.graph.min-fact-confidence:0.75}")
     private double minFactConfidence = 0.75;
@@ -98,6 +96,7 @@ public class PersonRelationGraphService {
         addSpatialEdges(entitiesById, entitiesByName, certainMentionsByFile, edgeWeights, edgeMeta);
 
         List<PersonGraphNodeDto> nodes = personEntities.stream()
+                .filter(entity -> photoCounts.getOrDefault(entity.getId(), 0) > 0)
                 .map(entity -> new PersonGraphNodeDto(
                         entity.getId(),
                         entity.getDisplayName(),
@@ -180,12 +179,19 @@ public class PersonRelationGraphService {
                 continue;
             }
 
-            KnowledgeEntity target = resolveObjectEntity(
-                    fact.getObject(),
-                    fact.getFilePath(),
-                    certainMentionsByFile,
-                    entitiesByName
-            );
+            KnowledgeEntity target = null;
+            if (fact.getTargetMention() != null
+                    && isCertainPersonMention(fact.getTargetMention())) {
+                target = fact.getTargetMention().getEntity();
+            }
+            if (target == null) {
+                target = resolveObjectEntity(
+                        fact.getObject(),
+                        fact.getFilePath(),
+                        certainMentionsByFile,
+                        entitiesByName
+                );
+            }
             if (target == null || target.getId().equals(sourceId) || !entitiesById.containsKey(target.getId())) {
                 continue;
             }
@@ -251,14 +257,7 @@ public class PersonRelationGraphService {
     }
 
     private boolean isCertainPersonMention(EntityMention mention) {
-        if (mention == null || mention.getStatus() != MentionStatus.CONFIRMED) {
-            return false;
-        }
-        if (mention.getEntity() == null) {
-            return false;
-        }
-        BigDecimal confidence = mention.getConfidence();
-        if (confidence == null || confidence.doubleValue() < minMentionConfidence) {
+        if (!mentionEvidencePolicy.isCertain(mention)) {
             return false;
         }
         String type = mention.getEntityType();

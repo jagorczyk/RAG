@@ -42,6 +42,16 @@ public class EntityMention {
     @Column(nullable = false, precision = 4, scale = 3)
     private BigDecimal confidence;
 
+    @Column(name = "identity_confidence", precision = 4, scale = 3)
+    private BigDecimal identityConfidence;
+
+    @Column(name = "identity_margin", precision = 4, scale = 3)
+    private BigDecimal identityMargin;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "identity_source")
+    private IdentityEvidenceSource identitySource;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     @Builder.Default

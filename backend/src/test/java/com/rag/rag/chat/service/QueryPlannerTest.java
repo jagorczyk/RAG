@@ -8,6 +8,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import com.rag.rag.knowledge.graph.EntityMatchMode;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -40,12 +41,30 @@ class QueryPlannerTest {
 
     @Test
     void fallsBackToGenericHybridRetrievalWhenPlannerOutputIsInvalid() {
-        when(graphQueryService.availableEntityNames()).thenReturn(List.of());
+        when(graphQueryService.availableEntityNames()).thenReturn(List.of("Igor", "Anna"));
         when(chatModel.generate(anyString())).thenReturn("not-json");
 
         QueryPlan plan = new QueryPlanner(graphQueryService, chatModel).plan("Jakie jest saldo na fakturze?");
 
         assertEquals(QueryPlan.RetrievalMode.HYBRID, plan.retrievalMode());
+        assertTrue(plan.entities().isEmpty());
         assertEquals("Jakie jest saldo na fakturze?", plan.condition());
+    }
+
+    @Test
+    void supportsSemanticAllEntitiesOnTheSameFileOperation() {
+        when(graphQueryService.availableEntityNames()).thenReturn(List.of("Igor", "Anna"));
+        when(graphQueryService.validateEntityNames(List.of("Igor", "Anna"))).thenReturn(List.of("Igor", "Anna"));
+        when(graphQueryService.validateFilePaths(List.of())).thenReturn(List.of());
+        when(chatModel.generate(anyString())).thenReturn("""
+                {"entities":["Igor","Anna"],"condition":"obydwie osoby na tym samym obrazie",
+                "visualCondition":false,"ambiguous":false,"retrievalMode":"GRAPH",
+                "entityMatchMode":"ALL_SAME_FILE","answerInstruction":"Odpowiedz krótko."}
+                """);
+
+        QueryPlan plan = new QueryPlanner(graphQueryService, chatModel).plan("Czy Igor i Anna są razem?");
+
+        assertEquals(EntityMatchMode.ALL_SAME_FILE, plan.entityMatchMode());
+        assertEquals(List.of("Igor", "Anna"), plan.entities());
     }
 }

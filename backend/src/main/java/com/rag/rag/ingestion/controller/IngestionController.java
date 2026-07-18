@@ -94,6 +94,34 @@ public class IngestionController {
         return ResponseEntity.ok(reanalysisStatus(jobId, job));
     }
 
+    @PostMapping("/images/reanalyze-faces")
+    public ResponseEntity<Map<String, Object>> reanalyzeFaces() {
+        List<FileEntity> images = fileRepository.findAll().stream()
+                .filter(file -> file.getImageData() != null && file.getImageData().length > 0)
+                .filter(file -> file.getFileType() != null && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
+                .toList();
+        UUID jobId = UUID.randomUUID();
+        ReanalysisJob job = new ReanalysisJob(images.size());
+        reanalysisJobs.put(jobId, job);
+        CompletableFuture.runAsync(() -> {
+            for (FileEntity image : images) {
+                try {
+                    ingestionService.reanalyzeExistingFaces(image);
+                    job.completed.incrementAndGet();
+                } catch (Exception e) {
+                    job.failed.incrementAndGet();
+                }
+            }
+            job.status = "COMPLETED";
+        });
+        return ResponseEntity.accepted().body(reanalysisStatus(jobId, job));
+    }
+
+    @GetMapping("/images/reanalyze-faces/{jobId}")
+    public ResponseEntity<Map<String, Object>> faceReanalysisStatus(@PathVariable UUID jobId) {
+        return reanalysisStatus(jobId);
+    }
+
     private Map<String, Object> reanalysisStatus(UUID jobId, ReanalysisJob job) {
         return Map.of("jobId", jobId, "status", job.status, "total", job.total,
                 "completed", job.completed.get(), "failed", job.failed.get(),

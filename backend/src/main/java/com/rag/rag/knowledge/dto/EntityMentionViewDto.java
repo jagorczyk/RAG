@@ -10,9 +10,13 @@ public record EntityMentionViewDto(
         String label,
         String entityType,
         BigDecimal confidence,
+        BigDecimal identityConfidence,
+        BigDecimal identityMargin,
+        String identitySource,
         String status,
         String visualCues,
         UUID entityId,
         String entityDisplayName,
-        List<Float> bbox
+        List<Float> bbox,
+        String bboxSource
 ) {}

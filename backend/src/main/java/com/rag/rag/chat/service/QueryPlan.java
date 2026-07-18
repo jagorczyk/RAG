@@ -1,5 +1,6 @@
 package com.rag.rag.chat.service;
 
+import com.rag.rag.knowledge.graph.EntityMatchMode;
 import java.util.List;
 
 /**
@@ -16,6 +17,7 @@ public record QueryPlan(
         boolean visualCondition,
         boolean ambiguous,
         RetrievalMode retrievalMode,
+        EntityMatchMode entityMatchMode,
         String answerInstruction
 ) {
     public enum RetrievalMode { DOCUMENT, GRAPH, HYBRID, VISUAL_VALIDATION }
@@ -27,6 +29,7 @@ public record QueryPlan(
         retrievalQuery = retrievalQuery == null || retrievalQuery.isBlank() ? question : retrievalQuery;
         condition = condition == null ? "" : condition;
         retrievalMode = retrievalMode == null ? RetrievalMode.HYBRID : retrievalMode;
+        entityMatchMode = entityMatchMode == null ? EntityMatchMode.ANY : entityMatchMode;
         answerInstruction = answerInstruction == null ? "" : answerInstruction;
     }
 
@@ -35,13 +38,21 @@ public record QueryPlan(
                      boolean visualCondition, boolean ambiguous, RetrievalMode retrievalMode,
                      String answerInstruction) {
         this(question, entities, List.of(), question, condition, visualCondition, ambiguous,
-                retrievalMode, answerInstruction);
+                retrievalMode, EntityMatchMode.ANY, answerInstruction);
+    }
+
+    /** Compatibility constructor for callers predating explicit entity set semantics. */
+    public QueryPlan(String question, List<String> entities, List<String> fileScope, String retrievalQuery,
+                     String condition, boolean visualCondition, boolean ambiguous, RetrievalMode retrievalMode,
+                     String answerInstruction) {
+        this(question, entities, fileScope, retrievalQuery, condition, visualCondition, ambiguous,
+                retrievalMode, EntityMatchMode.ANY, answerInstruction);
     }
 
     /** Safe, semantic-neutral fallback used only when the planner is unavailable. */
     public static QueryPlan fallback(String question, List<String> entities) {
-        return new QueryPlan(question, entities, List.of(), question, question, false, false,
-                RetrievalMode.HYBRID,
+        return new QueryPlan(question, List.of(), List.of(), question, question, false, false,
+                RetrievalMode.HYBRID, EntityMatchMode.ANY,
                 "One short Polish sentence only; do not describe appearance or list files.");
     }
 }

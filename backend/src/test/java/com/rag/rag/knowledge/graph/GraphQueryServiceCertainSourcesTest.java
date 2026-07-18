@@ -6,7 +6,6 @@ import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
-import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,10 +25,12 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class GraphQueryServiceCertainSourcesTest {
 
-    @Mock EntityManager entityManager;
     @Mock KnowledgeEntityRepository entityRepository;
     @Mock EntityMentionRepository mentionRepository;
     @Mock FileRepository fileRepository;
+    @Mock com.rag.rag.knowledge.repository.FactRepository factRepository;
+    @Mock MentionEvidencePolicy mentionEvidencePolicy;
+    @Mock com.rag.rag.knowledge.identity.IdentityResolutionService identityResolutionService;
     @InjectMocks GraphQueryService service;
 
     private KnowledgeEntity entity;
@@ -37,7 +38,6 @@ class GraphQueryServiceCertainSourcesTest {
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(service, "minMentionConfidence", 0.75);
         ReflectionTestUtils.setField(service, "minFactConfidence", 0.75);
         entityId = UUID.randomUUID();
         entity = KnowledgeEntity.builder().id(entityId).displayName("Igor").type("PERSON").build();
@@ -74,6 +74,9 @@ class GraphQueryServiceCertainSourcesTest {
                 .build();
 
         when(mentionRepository.findByEntityId(entityId)).thenReturn(List.of(confirmed, suggested, lowConfidence));
+        when(mentionEvidencePolicy.isCertain(confirmed)).thenReturn(true);
+        when(mentionEvidencePolicy.isCertain(suggested)).thenReturn(false);
+        when(mentionEvidencePolicy.isCertain(lowConfidence)).thenReturn(false);
         when(fileRepository.findByPath("dir://ok.jpg")).thenReturn(Optional.of(
                 com.rag.rag.folder.entity.FileEntity.builder().path("dir://ok.jpg").fileType("image/jpeg").build()));
 
@@ -93,11 +96,37 @@ class GraphQueryServiceCertainSourcesTest {
                 .build();
         when(mentionRepository.findByFilePath("dir://x.jpg")).thenReturn(List.of(suggested));
 
-        jakarta.persistence.Query query = mock(jakarta.persistence.Query.class);
-        when(entityManager.createNativeQuery(anyString(), eq(com.rag.rag.knowledge.fact.Fact.class))).thenReturn(query);
-        when(query.setParameter(anyString(), any())).thenReturn(query);
-        when(query.getResultList()).thenReturn(List.of());
+        when(mentionEvidencePolicy.isCertain(suggested)).thenReturn(false);
+        when(factRepository.findByFilePath("dir://x.jpg")).thenReturn(List.of());
 
         assertFalse(service.hasCertainEvidenceForFile("dir://x.jpg"));
+    }
+
+    @Test
+    void allEntityPathsReturnOnlyTheIntersection() {
+        KnowledgeEntity anna = KnowledgeEntity.builder().id(UUID.randomUUID())
+                .displayName("Anna").type("PERSON").build();
+        when(entityRepository.findAll()).thenReturn(List.of(entity, anna));
+        when(entityRepository.findFirstByDisplayNameIgnoreCase("Igor")).thenReturn(Optional.of(entity));
+        when(entityRepository.findFirstByDisplayNameIgnoreCase("Anna")).thenReturn(Optional.of(anna));
+
+        EntityMention igorShared = confirmed(entity, "dir://shared.jpg");
+        EntityMention igorOnly = confirmed(entity, "dir://igor.jpg");
+        EntityMention annaShared = confirmed(anna, "dir://shared.jpg");
+        when(mentionRepository.findByEntityId(entityId)).thenReturn(List.of(igorShared, igorOnly));
+        when(mentionRepository.findByEntityId(anna.getId())).thenReturn(List.of(annaShared));
+        when(mentionEvidencePolicy.isCertain(any(EntityMention.class))).thenReturn(true);
+        when(fileRepository.findByPath(anyString())).thenAnswer(invocation -> Optional.of(
+                com.rag.rag.folder.entity.FileEntity.builder()
+                        .path(invocation.getArgument(0)).fileType("image/jpeg").build()));
+
+        assertEquals(List.of("dir://shared.jpg"),
+                service.imagePathsForAllEntities(List.of("Igor", "Anna")));
+    }
+
+    private EntityMention confirmed(KnowledgeEntity owner, String path) {
+        return EntityMention.builder().id(UUID.randomUUID()).entity(owner).filePath(path)
+                .label(owner.getDisplayName()).confidence(new BigDecimal("0.900"))
+                .status(MentionStatus.CONFIRMED).build();
     }
 }

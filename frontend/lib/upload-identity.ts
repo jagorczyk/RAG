@@ -2,6 +2,7 @@ import {
   detectFacesForFile,
   EntityMention,
   getMentionsForFile,
+  hasFaceBbox,
 } from "@/lib/knowledge-api";
 import type { UploadResult } from "@/lib/api";
 import type { IdentityReviewFile } from "@/components/knowledge/UploadIdentityPrompt";
@@ -42,10 +43,8 @@ export async function buildIdentityReviewQueue(
 
   for (const upload of imageUploads) {
     let mentions = await getMentionsForFile(upload.path);
-    const needsFaceDetection = mentions.some(
-      (mention) => !mention.bbox || mention.bbox.length < 4
-    );
-    if (mentions.length > 0 && needsFaceDetection) {
+    const needsFaceDetection = !mentions.some(hasFaceBbox);
+    if (needsFaceDetection) {
       try {
         mentions = await detectFacesForFile(upload.path);
       } catch {
@@ -56,7 +55,7 @@ export async function buildIdentityReviewQueue(
     const fileSuggestions = [];
 
     const needsReview =
-      mentions.some(mentionNeedsReview) || fileSuggestions.length > 0;
+      mentions.filter(hasFaceBbox).some(mentionNeedsReview) || fileSuggestions.length > 0;
 
     if (!needsReview) {
       continue;

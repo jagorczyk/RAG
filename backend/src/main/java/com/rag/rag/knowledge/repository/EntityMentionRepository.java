@@ -18,4 +18,6 @@ public interface EntityMentionRepository extends JpaRepository<EntityMention, UU
     List<EntityMention> findByEntityId(UUID entityId);
 
     void deleteByFilePath(String filePath);
+
+    void deleteByEntityId(UUID entityId);
 }

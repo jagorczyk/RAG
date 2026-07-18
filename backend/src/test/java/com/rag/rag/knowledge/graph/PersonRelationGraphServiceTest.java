@@ -31,6 +31,7 @@ class PersonRelationGraphServiceTest {
     @Mock EntityMentionRepository mentionRepository;
     @Mock FactRepository factRepository;
     @Mock IdentityResolutionService identityResolutionService;
+    @Mock MentionEvidencePolicy mentionEvidencePolicy;
     @InjectMocks PersonRelationGraphService service;
 
     private KnowledgeEntity igor;
@@ -38,7 +39,6 @@ class PersonRelationGraphServiceTest {
 
     @BeforeEach
     void setUp() {
-        ReflectionTestUtils.setField(service, "minMentionConfidence", 0.75);
         ReflectionTestUtils.setField(service, "minFactConfidence", 0.75);
         igor = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Igor").type("PERSON").build();
         anna = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Anna").type("PERSON").build();
@@ -71,12 +71,15 @@ class PersonRelationGraphServiceTest {
 
         when(mentionRepository.findByEntityId(igor.getId())).thenReturn(List.of(igorMention));
         when(mentionRepository.findByEntityId(anna.getId())).thenReturn(List.of(annaMention));
+        when(mentionEvidencePolicy.isCertain(igorMention)).thenReturn(true);
+        when(mentionEvidencePolicy.isCertain(annaMention)).thenReturn(true);
 
         Fact spatial = Fact.builder()
                 .id(UUID.randomUUID())
                 .mention(igorMention)
                 .action("z lewej od")
-                .object("Anna")
+                .object("person 2")
+                .targetMention(annaMention)
                 .filePath("dir://pair.jpg")
                 .confidence(new BigDecimal("0.900"))
                 .build();
@@ -109,6 +112,7 @@ class PersonRelationGraphServiceTest {
                 .build();
         when(mentionRepository.findByEntityId(igor.getId())).thenReturn(List.of(suggested));
         when(mentionRepository.findByEntityId(anna.getId())).thenReturn(List.of());
+        when(mentionEvidencePolicy.isCertain(suggested)).thenReturn(false);
 
         Fact technical = Fact.builder()
                 .id(UUID.randomUUID())
@@ -122,12 +126,7 @@ class PersonRelationGraphServiceTest {
 
         PersonGraphDto graph = service.buildPersonRelationGraph();
 
-        assertEquals(2, graph.nodes().size());
+        assertEquals(0, graph.nodes().size());
         assertTrue(graph.edges().isEmpty());
-        assertEquals(0, graph.nodes().stream()
-                .filter(n -> n.id().equals(igor.getId()))
-                .findFirst()
-                .orElseThrow()
-                .photoCount());
     }
 }

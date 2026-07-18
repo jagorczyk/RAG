@@ -22,12 +22,20 @@ export interface EntityMention {
   filePath: string;
   label: string;
   confidence: number;
+  identityConfidence?: number | null;
+  identityMargin?: number | null;
+  identitySource?: "USER" | "USER_TAG" | "FACE_MATCH" | "DESCRIPTION_MATCH" | "FACE_CLUSTER" | null;
   status: string;
   visualCues: string;
   entity?: KnowledgeEntity;
   entityId?: string | null;
   entityDisplayName?: string | null;
   bbox?: number[] | null;
+  bboxSource?: "FACE" | "VISION" | null;
+}
+
+export function hasFaceBbox(mention: EntityMention): boolean {
+  return mention.bboxSource === "FACE" && !!mention.bbox && mention.bbox.length >= 4;
 }
 
 export interface EntityPhoto {
@@ -51,6 +59,7 @@ export interface EntityAppearance {
   status: string;
   confidence: number;
   bbox?: number[] | null;
+  bboxSource?: "FACE" | "VISION" | null;
 }
 
 export interface PersonGraphNode {
@@ -72,15 +81,33 @@ export interface PersonRelationGraph {
   edges: PersonGraphEdge[];
 }
 
+export class IdentityConflictError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly existingMentionId?: string
+  ) {
+    super("Ta osoba jest już przypisana do innej twarzy na tym obrazie.");
+  }
+}
+
+async function ensureIdentityResponse(res: Response, fallback: string): Promise<void> {
+  if (res.status === 409) {
+    const conflict = await res.json().catch(() => ({}));
+    throw new IdentityConflictError(conflict.code ?? "ENTITY_ALREADY_ON_FILE", conflict.existingMentionId);
+  }
+  if (!res.ok) throw new Error(fallback);
+}
+
 export async function getPendingSuggestions(): Promise<IdentitySuggestion[]> {
   const res = await fetch(`${API_URL}/api/knowledge/review/pending`);
   if (!res.ok) throw new Error("Failed to fetch pending suggestions");
   return res.json();
 }
 
-export async function confirmMention(mentionId: string, entityId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/knowledge/mentions/${mentionId}/confirm?entityId=${entityId}`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to confirm mention");
+export async function confirmMention(mentionId: string, entityId: string, allowDuplicateOnFile = false): Promise<void> {
+  const params = new URLSearchParams({ entityId, allowDuplicateOnFile: String(allowDuplicateOnFile) });
+  const res = await fetch(`${API_URL}/api/knowledge/mentions/${mentionId}/confirm?${params.toString()}`, { method: "POST" });
+  await ensureIdentityResponse(res, "Failed to confirm mention");
 }
 
 export async function rejectMention(mentionId: string): Promise<void> {
@@ -88,9 +115,10 @@ export async function rejectMention(mentionId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to reject mention");
 }
 
-export async function mergeSuggestion(suggestionId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/knowledge/suggestions/${suggestionId}/merge`, { method: "POST" });
-  if (!res.ok) throw new Error("Failed to merge suggestion");
+export async function mergeSuggestion(suggestionId: string, allowDuplicateOnFile = false): Promise<void> {
+  const params = new URLSearchParams({ allowDuplicateOnFile: String(allowDuplicateOnFile) });
+  const res = await fetch(`${API_URL}/api/knowledge/suggestions/${suggestionId}/merge?${params.toString()}`, { method: "POST" });
+  await ensureIdentityResponse(res, "Failed to merge suggestion");
 }
 
 export async function splitSuggestion(suggestionId: string): Promise<void> {
@@ -158,8 +186,8 @@ export async function renameEntity(entityId: string, newName: string): Promise<v
   if (!res.ok) throw new Error("Failed to rename entity");
 }
 
-export async function renameMention(mentionId: string, newName: string): Promise<void> {
-  const params = new URLSearchParams({ newName });
+export async function renameMention(mentionId: string, newName: string, allowDuplicateOnFile = false): Promise<void> {
+  const params = new URLSearchParams({ newName, allowDuplicateOnFile: String(allowDuplicateOnFile) });
   const res = await fetch(`${API_URL}/api/knowledge/mentions/${mentionId}/rename?${params.toString()}`, { method: "PUT" });
-  if (!res.ok) throw new Error("Failed to rename mention");
+  await ensureIdentityResponse(res, "Failed to rename mention");
 }

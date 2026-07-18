@@ -70,7 +70,8 @@ public class IdentityResolutionService {
             return;
         }
         if (fileEntityTag != null && !fileEntityTag.isBlank()) {
-            linkMention(mention, findOrCreateEntityByName(fileEntityTag, type), MentionStatus.CONFIRMED);
+            linkMention(mention, findOrCreateEntityByName(fileEntityTag, type), MentionStatus.CONFIRMED,
+                    IdentityEvidenceSource.USER_TAG, 1.0, null);
             return;
         }
 
@@ -84,7 +85,8 @@ public class IdentityResolutionService {
         if (!isGenericLabel(label)) {
             Optional<KnowledgeEntity> exactMatch = findEntityByNameOrAlias(label, type);
             if (exactMatch.isPresent()) {
-                linkMention(mention, exactMatch.get(), MentionStatus.CONFIRMED);
+                linkMention(mention, exactMatch.get(), MentionStatus.CONFIRMED,
+                        IdentityEvidenceSource.DESCRIPTION_MATCH, 1.0, null);
                 return;
             }
         }
@@ -146,7 +148,8 @@ public class IdentityResolutionService {
         }
 
         if (bestConfirmCandidate != null && bestConfirmCandidate.getEntity() != null) {
-            linkMention(mention, bestConfirmCandidate.getEntity(), MentionStatus.CONFIRMED);
+            linkMention(mention, bestConfirmCandidate.getEntity(), MentionStatus.CONFIRMED,
+                    IdentityEvidenceSource.DESCRIPTION_MATCH, bestConfirmScore, null);
             return;
         }
         if (bestSuggestionCandidate != null) {
@@ -157,14 +160,18 @@ public class IdentityResolutionService {
                 ? findEntityByNameOrAlias(label, type)
                 : Optional.empty();
         if (existing.isPresent()) {
-            linkMention(mention, existing.get(), MentionStatus.CONFIRMED);
+            linkMention(mention, existing.get(), MentionStatus.CONFIRMED,
+                    IdentityEvidenceSource.DESCRIPTION_MATCH, 1.0, null);
             return;
         }
 
         KnowledgeEntity entity = looksLikePersonName(label)
                 ? findOrCreateEntityByName(label, type)
                 : createSuggestedEntity(label, type);
-        linkMention(mention, entity, looksLikePersonName(label) ? MentionStatus.CONFIRMED : MentionStatus.SUGGESTED);
+        boolean named = looksLikePersonName(label);
+        linkMention(mention, entity, named ? MentionStatus.CONFIRMED : MentionStatus.SUGGESTED,
+                named ? IdentityEvidenceSource.DESCRIPTION_MATCH : null,
+                named ? 1.0 : null, null);
     }
 
     @Transactional
@@ -281,13 +288,23 @@ public class IdentityResolutionService {
                 .map(EntityAlias::getEntity);
     }
 
-    private void linkMention(EntityMention mention, KnowledgeEntity entity, MentionStatus status) {
+    private void linkMention(EntityMention mention, KnowledgeEntity entity, MentionStatus status,
+                             IdentityEvidenceSource source, Double identityConfidence, Double identityMargin) {
         mention.setEntity(entity);
         mention.setStatus(status);
+        mention.setIdentitySource(source);
+        mention.setIdentityConfidence(decimal(identityConfidence));
+        mention.setIdentityMargin(decimal(identityMargin));
         mentionRepository.save(mention);
         if (mention.getId() != null) {
             faceEmbeddingRepository.relinkByMentionId(mention.getId(), entity);
         }
+    }
+
+    @Transactional
+    public void confirmUserAssignment(EntityMention mention, KnowledgeEntity entity) {
+        linkMention(mention, entity, MentionStatus.CONFIRMED,
+                IdentityEvidenceSource.USER, 1.0, null);
     }
 
     @Transactional
@@ -316,12 +333,25 @@ public class IdentityResolutionService {
     }
 
     @Transactional
-    public void confirmFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, String visionLabel) {
+    public void confirmFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, String visionLabel,
+                                 double identityConfidence, double identityMargin) {
         if (mention == null || matchedEntity == null) {
             return;
         }
-        linkMention(mention, matchedEntity, MentionStatus.CONFIRMED);
+        linkMention(mention, matchedEntity, MentionStatus.CONFIRMED,
+                IdentityEvidenceSource.FACE_MATCH, identityConfidence, identityMargin);
         addAliasIfMissing(matchedEntity, visionLabel);
+    }
+
+    public void confirmFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, String visionLabel) {
+        confirmFaceMatch(mention, matchedEntity, visionLabel, 1.0, 1.0);
+    }
+
+    private BigDecimal decimal(Double value) {
+        if (value == null || !Double.isFinite(value)) {
+            return null;
+        }
+        return BigDecimal.valueOf(Math.max(0.0, Math.min(1.0, value))).setScale(3, java.math.RoundingMode.HALF_UP);
     }
 
     public void suggestFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, double score) {

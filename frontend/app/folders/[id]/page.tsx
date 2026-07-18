@@ -182,7 +182,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
       }
     } catch (error) {
       console.error("Upload failed", error);
-      alert("Wystąpił błąd podczas wgrywania pliku.");
+      alert(error instanceof Error ? error.message : "Wystąpił błąd podczas wgrywania pliku.");
     } finally {
       setIsUploading(false);
       setTimeout(() => setIngestionProgress(null), 600);

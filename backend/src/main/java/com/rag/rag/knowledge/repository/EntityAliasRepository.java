@@ -14,4 +14,6 @@ public interface EntityAliasRepository extends JpaRepository<EntityAlias, UUID> 
     Optional<EntityAlias> findFirstByAliasIgnoreCase(String alias);
 
     Optional<EntityAlias> findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCase(String alias, String type);
+
+    void deleteByEntityId(UUID entityId);
 }

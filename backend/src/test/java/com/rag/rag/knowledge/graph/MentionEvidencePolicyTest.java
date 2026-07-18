@@ -1,0 +1,61 @@
+package com.rag.rag.knowledge.graph;
+
+import com.rag.rag.knowledge.entity.EntityMention;
+import com.rag.rag.knowledge.entity.IdentityEvidenceSource;
+import com.rag.rag.knowledge.entity.KnowledgeEntity;
+import com.rag.rag.knowledge.entity.MentionStatus;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.math.BigDecimal;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class MentionEvidencePolicyTest {
+    private MentionEvidencePolicy policy;
+    private KnowledgeEntity person;
+
+    @BeforeEach
+    void setUp() {
+        policy = new MentionEvidencePolicy();
+        ReflectionTestUtils.setField(policy, "minMentionConfidence", 0.75);
+        ReflectionTestUtils.setField(policy, "faceMatchThreshold", 0.50);
+        ReflectionTestUtils.setField(policy, "faceMatchMinMargin", 0.08);
+        ReflectionTestUtils.setField(policy, "faceMinDetectionScore", 0.50);
+        ReflectionTestUtils.setField(policy, "descriptionAutoConfirmThreshold", 0.85);
+        person = KnowledgeEntity.builder().displayName("Bartek").type("PERSON").build();
+    }
+
+    @Test
+    void manualConfirmationOverridesLowDetectorScoreWithoutChangingIt() {
+        EntityMention mention = mention("0.736", IdentityEvidenceSource.USER, "1.000", null);
+        assertTrue(policy.isCertain(mention));
+        assertEquals(new BigDecimal("0.736"), mention.getConfidence());
+        assertEquals(BigDecimal.ONE, policy.evidenceConfidence(mention));
+    }
+
+    @Test
+    void legacyLowConfidenceAndFaceClusterRemainUncertain() {
+        assertFalse(policy.isCertain(mention("0.736", null, null, null)));
+        assertFalse(policy.isCertain(mention("0.900", IdentityEvidenceSource.FACE_CLUSTER, "0.700", null)));
+    }
+
+    @Test
+    void acceptedFaceMatchRequiresDetectionIdentityAndMarginThresholds() {
+        assertTrue(policy.isCertain(mention("0.736", IdentityEvidenceSource.FACE_MATCH, "0.620", "0.100")));
+        assertFalse(policy.isCertain(mention("0.736", IdentityEvidenceSource.FACE_MATCH, "0.620", "0.040")));
+    }
+
+    private EntityMention mention(String observation, IdentityEvidenceSource source,
+                                  String identity, String margin) {
+        return EntityMention.builder()
+                .entity(person)
+                .status(MentionStatus.CONFIRMED)
+                .confidence(new BigDecimal(observation))
+                .identitySource(source)
+                .identityConfidence(identity == null ? null : new BigDecimal(identity))
+                .identityMargin(margin == null ? null : new BigDecimal(margin))
+                .build();
+    }
+}

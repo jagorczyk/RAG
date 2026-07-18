@@ -3,6 +3,7 @@ package com.rag.rag.chat.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.rag.knowledge.graph.GraphQueryService;
+import com.rag.rag.knowledge.graph.EntityMatchMode;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -52,8 +53,10 @@ public class QueryPlanner {
                     {"entities":["canonical name"],"fileScope":["previously supplied exact path"],
                     "retrievalQuery":"standalone semantic query resolved from the conversation",
                     "condition":"full semantic constraint", "visualCondition":false,
-                    "ambiguous":false,"retrievalMode":"HYBRID",
+                    "ambiguous":false,"retrievalMode":"HYBRID","entityMatchMode":"ANY",
                     "answerInstruction":"one short Polish sentence only; never retell appearance or list files"}
+                    Use entityMatchMode ALL_SAME_FILE only when all selected entities must occur in the same file;
+                    otherwise use ANY. This is a technical set operation, not a phrase classification.
                     User request: %s
                     """.formatted(knownEntities, conversationContext == null ? "" : conversationContext, safeQuestion));
             return fromJson(safeQuestion, knownEntities, response, fallback);
@@ -73,10 +76,11 @@ public class QueryPlanner {
             List<String> entities = graphQueryService.validateEntityNames(readStrings(root.path("entities")));
             List<String> fileScope = graphQueryService.validateFilePaths(readStrings(root.path("fileScope")));
             QueryPlan.RetrievalMode mode = parseMode(root.path("retrievalMode").asText(""), fallback.retrievalMode());
+            EntityMatchMode entityMatchMode = parseEntityMatchMode(root.path("entityMatchMode").asText(""));
             String condition = text(root, "condition", question);
             return new QueryPlan(question, entities, fileScope, text(root, "retrievalQuery", question), condition,
                     root.path("visualCondition").asBoolean(false), root.path("ambiguous").asBoolean(false),
-                    mode, text(root, "answerInstruction", fallback.answerInstruction()));
+                    mode, entityMatchMode, text(root, "answerInstruction", fallback.answerInstruction()));
         } catch (Exception e) {
             log.warn("Dynamic query plan was not valid JSON; using hybrid fallback: {}", e.getMessage());
             return fallback;
@@ -98,6 +102,14 @@ public class QueryPlanner {
             return QueryPlan.RetrievalMode.valueOf(value.toUpperCase(Locale.ROOT));
         } catch (Exception ignored) {
             return fallback;
+        }
+    }
+
+    private EntityMatchMode parseEntityMatchMode(String value) {
+        try {
+            return EntityMatchMode.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (Exception ignored) {
+            return EntityMatchMode.ANY;
         }
     }
 

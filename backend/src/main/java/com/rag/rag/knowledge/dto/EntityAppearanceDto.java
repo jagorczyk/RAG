@@ -10,5 +10,6 @@ public record EntityAppearanceDto(
         String fileName,
         String status,
         BigDecimal confidence,
-        List<Float> bbox
+        List<Float> bbox,
+        String bboxSource
 ) {}

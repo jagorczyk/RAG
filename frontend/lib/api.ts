@@ -272,7 +272,14 @@ export function uploadFileToFolderWithProgress(
         }
         return;
       }
-      reject(new Error("Failed to upload file"));
+      let message = "Nie udało się wgrać pliku.";
+      try {
+        const response = JSON.parse(xhr.responseText) as { message?: string; detail?: string };
+        message = response.message ?? response.detail ?? message;
+      } catch {
+        // Keep the fallback for non-JSON responses and connection proxies.
+      }
+      reject(new Error(message));
     });
 
     xhr.addEventListener("error", () => {

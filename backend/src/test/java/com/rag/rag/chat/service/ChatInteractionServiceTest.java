@@ -7,6 +7,7 @@ import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
 import com.rag.rag.knowledge.graph.GraphQueryService;
+import com.rag.rag.knowledge.graph.GraphEvidenceResult;
 import com.rag.rag.knowledge.query.DynamicVisualMatcher;
 import com.rag.rag.knowledge.query.VisualMatchDecision;
 import com.rag.rag.knowledge.query.VisualQueryMatch;
@@ -46,6 +47,8 @@ class ChatInteractionServiceTest {
         chatId = UUID.randomUUID();
         lenient().when(chatMemoryRepository.findById(chatId)).thenReturn(Optional.empty());
         lenient().when(graphQueryService.buildContextForEntities(any())).thenReturn("");
+        lenient().when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("", List.of()));
     }
 
     @Test
@@ -54,9 +57,8 @@ class ChatInteractionServiceTest {
                 "Czy Igor jest w garniturze?", false, false, QueryPlan.RetrievalMode.HYBRID,
                 "Odpowiedz z dowodów.");
         when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
-        when(graphQueryService.buildContextForEntities(List.of("Igor"))).thenReturn("[Fakty]\n- Igor: garnitur");
-        when(graphQueryService.imagePathsForEntities(List.of("Igor"))).thenReturn(List.of("dir://a.jpg"));
-        when(graphQueryService.hasCertainEvidenceForFile(eq("dir://a.jpg"), any())).thenReturn(true);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("[Fakty]\n- Igor: garnitur", List.of("dir://a.jpg")));
         Result<String> result = Result.<String>builder().content("Tak, Igor jest w garniturze.").build();
         when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
         SourceDto source = new SourceDto("dir://a.jpg", "a.jpg", 0.9, null, "IMAGE");
@@ -79,10 +81,8 @@ class ChatInteractionServiceTest {
                 "Co robi Igor?", "", false, false, QueryPlan.RetrievalMode.GRAPH,
                 "Odpowiedz z grafu.");
         when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
-        when(graphQueryService.buildContextForEntities(List.of("Igor"))).thenReturn("");
-        when(graphQueryService.buildFullContextForFile("dir://maybe.jpg")).thenReturn("");
-        when(graphQueryService.hasCertainEvidenceForFile(eq("dir://maybe.jpg"), any())).thenReturn(false);
-        when(graphQueryService.imagePathsForEntities(List.of("Igor"))).thenReturn(List.of());
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("", List.of()));
         Result<String> result = Result.<String>builder().content("Nie znaleziono informacji w dokumentach.").build();
         when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
 

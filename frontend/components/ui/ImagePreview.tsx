@@ -7,9 +7,12 @@ import {
   getMentionsForFile,
   detectFacesForFile,
   EntityMention,
+  hasFaceBbox,
+  IdentityConflictError,
   renameMention,
 } from "@/lib/knowledge-api";
 import { FaceAnnotatedImage } from "@/components/ui/FaceAnnotatedImage";
+import { getFaceColor } from "@/lib/face-colors";
 import { FadeModal } from "@/components/ui/FadeModal";
 import { motion, useReducedMotion } from "motion/react";
 
@@ -32,9 +35,8 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
     if (!preview.path) return;
     try {
       let data = await getMentionsForFile(preview.path);
-      const needsFaceDetection =
-        data.some((mention) => !mention.bbox || mention.bbox.length < 4);
-      if (data.length > 0 && needsFaceDetection) {
+      const needsFaceDetection = !data.some(hasFaceBbox);
+      if (needsFaceDetection) {
         try {
           data = await detectFacesForFile(preview.path);
         } catch (detectError) {
@@ -54,17 +56,20 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
     }
   }, [preview.path, loadMentions]);
 
+  const displayedMentions = useMemo(
+    () => mentions.filter(hasFaceBbox),
+    [mentions]
+  );
+
   const annotatedFaces = useMemo(
     () =>
-      mentions
-        .map((mention, index) => ({ mention, index }))
-        .filter(({ mention }) => mention.bbox && mention.bbox.length >= 4)
-        .map(({ mention, index }) => ({
+      displayedMentions.map((mention, index) => ({
           id: mention.id,
           bbox: mention.bbox as number[],
           colorIndex: index,
+          label: String(index + 1),
         })),
-    [mentions]
+    [displayedMentions]
   );
 
   const startEdit = (mention: EntityMention) => {
@@ -79,6 +84,17 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
       setEditingId(null);
       void loadMentions();
     } catch (e) {
+      if (e instanceof IdentityConflictError) {
+        const confirmed = window.confirm(
+          "Ta osoba jest już przypisana do innej twarzy na tym zdjęciu. Czy to celowy wyjątek, np. odbicie lub kolaż?"
+        );
+        if (confirmed) {
+          await renameMention(editingId, editValue, true);
+          setEditingId(null);
+          void loadMentions();
+          return;
+        }
+      }
       console.error(e);
     }
   };
@@ -126,11 +142,13 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
           )}
         </motion.div>
 
-        {mentions.length > 0 && (
+        {displayedMentions.length > 0 && (
           <aside className="max-h-[40vh] w-full shrink-0 overflow-y-auto border-t border-border bg-surface p-4 md:max-h-none md:w-80 md:border-l md:border-t-0">
             <h4 className="mb-3 text-sm font-extrabold text-ink">Osoby na zdjęciu</h4>
             <div className="list-panel">
-              {mentions.map((mention, index) => (
+              {displayedMentions.map((mention, index) => {
+                const color = getFaceColor(index);
+                return (
                 <div key={mention.id} className="list-row !min-h-[3.8rem]">
                   {editingId === mention.id ? (
                     <div className="flex w-full items-center gap-2">
@@ -158,6 +176,13 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
                     </div>
                   ) : (
                     <>
+                      <span
+                        className="flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md text-xs font-extrabold"
+                        style={{ backgroundColor: color.border, color: color.text }}
+                        aria-hidden="true"
+                      >
+                        {index + 1}
+                      </span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-bold text-ink">
                           {mentionDisplayName(mention) || `Osoba ${index + 1}`}
@@ -177,7 +202,8 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
                     </>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </aside>
         )}

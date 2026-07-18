@@ -188,11 +188,12 @@ public class IngestionService {
 
     public Document processImage(byte[] imageData, String path, String fileName) {
         try {
-            String format = fileName.toLowerCase().endsWith(".png") ? "png" : "jpg";
-            String mimeType = "png".equals(format) ? "image/png" : "image/jpeg";
+            ImagePayloadDecoder.DecodedImage decodedImage = ImagePayloadDecoder.decode(imageData, fileName);
+            String format = decodedImage.format();
+            String mimeType = decodedImage.mimeType();
 
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-            Thumbnails.of(new ByteArrayInputStream(imageData))
+            Thumbnails.of(decodedImage.image())
                     .size(MAX_WIDTH, MAX_HEIGHT)
                     .outputFormat(format)
                     .toOutputStream(outputStream);
@@ -393,6 +394,7 @@ public class IngestionService {
                             if (subject != null) {
                                 factRepo.save(Fact.builder()
                                         .mention(subject)
+                                        .targetMention(object)
                                         .action(factAction)
                                         .object(objectLabel)
                                         .filePath(path)
@@ -441,6 +443,8 @@ public class IngestionService {
                 runFaceAnalysis(sha256Hex(processedBytes), processedBytes, path, fileName, personMentions);
                 return Document.from(result.rawText() != null ? result.rawText() : "Brak opisu obrazu.");
             }
+        } catch (InvalidImageException e) {
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Error while processing image: " + path, e);
         }
@@ -472,6 +476,32 @@ public class IngestionService {
         document.metadata().put("document_id", slash > 0 ? folder.substring("dir://".length(), slash) : "");
         jdbcTemplate.update("DELETE FROM embeddings WHERE metadata->>'path' = ?", file.getPath());
         ingestor.ingest(document);
+    }
+
+    @Transactional
+    public void reanalyzeExistingFaces(FileEntity file) {
+        if (file == null || file.getPath() == null) {
+            return;
+        }
+        FileEntity lockedFile = fileRepository.findByPathForUpdate(file.getPath()).orElse(null);
+        if (lockedFile == null || lockedFile.getImageData() == null || lockedFile.getImageData().length == 0) {
+            return;
+        }
+        List<EntityMention> personMentions = mentionRepo.findByFilePath(lockedFile.getPath()).stream()
+                .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
+                .filter(mention -> LivingEntityTypes.PERSON.equals(
+                        LivingEntityTypes.normalize(mention.getEntityType())))
+                .toList();
+        boolean completed = runFaceAnalysis(
+                sha256Hex(lockedFile.getImageData()),
+                lockedFile.getImageData(),
+                lockedFile.getPath(),
+                lockedFile.getFileName(),
+                personMentions
+        );
+        if (!completed) {
+            throw new IllegalStateException("Face analysis failed for " + lockedFile.getPath());
+        }
     }
 
     private String writeJson(Object value) {
@@ -551,8 +581,8 @@ public class IngestionService {
         }
     }
 
-    private void runFaceAnalysis(String contentHash, byte[] imageData, String path,
-                                 String fileName, List<EntityMention> personMentions) {
+    private boolean runFaceAnalysis(String contentHash, byte[] imageData, String path,
+                                    String fileName, List<EntityMention> personMentions) {
         try {
             String payload = imageAnalysisCacheService.getOrCompute(contentHash, ImageAnalysisAnalyzer.FACE,
                     faceAnalyzerVersion, () -> {
@@ -570,9 +600,11 @@ public class IngestionService {
                     .toList();
             faceIdentityService.processDetectedFaces(faces, path, fileName, personMentions);
             setAnalysisStatus(path, ImageAnalysisAnalyzer.FACE, ImageAnalysisStatus.COMPLETED);
+            return true;
         } catch (Exception e) {
             setAnalysisStatus(path, ImageAnalysisAnalyzer.FACE, ImageAnalysisStatus.FAILED);
-            log.warn("Face analysis failed for {}: {}", path, e.getMessage());
+            log.warn("Face analysis failed for {}", path, e);
+            return false;
         }
     }
 
