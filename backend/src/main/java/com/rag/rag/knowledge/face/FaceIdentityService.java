@@ -144,12 +144,10 @@ public class FaceIdentityService {
 
         faces = suppressOverlappingFaces(faces == null ? List.of() : faces);
 
-        // Prefer mentions from the just-committed vision pass (passed in by the caller).
-        // Face work runs in REQUIRES_NEW after ingest commit, so these rows are durable.
-        List<EntityMention> personOnlyMentions = (personMentions == null ? List.<EntityMention>of() : personMentions).stream()
-                .filter(this::isPersonMention)
-                .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
-                .toList();
+        // Always re-load mentions in THIS persistence context. Callers often pass entities
+        // from a suspended outer transaction (REQUIRES_NEW), which causes
+        // LazyInitializationException on mention.entity / proxy access.
+        List<EntityMention> personOnlyMentions = loadPersonMentionsInCurrentSession(filePath, personMentions);
         List<FaceAssignment> assignments = assignMentionsToFaces(faces, personOnlyMentions, existingFaceLinks);
         Set<UUID> matchedMentionIds = new HashSet<>();
         Set<UUID> usedEntityIds = personOnlyMentions.stream()
@@ -330,8 +328,22 @@ public class FaceIdentityService {
                         BigDecimal.valueOf(minDetScore),
                         vectorSearchTopK
                 );
+                // Native query does not JOIN FETCH associations — force-load while session is open.
+                for (FaceEmbedding embedding : storedEmbeddings) {
+                    if (embedding.getEntity() != null) {
+                        embedding.getEntity().getId();
+                        embedding.getEntity().getDisplayName();
+                    }
+                    if (embedding.getMention() != null) {
+                        embedding.getMention().getStatus();
+                        if (embedding.getMention().getEntity() != null) {
+                            embedding.getMention().getEntity().getId();
+                        }
+                    }
+                }
             } catch (Exception e) {
                 log.warn("Vector top-K face search failed, using fallback: {}", e.getMessage());
+                storedEmbeddings = List.of();
             }
         }
         if (storedEmbeddings.isEmpty()) {
@@ -424,20 +436,62 @@ public class FaceIdentityService {
         return batchClusterThreshold;
     }
 
+    private List<EntityMention> loadPersonMentionsInCurrentSession(
+            String filePath,
+            List<EntityMention> preferred
+    ) {
+        List<EntityMention> fromDb = mentionRepository.findByFilePath(filePath).stream()
+                .filter(this::isPersonMention)
+                .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
+                .toList();
+        if (!fromDb.isEmpty()) {
+            return fromDb;
+        }
+        if (preferred == null || preferred.isEmpty()) {
+            return List.of();
+        }
+        // Fallback: re-fetch by id so we never use detached proxies from another session.
+        List<UUID> ids = preferred.stream()
+                .map(EntityMention::getId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return mentionRepository.findAllById(ids).stream()
+                .filter(this::isPersonMention)
+                .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
+                .toList();
+    }
+
     private List<ExistingFaceLink> loadExistingFaceLinks(String filePath) {
         List<ExistingFaceLink> links = new ArrayList<>();
         for (FaceEmbedding embedding : faceEmbeddingRepository.findByFilePath(filePath)) {
-            if (embedding.getMention() != null && embedding.getBbox() != null && embedding.getBbox().length >= 4) {
-                links.add(new ExistingFaceLink(embedding.getMention(), normalizeBboxLength(embedding.getBbox())));
+            EntityMention mention = reattachMention(embedding.getMention());
+            if (mention != null && embedding.getBbox() != null && embedding.getBbox().length >= 4) {
+                links.add(new ExistingFaceLink(mention, normalizeBboxLength(embedding.getBbox())));
             }
         }
         for (FaceObservation observation : faceObservationRepository.findByFilePath(filePath)) {
-            if (observation.getMention() != null && observation.getBbox() != null
+            EntityMention mention = reattachMention(observation.getMention());
+            if (mention != null && observation.getBbox() != null
                     && observation.getBbox().length >= 4 && "PENDING".equals(observation.getStatus())) {
-                links.add(new ExistingFaceLink(observation.getMention(), normalizeBboxLength(observation.getBbox())));
+                links.add(new ExistingFaceLink(mention, normalizeBboxLength(observation.getBbox())));
             }
         }
         return links;
+    }
+
+    private EntityMention reattachMention(EntityMention mention) {
+        if (mention == null) {
+            return null;
+        }
+        UUID id = mention.getId();
+        if (id == null) {
+            return mention;
+        }
+        return mentionRepository.findById(id).orElse(null);
     }
 
     private void removeEvidenceFreeOrphans(String filePath, Set<UUID> currentFaceMentionIds) {

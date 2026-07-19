@@ -462,6 +462,7 @@ public class KnowledgeApiController {
     }
 
     @GetMapping("/mentions/by-file")
+    @Transactional(readOnly = true)
     public ResponseEntity<List<EntityMentionViewDto>> getMentionsForFile(@RequestParam String path) {
         List<EntityMentionViewDto> mentions = mentionRepository.findByFilePath(path).stream()
                 .filter(this::isReviewableMention)

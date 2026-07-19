@@ -338,9 +338,16 @@ public class IdentityResolutionService {
         if (mention == null || matchedEntity == null) {
             return;
         }
-        linkMention(mention, matchedEntity, MentionStatus.CONFIRMED,
+        // Re-attach when callers pass a mention from another persistence context.
+        EntityMention managedMention = mention.getId() == null
+                ? mention
+                : mentionRepository.findById(mention.getId()).orElse(mention);
+        KnowledgeEntity managedEntity = matchedEntity.getId() == null
+                ? matchedEntity
+                : entityRepository.findById(matchedEntity.getId()).orElse(matchedEntity);
+        linkMention(managedMention, managedEntity, MentionStatus.CONFIRMED,
                 IdentityEvidenceSource.FACE_MATCH, identityConfidence, identityMargin);
-        addAliasIfMissing(matchedEntity, visionLabel);
+        addAliasIfMissing(managedEntity, visionLabel);
     }
 
     public void confirmFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, String visionLabel) {

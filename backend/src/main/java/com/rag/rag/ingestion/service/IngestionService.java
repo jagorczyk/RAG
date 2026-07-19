@@ -491,38 +491,34 @@ public class IngestionService {
     }
 
     /**
-     * Runs face detection/matching in a separate transaction after vision ingest committed.
-     * Failures are recorded on the file row and never roll back the parent upload.
+     * Runs face detection/matching after vision ingest committed.
+     * Image bytes are loaded in a short TX; face matching uses its own REQUIRES_NEW
+     * session and reloads mentions there — never pass live JPA proxies across TX boundaries.
      */
     boolean completeFaceAnalysisForPath(String path) {
         if (path == null || path.isBlank()) {
             return false;
         }
+        record StoredImage(String path, String fileName, byte[] imageData) {}
+        StoredImage image = transactionTemplate.execute(status -> {
+            FileEntity lockedFile = fileRepository.findByPathForUpdate(path).orElse(null);
+            if (lockedFile == null || lockedFile.getImageData() == null || lockedFile.getImageData().length == 0) {
+                return null;
+            }
+            return new StoredImage(lockedFile.getPath(), lockedFile.getFileName(), lockedFile.getImageData());
+        });
+        if (image == null) {
+            return false;
+        }
         try {
-            return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
-                FileEntity lockedFile = fileRepository.findByPathForUpdate(path).orElse(null);
-                if (lockedFile == null || lockedFile.getImageData() == null || lockedFile.getImageData().length == 0) {
-                    return false;
-                }
-                List<EntityMention> personMentions = mentionRepo.findByFilePath(lockedFile.getPath()).stream()
-                        .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
-                        .filter(mention -> LivingEntityTypes.PERSON.equals(
-                                LivingEntityTypes.normalize(mention.getEntityType())))
-                        .toList();
-                // Touch lazy entity associations while the session is open.
-                for (EntityMention mention : personMentions) {
-                    if (mention.getEntity() != null) {
-                        mention.getEntity().getId();
-                    }
-                }
-                return runFaceAnalysis(
-                        sha256Hex(lockedFile.getImageData()),
-                        lockedFile.getImageData(),
-                        lockedFile.getPath(),
-                        lockedFile.getFileName(),
-                        personMentions
-                );
-            }));
+            // personMentions=null → FaceIdentityService reloads in its own session
+            return runFaceAnalysis(
+                    sha256Hex(image.imageData()),
+                    image.imageData(),
+                    image.path(),
+                    image.fileName(),
+                    null
+            );
         } catch (Exception e) {
             log.warn("Face analysis failed for {}", path, e);
             setAnalysisStatus(path, ImageAnalysisAnalyzer.FACE, ImageAnalysisStatus.FAILED);
