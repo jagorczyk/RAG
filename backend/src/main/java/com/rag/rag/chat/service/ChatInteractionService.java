@@ -8,6 +8,7 @@ import com.rag.rag.chat.repository.ChatMemoryRepository;
 import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
+import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphQueryService;
 import com.rag.rag.knowledge.graph.GraphEvidenceResult;
 import com.rag.rag.knowledge.query.DynamicVisualMatcher;
@@ -75,6 +76,13 @@ public class ChatInteractionService {
     private MessageResponse processTextOrGraphPlan(UUID chatId, QueryPlan plan) {
         GraphEvidenceResult graphEvidence = graphQueryService.buildEvidence(
                 plan.entities(), plan.fileScope(), plan.entityMatchMode());
+        // Co-presence is a set operation on planner output: when ALL_SAME_FILE has no
+        // intersection evidence, never let the LLM or hybrid retrieval affirm a joint photo.
+        if (requiresJointFileEvidence(plan) && !graphEvidence.hasEvidence()) {
+            String denial = "Nie znaleziono potwierdzonego wspólnego zdjęcia tych osób.";
+            saveAiMessage(chatId, denial, List.of(), List.of(), plan.retrievalMode().name(), true);
+            return new MessageResponse(denial, List.of(), true, List.of(), plan.retrievalMode().name());
+        }
         String graphContext = graphEvidence.context();
         String prompt = graphContext.isBlank() ? plan.question() : """
                 [Kontekst zweryfikowany]
@@ -95,13 +103,18 @@ public class ChatInteractionService {
         String cleaned = removeTechnicalReferences(answer, sources);
         boolean uncertain = plan.ambiguous() || (sources.isEmpty() && !graphContext.isBlank());
         if (plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH && !graphEvidence.hasEvidence()) {
-            cleaned = plan.entityMatchMode() == com.rag.rag.knowledge.graph.EntityMatchMode.ALL_SAME_FILE
-                    ? "Nie znaleziono potwierdzonego wspólnego zdjęcia tych osób."
-                    : "Nie znaleziono pewnych informacji w grafie wiedzy.";
+            cleaned = "Nie znaleziono pewnych informacji w grafie wiedzy.";
             uncertain = true;
         }
         saveAiMessage(chatId, cleaned, sources, List.of(), plan.retrievalMode().name(), uncertain);
         return new MessageResponse(cleaned, sources, uncertain, List.of(), plan.retrievalMode().name());
+    }
+
+    /** True when the planner requires every named entity on the same file. */
+    private static boolean requiresJointFileEvidence(QueryPlan plan) {
+        return plan.entityMatchMode() == EntityMatchMode.ALL_SAME_FILE
+                && plan.entities() != null
+                && !plan.entities().isEmpty();
     }
 
     private MessageResponse processVisualPlan(UUID chatId, QueryPlan plan) {
@@ -138,6 +151,15 @@ public class ChatInteractionService {
                                          GraphEvidenceResult graphEvidence) {
         Map<String, SourceDto> unique = new LinkedHashMap<>();
         QueryPlan.RetrievalMode mode = plan.retrievalMode();
+
+        // ALL_SAME_FILE: only joint-intersection files may appear as sources.
+        // Hybrid/vector hits that cover only a subset of entities must not be re-injected.
+        if (requiresJointFileEvidence(plan)) {
+            for (String path : graphEvidence.certainPaths()) {
+                addSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0));
+            }
+            return List.copyOf(unique.values());
+        }
 
         if (mode != QueryPlan.RetrievalMode.GRAPH && result != null) {
             for (SourceDto source : ingestionService.getSources(result)) {

@@ -6,6 +6,7 @@ import com.rag.rag.chat.repository.ChatMemoryRepository;
 import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
+import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphQueryService;
 import com.rag.rag.knowledge.graph.GraphEvidenceResult;
 import com.rag.rag.knowledge.query.DynamicVisualMatcher;
@@ -28,6 +29,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 @ExtendWith(MockitoExtension.class)
 class ChatInteractionServiceTest {
@@ -127,5 +130,74 @@ class ChatInteractionServiceTest {
 
         assertTrue(response.sources().isEmpty());
         assertFalse(response.response().contains(retrieved.fileName()));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = QueryPlan.RetrievalMode.class, names = {"GRAPH", "HYBRID", "DOCUMENT"})
+    void emptyAllSameFileIntersectionDeniesForEveryRetrievalMode(QueryPlan.RetrievalMode mode) {
+        QueryPlan plan = coPresencePlan("Czy jest zdjęcie na którym jest Igor i Anna?",
+                List.of("Igor", "Anna"), mode);
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(eq(List.of("Igor", "Anna")), anyList(), eq(EntityMatchMode.ALL_SAME_FILE)))
+                .thenReturn(new GraphEvidenceResult("", List.of()));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals("Nie znaleziono potwierdzonego wspólnego zdjęcia tych osób.", response.response());
+        assertTrue(response.sources().isEmpty());
+        assertTrue(response.uncertain());
+        assertEquals(mode.name(), response.answerKind());
+        // LLM must not be invited to invent a joint photo from partial RAG hits.
+        verify(chatAiService, never()).answer(any(), anyString());
+        verify(ingestionService, never()).getSources(any());
+        verify(ingestionService, never()).createGraphFactSourceDto(anyString(), any(), anyDouble());
+    }
+
+    @Test
+    void hybridAllSameFileDoesNotReinjectPartialRetrievalSources() {
+        QueryPlan plan = coPresencePlan("Czy jest wspólne zdjęcie Igora i Anny?",
+                List.of("Igor", "Anna"), QueryPlan.RetrievalMode.HYBRID);
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        // Graph has no joint file; a hallucinating LLM path would still surface only-X from RAG.
+        when(graphQueryService.buildEvidence(eq(List.of("Igor", "Anna")), anyList(), eq(EntityMatchMode.ALL_SAME_FILE)))
+                .thenReturn(new GraphEvidenceResult("", List.of()));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertTrue(response.sources().stream().noneMatch(s -> "dir://only-igor.jpg".equals(s.path())));
+        assertTrue(response.sources().isEmpty());
+        assertTrue(response.uncertain());
+        assertFalse(response.response().toLowerCase().startsWith("tak"));
+    }
+
+    @Test
+    void nonEmptyAllSameFileIntersectionAllowsJointSourceAndAnswer() {
+        QueryPlan plan = coPresencePlan("Czy jest zdjęcie z Igorem i Anną?",
+                List.of("Igor", "Anna"), QueryPlan.RetrievalMode.HYBRID);
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(eq(List.of("Igor", "Anna")), anyList(), eq(EntityMatchMode.ALL_SAME_FILE)))
+                .thenReturn(new GraphEvidenceResult(
+                        "- współwystępowanie=Igor, Anna; file=dir://shared.jpg",
+                        List.of("dir://shared.jpg")));
+        Result<String> result = Result.<String>builder().content("Tak, jest wspólne zdjęcie.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq("dir://shared.jpg"), any(), anyDouble()))
+                .thenReturn(new SourceDto("dir://shared.jpg", "shared.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals("Tak, jest wspólne zdjęcie.", response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals("dir://shared.jpg", response.sources().get(0).path());
+        assertFalse(response.uncertain());
+        // Hybrid RAG sources are never consulted under ALL_SAME_FILE — only joint graph paths.
+        verify(ingestionService, never()).getSources(any());
+    }
+
+    private static QueryPlan coPresencePlan(String question, List<String> entities,
+                                            QueryPlan.RetrievalMode mode) {
+        return new QueryPlan(question, entities, List.of(), question, question, false, false,
+                mode, EntityMatchMode.ALL_SAME_FILE,
+                "Jedno krótkie zdanie po polsku; nie wymyślaj wspólnego zdjęcia bez dowodu.");
     }
 }

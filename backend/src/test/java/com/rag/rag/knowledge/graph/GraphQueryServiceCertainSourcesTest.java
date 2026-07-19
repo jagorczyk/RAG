@@ -124,6 +124,60 @@ class GraphQueryServiceCertainSourcesTest {
                 service.imagePathsForAllEntities(List.of("Igor", "Anna")));
     }
 
+    @Test
+    void buildEvidenceAllSameFileEmptyWhenNoJointPhoto() {
+        KnowledgeEntity anna = KnowledgeEntity.builder().id(UUID.randomUUID())
+                .displayName("Anna").type("PERSON").build();
+        when(entityRepository.findAll()).thenReturn(List.of(entity, anna));
+        when(entityRepository.findFirstByDisplayNameIgnoreCase("Igor")).thenReturn(Optional.of(entity));
+        when(entityRepository.findFirstByDisplayNameIgnoreCase("Anna")).thenReturn(Optional.of(anna));
+
+        EntityMention igorOnly = confirmed(entity, "dir://only-igor.jpg");
+        EntityMention annaOnly = confirmed(anna, "dir://only-anna.jpg");
+        when(mentionRepository.findByEntityId(entityId)).thenReturn(List.of(igorOnly));
+        when(mentionRepository.findByEntityId(anna.getId())).thenReturn(List.of(annaOnly));
+        when(mentionEvidencePolicy.isCertain(any(EntityMention.class))).thenReturn(true);
+        when(fileRepository.findByPath(anyString())).thenAnswer(invocation -> Optional.of(
+                com.rag.rag.folder.entity.FileEntity.builder()
+                        .path(invocation.getArgument(0)).fileType("image/jpeg").build()));
+
+        GraphEvidenceResult evidence = service.buildEvidence(
+                List.of("Igor", "Anna"), List.of(), EntityMatchMode.ALL_SAME_FILE);
+
+        assertFalse(evidence.hasEvidence());
+        assertTrue(evidence.certainPaths().isEmpty());
+        assertTrue(evidence.context().isBlank());
+    }
+
+    @Test
+    void buildEvidenceAllSameFileReturnsOnlyJointPaths() {
+        KnowledgeEntity anna = KnowledgeEntity.builder().id(UUID.randomUUID())
+                .displayName("Anna").type("PERSON").build();
+        when(entityRepository.findAll()).thenReturn(List.of(entity, anna));
+        when(entityRepository.findFirstByDisplayNameIgnoreCase("Igor")).thenReturn(Optional.of(entity));
+        when(entityRepository.findFirstByDisplayNameIgnoreCase("Anna")).thenReturn(Optional.of(anna));
+
+        EntityMention igorShared = confirmed(entity, "dir://shared.jpg");
+        EntityMention igorOnly = confirmed(entity, "dir://only-igor.jpg");
+        EntityMention annaShared = confirmed(anna, "dir://shared.jpg");
+        when(mentionRepository.findByEntityId(entityId)).thenReturn(List.of(igorShared, igorOnly));
+        when(mentionRepository.findByEntityId(anna.getId())).thenReturn(List.of(annaShared));
+        when(mentionEvidencePolicy.isCertain(any(EntityMention.class))).thenReturn(true);
+        when(fileRepository.findByPath(anyString())).thenAnswer(invocation -> Optional.of(
+                com.rag.rag.folder.entity.FileEntity.builder()
+                        .path(invocation.getArgument(0)).fileType("image/jpeg").build()));
+        when(mentionRepository.findByFilePath("dir://shared.jpg")).thenReturn(List.of(igorShared, annaShared));
+        when(factRepository.findByFilePath("dir://shared.jpg")).thenReturn(List.of());
+
+        GraphEvidenceResult evidence = service.buildEvidence(
+                List.of("Igor", "Anna"), List.of(), EntityMatchMode.ALL_SAME_FILE);
+
+        assertTrue(evidence.hasEvidence());
+        assertEquals(List.of("dir://shared.jpg"), evidence.certainPaths());
+        assertFalse(evidence.certainPaths().contains("dir://only-igor.jpg"));
+        assertTrue(evidence.context().contains("współwystępowanie"));
+    }
+
     private EntityMention confirmed(KnowledgeEntity owner, String path) {
         return EntityMention.builder().id(UUID.randomUUID()).entity(owner).filePath(path)
                 .label(owner.getDisplayName()).confidence(new BigDecimal("0.900"))

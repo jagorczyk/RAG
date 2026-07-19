@@ -55,8 +55,10 @@ public class QueryPlanner {
                     "condition":"full semantic constraint", "visualCondition":false,
                     "ambiguous":false,"retrievalMode":"HYBRID","entityMatchMode":"ANY",
                     "answerInstruction":"one short Polish sentence only; never retell appearance or list files"}
-                    Use entityMatchMode ALL_SAME_FILE only when all selected entities must occur in the same file;
+                    Use entityMatchMode ALL_SAME_FILE when the answer depends on co-presence of all selected
+                    entities in one file (e.g. whether there is a photo with every named person together);
                     otherwise use ANY. This is a technical set operation, not a phrase classification.
+                    When ALL_SAME_FILE is chosen, prefer retrievalMode GRAPH or HYBRID so joint evidence is checked.
                     User request: %s
                     """.formatted(knownEntities, conversationContext == null ? "" : conversationContext, safeQuestion));
             return fromJson(safeQuestion, knownEntities, response, fallback);

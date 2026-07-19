@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.rag.chat.service.QueryPlan;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
+import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphQueryService;
 import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.TextContent;
@@ -20,9 +21,11 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /** Evaluates only dynamically planned visual conditions against ranked image evidence. */
 @Slf4j
@@ -80,12 +83,27 @@ public class DynamicVisualMatcher {
 
     private List<Candidate> findCandidates(QueryPlan plan) {
         Map<String, Candidate> candidates = new LinkedHashMap<>();
-        for (String path : plan.fileScope()) add(candidates, path, BigDecimal.ONE, BigDecimal.ONE);
-        for (String path : graphQueryService.imagePathsForEntities(plan.entities())) {
+        boolean requireJointFile = plan.entityMatchMode() == EntityMatchMode.ALL_SAME_FILE
+                && plan.entities() != null && !plan.entities().isEmpty();
+        // Intersection (not union) when co-presence of all named entities is required.
+        List<String> entityPaths = requireJointFile
+                ? graphQueryService.imagePathsForAllEntities(plan.entities())
+                : graphQueryService.imagePathsForEntities(plan.entities());
+        Set<String> jointAllowed = requireJointFile
+                ? new LinkedHashSet<>(entityPaths)
+                : null;
+
+        for (String path : plan.fileScope()) {
+            if (jointAllowed != null && !jointAllowed.contains(path)) continue;
+            add(candidates, path, BigDecimal.ONE, BigDecimal.ONE);
+        }
+        for (String path : entityPaths) {
             add(candidates, path, BigDecimal.ZERO, graphQueryService.entityConfidenceForFile(plan.entities(), path));
         }
-        candidateRetriever.recall(plan.retrievalQuery()).forEach((path, score) ->
-                add(candidates, path, score, graphQueryService.entityConfidenceForFile(plan.entities(), path)));
+        candidateRetriever.recall(plan.retrievalQuery()).forEach((path, score) -> {
+            if (jointAllowed != null && !jointAllowed.contains(path)) return;
+            add(candidates, path, score, graphQueryService.entityConfidenceForFile(plan.entities(), path));
+        });
         return candidates.values().stream().filter(candidate -> isImage(candidate.file()))
                 .sorted(Comparator.comparing(Candidate::rank).reversed()
                         .thenComparing(candidate -> candidate.file().getPath()))
