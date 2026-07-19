@@ -69,6 +69,8 @@ spacing:
   page-x: "0.9rem"
   page-x-md: "1.25rem"
   root-scale: "75%"
+  touch-min: "2.5rem"
+  touch-min-mobile: "44px"
 components:
   button-primary:
     backgroundColor: "{colors.accent}"
@@ -232,8 +234,21 @@ Hybrid: flat surfaces by default, light structural shadows for floating chrome (
 
 ### Navigation
 - **Sidebar nav-item:** muted → active accent-muted bg + bold ink.
-- **Mobile tab bar:** floating pill, float shadow, layoutId glow under active tab; hidden on deep chat/folder/entity routes.
+- **Mobile tab bar:** floating pill, float shadow, layoutId glow under active tab (static fill when `prefers-reduced-motion`); **≤5 destinations** (currently 3: Biblioteka / Osoby / Rozmowy); **hidden on deep** chat/folder/entity routes so page-specific chrome takes over.
 - **PageHeader:** shared title/subtitle/back/action; prefer over ad-hoc headers.
+
+### Mobile (phone, ≤767px)
+Adopted from mobile product craft (Kole Jain checklist) and `/impeccable adapt` — without abandoning Quiet Archive density on desktop.
+
+| Rule | Ship behavior |
+|---|---|
+| **Fat-finger targets** | `--touch-min: 44px` on mobile (`--touch-min-mobile`). Tabs, icon buttons, list rows, primary buttons, search, inputs ≥44 CSS px. Desktop keeps denser `2.5rem` (~30px at 12px root). |
+| **Scale** | Body type slightly larger on phone (`1.25rem` ≈15px); do **not** re-scale the whole rem system to “mobile app size.” |
+| **One-axis content** | Each list/home section: vertical stack *or* horizontal rail (`.mobile-h-rail`), not desktop 2D densification. |
+| **No nested cards** | One surface per block (`list-panel` + rows). No card-in-card padding-on-padding on primary mobile lists. |
+| **One screen, one job** | Secondary pickers (folder options, sort, tools, rename chat, sources) use `BottomSheet` / overlay — not a forced full route when a sheet fits. |
+| **Empty states** | `EmptyState` leads with one primary CTA (`btn-primary`), not a decorative multi-card void grid. |
+| **Contextual chrome** | Tab bar hidden on deep detail; page actions own the header. |
 
 ### Signature: Chat & Sources
 - User bubble: ink fill, asymmetric radius (20px / 5px tail).
@@ -253,6 +268,7 @@ Hybrid: flat surfaces by default, light structural shadows for floating chrome (
 - **Do** share one component vocabulary (`btn-primary`, `list-panel`, `EmptyState`, `PageHeader`, `BottomSheet`) on every screen.
 - **Do** honor `prefers-reduced-motion` (already global) and keep motion 100–220ms ease-out.
 - **Do** lead empty states with a clear next action (Dodaj folder, Nowa rozmowa, example prompts).
+- **Do** keep mobile primary controls ≥44 CSS px and hide the floating tab bar on deep routes.
 
 ### Don't:
 - **Don't** build colorful SaaS dashboards with hero metrics, gradient accents, or identical icon+title card grids.
@@ -260,3 +276,5 @@ Hybrid: flat surfaces by default, light structural shadows for floating chrome (
 - **Don't** style uncertain/SUGGESTED evidence as if it were confirmed.
 - **Don't** put `@plik`, paths, or file names into assistant answer prose.
 - **Don't** invent display fonts, fluid hero type, or page-load entrance choreography for product screens.
+- **Don't** nest bordered cards inside bordered cards on mobile list/home surfaces.
+- **Don't** ship ~30px-class-only primary tap targets on phone (fat-finger rule).

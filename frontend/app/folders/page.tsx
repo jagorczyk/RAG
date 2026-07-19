@@ -317,7 +317,7 @@ export default function FoldersPage() {
                 <div className="list-row group">
                   <Link
                     href={`/folders/${folder.id}`}
-                    className="flex min-w-0 flex-1 items-center gap-3"
+                    className="flex min-h-[var(--touch-min)] min-w-0 flex-1 items-center gap-3"
                   >
                     <span className="list-row-icon">
                       <FolderOpen size={18} />
@@ -360,23 +360,28 @@ export default function FoldersPage() {
           Ostatnie rozmowy
         </SectionTitle>
         {visibleChats.length === 0 ? (
-          <div className="list-panel px-4 py-5">
-            <p className="text-sm text-ink-muted">
-              {needle
+          <EmptyState
+            icon="💬"
+            title={needle ? "Brak rozmów" : "Brak ostatnich rozmów"}
+            description={
+              needle
                 ? "Brak rozmów pasujących do wyszukiwania."
-                : "Nie masz jeszcze rozmów. Zacznij od pytania o bibliotekę."}
-            </p>
-            {!needle && (
-              <button
-                type="button"
-                className="btn-secondary mt-3 !min-h-10"
-                onClick={handleNewChat}
-                disabled={creatingChat}
-              >
-                <Plus size={16} /> Nowa rozmowa
-              </button>
-            )}
-          </div>
+                : "Nie masz jeszcze rozmów. Zacznij od pytania o bibliotekę."
+            }
+            action={
+              !needle ? (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleNewChat}
+                  disabled={creatingChat}
+                >
+                  <Plus size={16} /> Nowa rozmowa
+                </button>
+              ) : undefined
+            }
+            className="!py-6"
+          />
         ) : (
           <div className="list-panel">
             {visibleChats.map((chat, index) => (

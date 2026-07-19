@@ -39,6 +39,7 @@ function groupChats(chats: Chat[]) {
 }
 
 export function Sidebar() {
+  // Desktop starts open; phone starts closed so the floating tab bar owns primary nav.
   const [isOpen, setIsOpen] = useState(true);
   const [chats, setChats] = useState<Chat[]>([]);
   const [isCreating, setIsCreating] = useState(false);
@@ -65,6 +66,25 @@ export function Sidebar() {
   useEffect(() => {
     fetchChats();
   }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const closeOnPhone = () => {
+      if (mq.matches) setIsOpen(false);
+    };
+    // First paint on phone: drawer closed (tab bar is primary chrome).
+    closeOnPhone();
+    mq.addEventListener("change", closeOnPhone);
+    return () => mq.removeEventListener("change", closeOnPhone);
+  }, []);
+
+  // After navigation on phone, dismiss the drawer so content is full-width.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setIsOpen(false);
+    }
+  }, [pathname]);
 
   useEffect(() => {
     if (editingChatId && editInputRef.current) {
@@ -129,6 +149,14 @@ export function Sidebar() {
 
   return (
     <>
+      {isOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-[calc(var(--z-sticky)-1)] bg-scrim md:hidden"
+          aria-label="Zamknij panel boczny"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
       <aside
         className={`absolute inset-y-0 left-0 z-[var(--z-sticky)] flex h-full shrink-0 flex-col border-r border-border bg-sidebar transition-transform duration-200 md:relative md:transition-none ${
           isOpen ? "w-56 translate-x-0" : "w-12 -translate-x-full md:translate-x-0"
@@ -312,7 +340,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="fixed left-3 top-3 z-40 rounded-full border border-border bg-surface-raised p-2 shadow-sm md:hidden"
+          className="icon-button fixed left-3 top-3 z-40 border border-border md:hidden"
           aria-label="Otwórz panel rozmów"
         >
           <PanelLeftOpen size={18} />

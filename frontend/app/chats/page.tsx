@@ -7,7 +7,7 @@ import { createChat, getChats, renameChat, type Chat } from "@/lib/api";
 import { SearchField } from "@/components/ui/SearchField";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Loading } from "@/components/ui/Loading";
-import { FadeModal } from "@/components/ui/FadeModal";
+import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Button } from "@/components/ui/Button";
 import { AnimatedItem } from "@/components/ui/AnimatedList";
 import { IconButton } from "@/components/ui/IconButton";
@@ -222,24 +222,23 @@ export default function ChatsPage() {
           ))}
       </div>
 
-      <FadeModal
+      <BottomSheet
         open={!!renameTarget}
         onClose={() => !renaming && setRenameTarget(null)}
-        variant="card"
         title="Zmień nazwę rozmowy"
+        description="Nowa nazwa widoczna na liście rozmów."
       >
-        <h2 className="text-lg font-extrabold text-ink">Zmień nazwę rozmowy</h2>
         <input
           autoFocus
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           placeholder="Nazwa rozmowy"
-          className="input-field mt-3.5"
+          className="input-field"
           onKeyDown={(e) => {
             if (e.key === "Enter" && newName.trim()) handleRename();
           }}
         />
-        <div className="mt-4 flex gap-2">
+        <div className="mt-3.5 flex gap-2">
           <Button
             label="Anuluj"
             secondary
@@ -252,7 +251,7 @@ export default function ChatsPage() {
             onClick={handleRename}
           />
         </div>
-      </FadeModal>
+      </BottomSheet>
     </div>
   );
 }

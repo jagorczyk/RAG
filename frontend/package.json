@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:mobile-ui": "node scripts/assert-mobile-ui.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.7.0",

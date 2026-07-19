@@ -38,6 +38,7 @@ function FaceSnippet({ mention }: { mention: SuggestionMention }) {
 /**
  * Panel „czy to ta sama osoba?” — renderuje się tylko gdy są sugestie do potwierdzenia
  * (albo błąd wczytania). Przy pustej liście UI znika całkowicie.
+ * Single surface (list-panel + rows) — no card-in-card nesting on mobile.
  */
 export function IdentityReviewPanel() {
   const [suggestions, setSuggestions] = useState<IdentitySuggestion[]>([]);
@@ -93,25 +94,23 @@ export function IdentityReviewPanel() {
 
   if (error) {
     return (
-      <div className="panel p-4 sm:p-5">
-        <EmptyState
-          icon="☁️"
-          title="Nie udało się wczytać sugestii tożsamości"
-          description="Sprawdź połączenie z serwerem i spróbuj ponownie."
-          action={
-            <button type="button" className="btn-primary" onClick={() => void loadSuggestions()}>
-              Spróbuj ponownie
-            </button>
-          }
-          className="!py-8"
-        />
-      </div>
+      <EmptyState
+        icon="☁️"
+        title="Nie udało się wczytać sugestii tożsamości"
+        description="Sprawdź połączenie z serwerem i spróbuj ponownie."
+        action={
+          <button type="button" className="btn-primary" onClick={() => void loadSuggestions()}>
+            Spróbuj ponownie
+          </button>
+        }
+        className="!py-8"
+      />
     );
   }
 
   return (
-    <div className="panel p-4 sm:p-5">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+    <section>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 className="text-base font-extrabold tracking-tight text-ink">
             Oczekujące potwierdzenia
@@ -132,13 +131,13 @@ export function IdentityReviewPanel() {
         </span>
       </div>
 
-      <div className="space-y-4">
+      <div className="list-panel">
         {suggestions.map((s) => {
           const busy = busyId === s.id;
           return (
             <div
               key={s.id}
-              className="flex flex-col gap-4 rounded-[12px] border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-col gap-3 border-b border-border p-3.5 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:p-4"
             >
               <div className="min-w-0 flex-1 space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -150,9 +149,10 @@ export function IdentityReviewPanel() {
                 <p className="text-sm font-medium text-ink">
                   Czy {s.mentionA.label} i {s.mentionB.label} to ta sama osoba?
                 </p>
-                <div className="flex flex-wrap items-center gap-4">
+                {/* One-axis rail for face pair comparison on narrow screens */}
+                <div className="mobile-h-rail md:flex md:flex-wrap md:items-center md:gap-4 md:overflow-visible">
                   <FaceSnippet mention={s.mentionA} />
-                  <div className="flex flex-col items-center px-2">
+                  <div className="flex shrink-0 flex-col items-center px-2">
                     <span className="text-[10px] font-bold uppercase tracking-wide text-ink-muted">
                       Podobieństwo
                     </span>
@@ -168,23 +168,23 @@ export function IdentityReviewPanel() {
                   type="button"
                   onClick={() => void handleMerge(s.id)}
                   disabled={busy}
-                  className="btn-primary h-auto px-3 py-1.5 text-xs"
+                  className="btn-primary min-h-[var(--touch-min)] flex-1 px-3 text-sm sm:flex-none"
                 >
-                  <Check size={14} className="mr-1" aria-hidden /> Tak — ta sama
+                  <Check size={16} className="mr-1" aria-hidden /> Tak — ta sama
                 </button>
                 <button
                   type="button"
                   onClick={() => void handleSplit(s.id)}
                   disabled={busy}
-                  className="btn-secondary h-auto px-3 py-1.5 text-xs text-error"
+                  className="btn-secondary min-h-[var(--touch-min)] flex-1 px-3 text-sm text-error sm:flex-none"
                 >
-                  <X size={14} className="mr-1" aria-hidden /> Nie — rozdziel
+                  <X size={16} className="mr-1" aria-hidden /> Nie — rozdziel
                 </button>
               </div>
             </div>
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }

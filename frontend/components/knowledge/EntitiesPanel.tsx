@@ -102,7 +102,7 @@ export function EntitiesPanel() {
             !search ? (
               <button
                 type="button"
-                className="btn-secondary"
+                className="btn-primary"
                 onClick={() => router.push("/folders")}
               >
                 Przejdź do biblioteki

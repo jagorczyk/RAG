@@ -42,7 +42,10 @@
   --radius-lg: 12px;
   --radius-xl: 14px;
   --radius-pill: 16px;
-  --touch-min: 2.5rem; /* ≥24px AA; ~30px at 12px root */
+  /* Desktop density: 2.5rem × 12px root ≈ 30px (above WCAG 24px AA). */
+  --touch-min: 2.5rem;
+  /* Mobile fat-finger / HIG floor — absolute CSS px (root rem scale does not shrink this). */
+  --touch-min-mobile: 44px;
   --tab-bar-height: 4rem;
   --z-dropdown: 20;
   --z-sticky: 30;
@@ -636,7 +639,7 @@
 
   @media (pointer: coarse) {
     .list-row {
-      min-height: 3rem;
+      min-height: max(3rem, var(--touch-min));
     }
   }
 
@@ -922,6 +925,92 @@
     font-weight: 700;
     color: var(--ink-muted);
     transition: color var(--duration) var(--ease-out);
+  }
+
+  /*
+   * Mobile adaptation (Kole Jain checklist / /impeccable adapt):
+   * fat-finger ≥44px, non-squished type, one primary scroll axis, floating tab chrome.
+   * Desktop keeps dense rem scale; only narrow viewports elevate touch + type.
+   */
+  @media (max-width: 767px) {
+    :root {
+      --touch-min: var(--touch-min-mobile);
+      /* Floating bar (~52px) + bottom inset + safe-area clearance for main padding */
+      --tab-bar-height: calc(var(--touch-min-mobile) + 1.75rem);
+    }
+
+    body {
+      /* 1.25rem × 12px root ≈ 15px — readable on phone without re-scaling all rem chrome */
+      font-size: 1.25rem;
+    }
+
+    .page-title {
+      font-size: 1.625rem;
+    }
+
+    .page-body {
+      /* Single vertical rhythm; avoid 2D densification on phone */
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+
+    .list-row {
+      min-height: var(--touch-min);
+      padding-top: 0.55rem;
+      padding-bottom: 0.55rem;
+    }
+
+    .input-field {
+      min-height: var(--touch-min);
+    }
+
+    .search-field {
+      min-height: var(--touch-min);
+    }
+
+    .view-mode-toggle button {
+      min-height: var(--touch-min);
+      min-width: var(--touch-min);
+    }
+
+    .mobile-tab-bar {
+      height: auto;
+      min-height: calc(var(--touch-min-mobile) + 0.5rem);
+      padding: 0.35rem 0.4rem;
+    }
+
+    .mobile-tab {
+      min-height: var(--touch-min-mobile);
+      min-width: var(--touch-min-mobile);
+      font-size: 0.6875rem;
+      gap: 0.15rem;
+      padding: 0.3rem 0.35rem;
+    }
+
+    .btn,
+    .btn-primary,
+    .btn-secondary {
+      min-height: var(--touch-min);
+    }
+
+    .icon-button,
+    .send-button,
+    .touch-target {
+      min-height: var(--touch-min);
+      min-width: var(--touch-min);
+    }
+
+    /* Horizontal rails only: entity face pairs scroll on one axis */
+    .mobile-h-rail {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 1rem;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
+      padding-bottom: 0.25rem;
+    }
   }
 
   .mobile-tab:focus-visible {
