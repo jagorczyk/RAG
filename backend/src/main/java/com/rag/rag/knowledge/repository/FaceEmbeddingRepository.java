@@ -32,14 +32,16 @@ public interface FaceEmbeddingRepository extends JpaRepository<FaceEmbedding, UU
     @Query("DELETE FROM FaceEmbedding fe WHERE fe.mention.id IN :mentionIds")
     void deleteByMentionIdIn(@Param("mentionIds") List<UUID> mentionIds);
 
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    // clearAutomatically=false: clearing mid-request broke merge/confirm identity flows
+    // with LazyInitializationException on still-used EntityMention proxies.
+    @Modifying(flushAutomatically = true)
     @Query("UPDATE FaceEmbedding fe SET fe.entity = :target WHERE fe.mention.id = :mentionId")
     int relinkByMentionId(
             @Param("mentionId") UUID mentionId,
             @Param("target") com.rag.rag.knowledge.entity.KnowledgeEntity target
     );
 
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query("UPDATE FaceEmbedding fe SET fe.entity = :target WHERE fe.entity.id = :sourceId")
     int relinkEntity(@Param("sourceId") UUID sourceId, @Param("target") com.rag.rag.knowledge.entity.KnowledgeEntity target);
 

@@ -299,14 +299,16 @@ public class FaceIdentityService {
 
     @Transactional
     public void promoteObservation(EntityMention mention, KnowledgeEntity entity) {
-        if (mention == null || entity == null) {
+        if (mention == null || entity == null || mention.getId() == null) {
             return;
         }
-        faceObservationRepository.findFirstByMentionIdAndStatus(mention.getId(), "PENDING")
+        EntityMention managedMention = mentionRepository.findById(mention.getId()).orElse(mention);
+        KnowledgeEntity managedEntity = entity;
+        faceObservationRepository.findFirstByMentionIdAndStatus(managedMention.getId(), "PENDING")
                 .ifPresent(observation -> {
                     faceEmbeddingRepository.save(FaceEmbedding.builder()
-                            .entity(entity)
-                            .mention(mention)
+                            .entity(managedEntity)
+                            .mention(managedMention)
                             .filePath(observation.getFilePath())
                             .embedding(observation.getEmbedding())
                             .embeddingVector(toVectorLiteral(normalizeEmbedding(observation.getEmbedding())))

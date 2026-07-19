@@ -82,18 +82,30 @@ public class KnowledgeApiController {
     @GetMapping("/review/pending")
     @Transactional
     public ResponseEntity<List<IdentitySuggestionViewDto>> getPendingSuggestions() {
-        List<IdentitySuggestion> pending = suggestionRepository.findAll().stream()
-                .filter(s -> s.getStatus() == SuggestionStatus.PENDING)
+        List<IdentitySuggestion> pending = suggestionRepository
+                .findAllByStatusWithMentions(SuggestionStatus.PENDING).stream()
                 .filter(s -> isPersonMention(s.getMentionA()) && isPersonMention(s.getMentionB()))
                 .toList();
 
-        Set<String> ensuredFiles = new HashSet<>();
+        // Snapshot paths first so REQUIRES_NEW face work cannot touch live suggestion proxies.
+        Set<String> filePaths = new LinkedHashSet<>();
         for (IdentitySuggestion suggestion : pending) {
-            ensureFaceEmbeddingsForFile(suggestion.getMentionA().getFilePath(), ensuredFiles);
-            ensureFaceEmbeddingsForFile(suggestion.getMentionB().getFilePath(), ensuredFiles);
+            if (suggestion.getMentionA() != null && suggestion.getMentionA().getFilePath() != null) {
+                filePaths.add(suggestion.getMentionA().getFilePath());
+            }
+            if (suggestion.getMentionB() != null && suggestion.getMentionB().getFilePath() != null) {
+                filePaths.add(suggestion.getMentionB().getFilePath());
+            }
+        }
+        Set<String> ensuredFiles = new HashSet<>();
+        for (String filePath : filePaths) {
+            ensureFaceEmbeddingsForFile(filePath, ensuredFiles);
         }
 
-        List<IdentitySuggestionViewDto> result = pending.stream()
+        // Rebuild DTOs from freshly loaded graph after nested face transactions.
+        List<IdentitySuggestionViewDto> result = suggestionRepository
+                .findAllByStatusWithMentions(SuggestionStatus.PENDING).stream()
+                .filter(s -> isPersonMention(s.getMentionA()) && isPersonMention(s.getMentionB()))
                 .map(this::toSuggestionViewDto)
                 .toList();
         return ResponseEntity.ok(result);
@@ -112,8 +124,8 @@ public class KnowledgeApiController {
             if (file.getImageData() == null || file.getImageData().length == 0) {
                 return;
             }
-            List<EntityMention> mentions = personMentionsForFile(filePath);
-            faceIdentityService.processImageFaces(file.getImageData(), filePath, file.getFileName(), mentions);
+            // Do not pass session-bound mentions into REQUIRES_NEW face processing.
+            faceIdentityService.processImageFaces(file.getImageData(), filePath, file.getFileName(), null);
         });
     }
 
@@ -128,16 +140,24 @@ public class KnowledgeApiController {
     }
 
     private SuggestionMentionViewDto toSuggestionMentionViewDto(EntityMention mention) {
-        String fileName = fileRepository.findByPath(mention.getFilePath())
+        if (mention == null) {
+            return null;
+        }
+        UUID mentionId = mention.getId();
+        String filePath = mention.getFilePath();
+        String label = mention.getLabel();
+        String fileName = fileRepository.findByPath(filePath)
                 .map(FileEntity::getFileName)
-                .orElse(mention.getFilePath());
+                .orElse(filePath);
 
-        String faceCropBase64 = faceCropService.cropFaceBase64ForMention(mention.getId()).orElse(null);
+        String faceCropBase64 = mentionId == null
+                ? null
+                : faceCropService.cropFaceBase64ForMention(mentionId).orElse(null);
 
         return new SuggestionMentionViewDto(
-                mention.getId(),
-                mention.getLabel(),
-                mention.getFilePath(),
+                mentionId,
+                label,
+                filePath,
                 fileName,
                 faceCropBase64
         );
@@ -147,10 +167,12 @@ public class KnowledgeApiController {
     @Transactional
     public ResponseEntity<Void> confirmMention(@PathVariable UUID id, @RequestParam UUID entityId,
                                                 @RequestParam(defaultValue = "false") boolean allowDuplicateOnFile) {
-        EntityMention mention = mentionRepository.findById(id).orElseThrow();
-        KnowledgeEntity entity = entityRepository.findById(entityId).orElseThrow();
+        EntityMention mention = mentionRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mention not found"));
+        KnowledgeEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found"));
         ensureNoDuplicateOnFile(mention, entity, allowDuplicateOnFile);
-        relinkMention(mention, entity);
+        relinkMention(mention.getId(), entity.getId());
         return ResponseEntity.ok().build();
     }
 
@@ -167,23 +189,37 @@ public class KnowledgeApiController {
     @Transactional
     public ResponseEntity<Void> mergeSuggestion(@PathVariable UUID id,
                                                  @RequestParam(defaultValue = "false") boolean allowDuplicateOnFile) {
-        IdentitySuggestion suggestion = suggestionRepository.findById(id).orElseThrow();
+        IdentitySuggestion suggestion = suggestionRepository.findByIdWithMentions(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Suggestion not found"));
         suggestion.setStatus(SuggestionStatus.MERGED);
         suggestionRepository.save(suggestion);
 
         EntityMention mA = suggestion.getMentionA();
         EntityMention mB = suggestion.getMentionB();
-
-        // If neither has entity, create one
-        KnowledgeEntity entity = mA.getEntity() != null ? mA.getEntity() : mB.getEntity();
-        if (entity == null) {
-            entity = identityResolutionService.findOrCreateEntityByName(mA.getLabel(), "PERSON");
+        if (mA == null || mB == null || mA.getId() == null || mB.getId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Suggestion is missing mentions");
         }
 
-        ensureNoDuplicateOnFile(mA, entity, allowDuplicateOnFile);
-        relinkMention(mA, entity);
-        ensureNoDuplicateOnFile(mB, entity, allowDuplicateOnFile);
-        relinkMention(mB, entity);
+        UUID mentionAId = mA.getId();
+        UUID mentionBId = mB.getId();
+        String labelForEntity = mA.getLabel() != null ? mA.getLabel() : mB.getLabel();
+
+        KnowledgeEntity entity = mA.getEntity() != null ? mA.getEntity() : mB.getEntity();
+        if (entity == null) {
+            entity = identityResolutionService.findOrCreateEntityByName(labelForEntity, "PERSON");
+        }
+        UUID entityId = entity.getId();
+
+        // Work only with re-fetched managed entities so nested face/relink updates cannot
+        // leave stale proxies after flush.
+        EntityMention managedA = mentionRepository.findById(mentionAId).orElseThrow();
+        ensureNoDuplicateOnFile(managedA, entity, allowDuplicateOnFile);
+        relinkMention(mentionAId, entityId);
+
+        EntityMention managedB = mentionRepository.findById(mentionBId).orElseThrow();
+        KnowledgeEntity managedEntity = entityRepository.findById(entityId).orElseThrow();
+        ensureNoDuplicateOnFile(managedB, managedEntity, allowDuplicateOnFile);
+        relinkMention(mentionBId, entityId);
 
         return ResponseEntity.ok().build();
     }
@@ -411,26 +447,42 @@ public class KnowledgeApiController {
         KnowledgeEntity entity = identityResolutionService.findOrCreateEntityByName(newName, "PERSON");
         ensureNoDuplicateOnFile(mention, entity, allowDuplicateOnFile);
         mention.setLabel(newName.trim());
-        relinkMention(mention, entity);
+        mentionRepository.save(mention);
+        relinkMention(id, entity.getId());
         return ResponseEntity.ok().build();
     }
 
-    private void relinkMention(EntityMention mention, KnowledgeEntity entity) {
-        identityResolutionService.confirmUserAssignment(mention, entity);
-        if (mention.getId() != null) {
-            faceEmbeddingRepository.relinkByMentionId(mention.getId(), entity);
-            faceIdentityService.promoteObservation(mention, entity);
+    /**
+     * Identity link by ids only — never keep live proxies across bulk UPDATE / face promotion.
+     */
+    private void relinkMention(UUID mentionId, UUID entityId) {
+        if (mentionId == null || entityId == null) {
+            return;
         }
+        EntityMention mention = mentionRepository.findById(mentionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mention not found"));
+        KnowledgeEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found"));
+        identityResolutionService.confirmUserAssignment(mention, entity);
+        faceEmbeddingRepository.relinkByMentionId(mentionId, entity);
+        // Re-load after bulk UPDATE so promoteObservation never sees a cleared/detached proxy.
+        EntityMention managedMention = mentionRepository.findById(mentionId).orElse(mention);
+        KnowledgeEntity managedEntity = entityRepository.findById(entityId).orElse(entity);
+        faceIdentityService.promoteObservation(managedMention, managedEntity);
     }
 
     private void ensureNoDuplicateOnFile(EntityMention mention, KnowledgeEntity entity, boolean allowDuplicateOnFile) {
-        if (allowDuplicateOnFile || mention == null || entity == null || mention.getFilePath() == null) {
+        if (allowDuplicateOnFile || mention == null || entity == null || mention.getFilePath() == null
+                || mention.getId() == null || entity.getId() == null) {
             return;
         }
-        mentionRepository.findByFilePath(mention.getFilePath()).stream()
-                .filter(other -> other.getId() != null && !other.getId().equals(mention.getId()))
+        UUID mentionId = mention.getId();
+        UUID entityId = entity.getId();
+        String filePath = mention.getFilePath();
+        mentionRepository.findByFilePath(filePath).stream()
+                .filter(other -> other.getId() != null && !other.getId().equals(mentionId))
                 .filter(other -> other.getStatus() != MentionStatus.REJECTED)
-                .filter(other -> other.getEntity() != null && entity.getId().equals(other.getEntity().getId()))
+                .filter(other -> other.getEntity() != null && entityId.equals(other.getEntity().getId()))
                 .findFirst()
                 .ifPresent(other -> {
                     throw new IdentityAssignmentConflictException(other.getId());

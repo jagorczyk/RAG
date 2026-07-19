@@ -303,7 +303,16 @@ public class IdentityResolutionService {
 
     @Transactional
     public void confirmUserAssignment(EntityMention mention, KnowledgeEntity entity) {
-        linkMention(mention, entity, MentionStatus.CONFIRMED,
+        if (mention == null || entity == null) {
+            return;
+        }
+        EntityMention managedMention = mention.getId() == null
+                ? mention
+                : mentionRepository.findById(mention.getId()).orElse(mention);
+        KnowledgeEntity managedEntity = entity.getId() == null
+                ? entity
+                : entityRepository.findById(entity.getId()).orElse(entity);
+        linkMention(managedMention, managedEntity, MentionStatus.CONFIRMED,
                 IdentityEvidenceSource.USER, 1.0, null);
     }
 
