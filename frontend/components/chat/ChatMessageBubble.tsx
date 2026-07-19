@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, ChevronUp } from "lucide-react";
+import { BookOpen, ChevronDown } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import type { Message, Source } from "@/lib/api";
 
@@ -62,11 +62,12 @@ export function ChatMessageBubble({
         <button
           type="button"
           onClick={() => onSourcesOpen(sources!)}
-          className="mt-2 inline-flex items-center gap-1.5 rounded-xl bg-soft px-2.5 py-1.5 text-[13px] font-bold text-ink transition-opacity active:opacity-60"
+          className="chip mt-2"
+          aria-label={`Pokaż ${sourceLabel}`}
         >
-          <BookOpen size={15} />
+          <BookOpen size={15} aria-hidden />
           {sourceLabel}
-          <ChevronUp size={14} />
+          <ChevronDown size={14} aria-hidden />
         </button>
       )}
     </motion.article>

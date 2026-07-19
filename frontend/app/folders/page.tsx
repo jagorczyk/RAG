@@ -39,6 +39,7 @@ import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
 import { AnimatedItem } from "@/components/ui/AnimatedList";
 import { FadeModal } from "@/components/ui/FadeModal";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 type FolderSort = "recent" | "asc" | "desc";
 
@@ -191,19 +192,23 @@ export default function FoldersPage() {
 
   return (
     <div className="page-shell">
-      <header className="flex items-center justify-between gap-3 px-5 pt-3.5 pb-2">
-        <h1 className="page-title">Biblioteka</h1>
-        <div className="flex items-center gap-2">
-          <IconButton label="Narzędzia" onClick={() => setToolsOpen(true)}>
-            <Settings2 size={18} />
-          </IconButton>
-          <IconButton label="Nowy folder" onClick={() => setIsAdding(true)}>
-            <Plus size={20} />
-          </IconButton>
-        </div>
-      </header>
+      <PageHeader
+        title="Biblioteka"
+        subtitle="Twoje foldery, zdjęcia i dokumenty"
+        border={false}
+        action={
+          <>
+            <IconButton label="Narzędzia" onClick={() => setToolsOpen(true)}>
+              <Settings2 size={18} />
+            </IconButton>
+            <IconButton label="Nowy folder" onClick={() => setIsAdding(true)}>
+              <Plus size={20} />
+            </IconButton>
+          </>
+        }
+      />
 
-      <div className="page-body max-w-3xl !pt-2">
+      <div className="page-body max-w-3xl !pt-1">
         <SearchField
           value={query}
           onChange={setQuery}
@@ -214,13 +219,13 @@ export default function FoldersPage() {
           type="button"
           onClick={handleNewChat}
           disabled={creatingChat}
-          className="ask-card mt-4 w-full text-left"
+          className="ask-card mt-3 w-full text-left"
         >
           <span className="ask-card-icon">
             {creatingChat ? (
-              <Loader2 size={18} className="animate-spin" />
+              <Loader2 size={18} className="animate-spin" aria-hidden />
             ) : (
-              <Sparkles size={18} />
+              <Sparkles size={18} aria-hidden />
             )}
           </span>
           <span className="min-w-0 flex-1">
@@ -231,29 +236,31 @@ export default function FoldersPage() {
               Przeszukaj swoją bazę wiedzy
             </span>
           </span>
-          <ArrowUp size={18} className="shrink-0 text-ink" />
+          <ArrowUp size={18} className="shrink-0 text-ink" aria-hidden />
         </button>
 
         {reanalysis && (
-          <div className="status-banner mt-4" role="status">
+          <div className="status-banner status-banner-info mt-4" role="status">
             <RefreshCw
               size={18}
               className={reanalysis.status === "RUNNING" ? "animate-spin" : ""}
+              aria-hidden
             />
             <span>
-              Analiza kontekstu: {reanalysis.completed}/{reanalysis.total}, błędy:{" "}
-              {reanalysis.failed}
+              Analiza kontekstu: {reanalysis.completed}/{reanalysis.total}
+              {reanalysis.failed > 0 ? `, błędy: ${reanalysis.failed}` : ""}
             </span>
           </div>
         )}
         {isUploadingFolder && (
           <div className="status-banner mt-4" role="status">
-            <Loader2 size={18} className="animate-spin" />
+            <Loader2 size={18} className="animate-spin" aria-hidden />
             <span>Wgrywanie folderu…</span>
           </div>
         )}
 
         <SectionTitle
+          className="!mt-5"
           action={
             <div className="flex items-center gap-3">
               <button
@@ -277,22 +284,27 @@ export default function FoldersPage() {
           Foldery
         </SectionTitle>
 
-        {isLoading && <Loading />}
+        {isLoading && <Loading label="Ładowanie folderów" />}
 
         {!isLoading && visibleFolders.length === 0 && (
           <EmptyState
             icon="📁"
-            title={needle ? "Brak wyników" : "Brak folderów"}
+            title={needle ? "Brak wyników" : "Dodaj pierwszy folder"}
             description={
               needle
-                ? "Spróbuj innej nazwy."
-                : "Dodaj pierwszy folder, aby przechowywać dokumenty i zdjęcia."
+                ? "Spróbuj innej nazwy folderu lub rozmowy."
+                : "Utwórz folder albo wgraj katalog ze zdjęciami — potem możesz o nie pytać w rozmowie."
             }
             action={
               !needle ? (
-                <button type="button" className="btn-primary" onClick={() => setIsAdding(true)}>
-                  <Plus size={18} /> Nowy folder
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button type="button" className="btn-primary" onClick={() => setIsAdding(true)}>
+                    <Plus size={18} /> Nowy folder
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={() => setToolsOpen(true)}>
+                    <FolderPlus size={18} /> Wgraj folder
+                  </button>
+                </div>
               ) : undefined
             }
           />
@@ -333,16 +345,45 @@ export default function FoldersPage() {
           </div>
         )}
 
-        <SectionTitle>Ostatnie rozmowy</SectionTitle>
+        <SectionTitle
+          action={
+            <button
+              type="button"
+              onClick={handleNewChat}
+              disabled={creatingChat}
+              className="text-sm font-bold text-ink"
+            >
+              Nowa
+            </button>
+          }
+        >
+          Ostatnie rozmowy
+        </SectionTitle>
         {visibleChats.length === 0 ? (
-          <p className="py-2.5 text-sm text-ink-muted">Nie masz jeszcze rozmów.</p>
+          <div className="list-panel px-4 py-5">
+            <p className="text-sm text-ink-muted">
+              {needle
+                ? "Brak rozmów pasujących do wyszukiwania."
+                : "Nie masz jeszcze rozmów. Zacznij od pytania o bibliotekę."}
+            </p>
+            {!needle && (
+              <button
+                type="button"
+                className="btn-secondary mt-3 !min-h-10"
+                onClick={handleNewChat}
+                disabled={creatingChat}
+              >
+                <Plus size={16} /> Nowa rozmowa
+              </button>
+            )}
+          </div>
         ) : (
           <div className="list-panel">
             {visibleChats.map((chat, index) => (
               <AnimatedItem key={chat.id} index={index}>
                 <Link href={`/chat/${chat.id}`} className="list-row">
                   <span className="list-row-icon">
-                    <Sparkles size={16} />
+                    <Sparkles size={16} aria-hidden />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-bold text-ink">{chat.title}</span>

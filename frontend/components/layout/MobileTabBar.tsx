@@ -26,15 +26,22 @@ export function MobileTabBar({ hidden = false }: { hidden?: boolean }) {
             key={tab.href}
             href={tab.href}
             className={`mobile-tab ${active ? "mobile-tab-active" : ""}`}
+            aria-current={active ? "page" : undefined}
           >
             {active && (
               <motion.span
                 layoutId="mobile-tab-glow"
                 className="absolute inset-0 rounded-2xl bg-soft"
                 transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                aria-hidden
               />
             )}
-            <Icon size={22} className="relative z-10" strokeWidth={active ? 2.25 : 1.9} />
+            <Icon
+              size={22}
+              className="relative z-10"
+              strokeWidth={active ? 2.25 : 1.9}
+              aria-hidden
+            />
             <span className="relative z-10">{tab.label}</span>
           </Link>
         );

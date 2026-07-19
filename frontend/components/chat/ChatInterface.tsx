@@ -53,6 +53,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
   const [isInitialLoading, setIsInitialLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<FilePreview | null>(null);
   const [sheetSources, setSheetSources] = useState<Source[] | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -278,6 +279,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     if (inputRef.current) inputRef.current.innerText = "";
     setIsSending(true);
     setSendError(null);
+    setFailedMessage(null);
 
     try {
       const response = await sendMessage(chatId, userMsg);
@@ -289,11 +291,31 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     } catch (error) {
       console.error("Failed to send message", error);
       setMessages((prev) => prev.filter((message) => message.id !== optimisticMsg.id));
-      setSendError(error instanceof Error ? error.message : "Nie udało się wysłać wiadomości.");
+      setFailedMessage(userMsg);
+      setSendError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Nie udało się wysłać wiadomości. Sprawdź połączenie z serwerem."
+      );
+      setInputValue(userMsg);
+      if (inputRef.current) inputRef.current.innerText = userMsg;
     } finally {
       setIsSending(false);
     }
   };
+
+  const handleRetrySend = (e: React.MouseEvent | React.FormEvent) => {
+    e.preventDefault();
+    if (failedMessage) {
+      void handleSubmit(e as React.FormEvent, failedMessage);
+    }
+  };
+
+  const examplePrompts = [
+    "Kto jest na moich ostatnich zdjęciach?",
+    "Pokaż zdjęcia, na których widać więcej niż jedną osobę.",
+    "Co wiesz o dokumentach w mojej bibliotece?",
+  ];
 
   const getSourceImageUrl = (source: Source) => {
     if (source.type === "IMAGE" && source.base64) {
@@ -389,7 +411,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
   return (
     <div className="relative flex h-full flex-col bg-surface">
-      <header className="flex min-h-[3.6rem] shrink-0 items-center border-b border-border px-4">
+      <header className="flex min-h-[3.6rem] shrink-0 items-center border-b border-border px-4 md:px-5">
         <button
           type="button"
           onClick={() => router.push("/chats")}
@@ -398,29 +420,46 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         >
           <ChevronLeft size={26} />
         </button>
-        <div className="min-w-0 flex-1 text-center md:text-left md:pl-1">
-          <h1 className="truncate text-[17px] font-extrabold text-ink">Rozmowa</h1>
-          <p className="text-xs text-ink-muted">
+        <div className="min-w-0 flex-1 text-center md:pl-1 md:text-left">
+          <h1 className="truncate text-[1.0625rem] font-extrabold tracking-tight text-ink md:text-xl">
+            Rozmowa
+          </h1>
+          <p className="text-xs text-ink-muted" aria-live="polite">
             {isSending ? "Analizuję dokumenty…" : "Twoja baza wiedzy"}
           </p>
         </div>
-        <div className="w-9 md:hidden" />
+        <div className="w-9 md:hidden" aria-hidden />
       </header>
 
       <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
         {isInitialLoading && <Loading label="Ładowanie wiadomości" />}
 
         {!isInitialLoading && messages.length === 0 && chatId && (
-          <div className="flex h-full flex-col items-center justify-center px-8 pb-16 text-center">
+          <div className="mx-auto flex h-full max-w-lg flex-col items-center justify-center px-4 pb-12 text-center">
             <div className="mb-4 flex h-[58px] w-[58px] items-center justify-center rounded-[18px] bg-soft">
-              <AtSign size={26} className="text-ink" />
+              <AtSign size={26} className="text-ink" aria-hidden />
             </div>
-            <h2 className="text-[23px] font-extrabold tracking-tight text-ink">
-              W czym mogę pomóc?
+            <h2 className="text-[1.375rem] font-extrabold tracking-tight text-ink md:text-[1.5rem]">
+              Zadaj pierwsze pytanie
             </h2>
             <p className="mt-2 max-w-sm text-sm leading-5 text-ink-muted">
-              Zapytaj o informacje z dodanych dokumentów. Użyj @ aby wskazać folder lub plik.
+              Pytaj o osoby na zdjęciach, relacje i dokumenty z biblioteki. Użyj{" "}
+              <kbd className="kbd">@</kbd>, aby wskazać folder lub plik.
             </p>
+            <ul className="mt-6 flex w-full list-none flex-col gap-2 p-0">
+              {examplePrompts.map((prompt) => (
+                <li key={prompt}>
+                  <button
+                    type="button"
+                    className="prompt-chip w-full"
+                    disabled={isSending}
+                    onClick={(e) => handleSubmit(e, prompt)}
+                  >
+                    {prompt}
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -429,15 +468,16 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
             {sendError && (
               <div
                 role="alert"
-                className="mb-4 flex items-center gap-3 rounded-xl border border-error/40 bg-[#FFF1F1] px-3 py-2.5 text-sm text-error"
+                className="status-banner status-banner-error mb-4 !mt-0"
               >
                 <span className="flex-1">{sendError}</span>
                 <button
                   type="button"
-                  className="font-extrabold text-ink"
-                  onClick={(e) => handleSubmit(e)}
+                  className="shrink-0 font-extrabold text-ink"
+                  onClick={handleRetrySend}
+                  disabled={isSending || !failedMessage}
                 >
-                  Ponów
+                  Spróbuj ponownie
                 </button>
               </div>
             )}

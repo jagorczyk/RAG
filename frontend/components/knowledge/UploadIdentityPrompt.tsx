@@ -271,13 +271,17 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                         className="rounded-[8px] border bg-surface p-3"
                         style={{ borderColor: color.border }}
                       >
-                        <div className="mb-2 flex items-center gap-2">
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
                           <span
                             className="inline-block h-3 w-3 rounded-sm"
                             style={{ backgroundColor: color.border }}
+                            aria-hidden
                           />
                           <span className="text-xs font-medium text-ink">
                             Osoba {index + 1}
+                          </span>
+                          <span className="status-badge status-badge-suggested">
+                            {mention.status === "CONFIRMED" ? "Do doprecyzowania" : "Do potwierdzenia"}
                           </span>
                           <span className="text-xs text-ink-muted">
                             wykryto: {mention.label}

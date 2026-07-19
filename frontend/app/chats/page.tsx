@@ -11,6 +11,7 @@ import { FadeModal } from "@/components/ui/FadeModal";
 import { Button } from "@/components/ui/Button";
 import { AnimatedItem } from "@/components/ui/AnimatedList";
 import { IconButton } from "@/components/ui/IconButton";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 function chatSections(chats: Chat[]) {
   const now = new Date();
@@ -116,20 +117,24 @@ export default function ChatsPage() {
 
   return (
     <div className="page-shell">
-      <header className="flex items-start justify-between gap-3 border-b border-border px-5 pt-4 pb-4">
-        <div>
-          <h1 className="page-title">Rozmowy</h1>
-          <p className="page-subtitle">Zapytaj swoją bazę wiedzy</p>
-        </div>
-        <IconButton
-          label="Nowa rozmowa"
-          onClick={handleCreate}
-          disabled={creating}
-          className="!bg-ink !text-white shadow-md"
-        >
-          {creating ? <Loader2 size={20} className="animate-spin" /> : <Plus size={22} />}
-        </IconButton>
-      </header>
+      <PageHeader
+        title="Rozmowy"
+        subtitle="Zapytaj swoją bazę wiedzy"
+        action={
+          <IconButton
+            label="Nowa rozmowa"
+            onClick={handleCreate}
+            disabled={creating}
+            className="!bg-ink !text-white shadow-md"
+          >
+            {creating ? (
+              <Loader2 size={20} className="animate-spin" aria-hidden />
+            ) : (
+              <Plus size={22} aria-hidden />
+            )}
+          </IconButton>
+        }
+      />
 
       <div className="page-body max-w-3xl">
         <SearchField
@@ -139,12 +144,12 @@ export default function ChatsPage() {
           className="mb-3"
         />
 
-        {loading && <Loading />}
+        {loading && <Loading label="Ładowanie rozmów" />}
         {error && (
           <EmptyState
             icon="☁️"
             title="Brak połączenia"
-            description="Nie udało się pobrać rozmów. Sprawdź połączenie z backendem."
+            description="Nie udało się pobrać rozmów. Sprawdź połączenie z serwerem."
             action={
               <button type="button" className="btn-primary" onClick={load}>
                 Spróbuj ponownie
@@ -156,11 +161,11 @@ export default function ChatsPage() {
         {!loading && !error && sections.length === 0 && (
           <EmptyState
             icon="💬"
-            title={query ? "Brak wyników" : "Brak rozmów"}
+            title={query ? "Brak wyników" : "Zacznij pierwszą rozmowę"}
             description={
               query
                 ? "Spróbuj użyć innego słowa."
-                : "Zacznij rozmowę, aby przeszukać swoją bazę wiedzy."
+                : "Zadaj pytanie o osoby na zdjęciach lub dokumenty w bibliotece."
             }
             action={
               !query ? (

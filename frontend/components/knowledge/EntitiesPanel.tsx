@@ -96,7 +96,18 @@ export function EntitiesPanel() {
           description={
             search
               ? "Spróbuj wyszukać inną nazwę."
-              : "Dodaj zdjęcia do folderów, aby rozpocząć rozpoznawanie."
+              : "Dodaj zdjęcia do folderów i potwierdź tożsamości — osoby pojawią się tutaj."
+          }
+          action={
+            !search ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => router.push("/folders")}
+              >
+                Przejdź do biblioteki
+              </button>
+            ) : undefined
           }
         />
       )}
