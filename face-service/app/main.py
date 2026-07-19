@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 from typing import Any
@@ -6,6 +7,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from insightface.app import FaceAnalysis
+from PIL import Image, ImageOps
 from ultralytics import YOLO
 
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +20,22 @@ NMS_IOU_THRESHOLD = 0.35
 MIN_FACE_SIZE = 12.0
 MIN_PERSON_SCORE = float(os.getenv("PERSON_MIN_SCORE", "0.45"))
 FACE_PERSON_IOU = float(os.getenv("FACE_PERSON_IOU", "0.01"))
+
+
+def _load_image_bgr(contents: bytes) -> np.ndarray | None:
+    """Decode image bytes and apply EXIF orientation (cv2.imdecode ignores EXIF)."""
+    try:
+        with Image.open(io.BytesIO(contents)) as pil_image:
+            oriented = ImageOps.exif_transpose(pil_image)
+            if oriented is None:
+                oriented = pil_image
+            rgb = np.asarray(oriented.convert("RGB"))
+            return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    except Exception as exc:
+        logger.debug("Pillow EXIF decode failed, falling back to OpenCV: %s", exc)
+
+    image_array = np.frombuffer(contents, dtype=np.uint8)
+    return cv2.imdecode(image_array, cv2.IMREAD_COLOR)
 
 
 def _det_size() -> tuple[int, int]:
@@ -117,8 +135,7 @@ async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    image_array = np.frombuffer(contents, dtype=np.uint8)
-    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    image = _load_image_bgr(contents)
     if image is None:
         raise HTTPException(status_code=400, detail="Unsupported or invalid image")
 

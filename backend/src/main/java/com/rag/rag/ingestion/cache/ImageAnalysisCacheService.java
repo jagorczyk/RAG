@@ -1,7 +1,8 @@
 package com.rag.rag.ingestion.cache;
 
-import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
@@ -9,11 +10,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 @Service
-@RequiredArgsConstructor
 public class ImageAnalysisCacheService {
 
     private final ImageAnalysisCacheRepository repository;
+    private final ImageAnalysisCacheService self;
     private final Map<String, Object> locks = new ConcurrentHashMap<>();
+
+    public ImageAnalysisCacheService(
+            ImageAnalysisCacheRepository repository,
+            @Lazy ImageAnalysisCacheService self
+    ) {
+        this.repository = repository;
+        this.self = self;
+    }
 
     public String getOrCompute(
             String contentHash,
@@ -25,15 +34,22 @@ public class ImageAnalysisCacheService {
         Object lock = locks.computeIfAbsent(lockKey, ignored -> new Object());
         try {
             synchronized (lock) {
-                return getOrComputeLocked(contentHash, analyzer, analyzerVersion, supplier);
+                // Route through the Spring proxy so REQUIRES_NEW applies.
+                // Unit tests may construct the service without a proxy (self == null).
+                ImageAnalysisCacheService target = self != null ? self : this;
+                return target.computeInTransaction(contentHash, analyzer, analyzerVersion, supplier);
             }
         } finally {
             locks.remove(lockKey, lock);
         }
     }
 
-    @Transactional
-    protected String getOrComputeLocked(
+    /**
+     * REQUIRES_NEW so a failed analyzer (e.g. face-service) does not mark the caller
+     * transaction rollback-only when the exception is caught upstream.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public String computeInTransaction(
             String contentHash,
             ImageAnalysisAnalyzer analyzer,
             String analyzerVersion,
@@ -54,11 +70,7 @@ public class ImageAnalysisCacheService {
 
         row.setStatus(ImageAnalysisStatus.PROCESSING);
         row.setErrorMessage(null);
-        if (existing.isEmpty()) {
-            repository.saveAndFlush(row);
-        } else {
-            repository.saveAndFlush(row);
-        }
+        repository.saveAndFlush(row);
 
         try {
             String payload = supplier.get();
@@ -74,10 +86,7 @@ public class ImageAnalysisCacheService {
                         persisted.setPayload(null);
                         persisted.setErrorMessage(e.getMessage());
                         repository.save(persisted);
-                    });            row.setPayload(null);
-            row.setStatus(ImageAnalysisStatus.FAILED);
-            row.setErrorMessage(e.getMessage());
-            repository.save(row);
+                    });
             throw e;
         }
     }

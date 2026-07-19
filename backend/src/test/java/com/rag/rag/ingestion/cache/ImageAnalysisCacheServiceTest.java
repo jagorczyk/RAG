@@ -26,7 +26,8 @@ class ImageAnalysisCacheServiceTest {
     @BeforeEach
     void setUp() {
         repository = mock(ImageAnalysisCacheRepository.class);
-        service = new ImageAnalysisCacheService(repository);
+        // self == null: unit tests call computeInTransaction on the same instance (no Spring proxy).
+        service = new ImageAnalysisCacheService(repository, null);
         when(repository.save(any(ImageAnalysisCache.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(repository.saveAndFlush(any(ImageAnalysisCache.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }

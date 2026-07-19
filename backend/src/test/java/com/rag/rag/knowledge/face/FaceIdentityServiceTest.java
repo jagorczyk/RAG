@@ -163,7 +163,7 @@ class FaceIdentityServiceTest {
                 .getMethod("deleteByFilePath", String.class)
                 .getAnnotation(Modifying.class);
 
-        assertEquals(Propagation.REQUIRED, transaction.propagation());
+        assertEquals(Propagation.REQUIRES_NEW, transaction.propagation());
         assertFalse(deleteOperation.clearAutomatically());
     }
 }

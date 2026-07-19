@@ -98,17 +98,24 @@ public class FaceIdentityService {
     @Value("${face.match.batch-cluster-threshold:0.48}")
     private double batchClusterThreshold;
 
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void replaceFaceEmbeddingsForFile(
             byte[] imageBytes,
             String filePath,
             String fileName,
             List<EntityMention> personMentions
     ) {
-        processImageFaces(imageBytes, filePath, fileName, personMentions);
+        // Keep work inside this REQUIRES_NEW boundary (no self-invocation of processImageFaces).
+        FaceAnalyzeResponse response = faceClient.analyzeResponseOrThrow(imageBytes, fileName);
+        List<DetectedFaceDto> faces = response.faces() == null ? List.of() : response.faces().stream()
+                .map(face -> face.withImageDimensions(
+                        response.imageWidth() == null ? 0 : response.imageWidth(),
+                        response.imageHeight() == null ? 0 : response.imageHeight()))
+                .toList();
+        processDetectedFacesInternal(faces, filePath, fileName, personMentions);
     }
 
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void processImageFaces(byte[] imageBytes, String filePath, String fileName, List<EntityMention> personMentions) {
         FaceAnalyzeResponse response = faceClient.analyzeResponseOrThrow(imageBytes, fileName);
         List<DetectedFaceDto> faces = response.faces() == null ? List.of() : response.faces().stream()
@@ -116,11 +123,19 @@ public class FaceIdentityService {
                         response.imageWidth() == null ? 0 : response.imageWidth(),
                         response.imageHeight() == null ? 0 : response.imageHeight()))
                 .toList();
-        processDetectedFaces(faces, filePath, fileName, personMentions);
+        processDetectedFacesInternal(faces, filePath, fileName, personMentions);
     }
 
-    @Transactional(propagation = Propagation.REQUIRED)
+    /**
+     * Separate transaction so face matching failures never mark the upload/vision TX
+     * as rollback-only (which previously caused UnexpectedRollbackException).
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void processDetectedFaces(List<DetectedFaceDto> faces, String filePath, String fileName, List<EntityMention> personMentions) {
+        processDetectedFacesInternal(faces, filePath, fileName, personMentions);
+    }
+
+    private void processDetectedFacesInternal(List<DetectedFaceDto> faces, String filePath, String fileName, List<EntityMention> personMentions) {
         // Preserve the previous face-to-mention mapping before replacing artifacts.
         // A retry must reuse the same mention instead of creating another unknown person.
         List<ExistingFaceLink> existingFaceLinks = loadExistingFaceLinks(filePath);
@@ -129,9 +144,8 @@ public class FaceIdentityService {
 
         faces = suppressOverlappingFaces(faces == null ? List.of() : faces);
 
-        // Use the mentions produced by the current vision pass. They can still be
-        // uncommitted in the outer upload transaction, so reloading here would
-        // incorrectly create a second mention for every detected face.
+        // Prefer mentions from the just-committed vision pass (passed in by the caller).
+        // Face work runs in REQUIRES_NEW after ingest commit, so these rows are durable.
         List<EntityMention> personOnlyMentions = (personMentions == null ? List.<EntityMention>of() : personMentions).stream()
                 .filter(this::isPersonMention)
                 .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
@@ -684,9 +698,21 @@ public class FaceIdentityService {
         if (identityResolutionService.isGenericPersonLabel(entity.getDisplayName())) {
             return false;
         }
-        return (embedding.getDetScore() == null || embedding.getDetScore().doubleValue() >= minDetScore)
-                && embedding.getMention() != null
-                && mentionEvidencePolicy.isCertain(embedding.getMention());
+        if (embedding.getDetScore() != null && embedding.getDetScore().doubleValue() < minDetScore) {
+            return false;
+        }
+        EntityMention mention = embedding.getMention();
+        if (mention == null) {
+            return false;
+        }
+        try {
+            // Gallery rows may carry lazy proxies; skip stale/missing mentions instead of failing the whole file.
+            return mentionEvidencePolicy.isCertain(mention);
+        } catch (Exception e) {
+            log.debug("Skipping gallery face embedding {} (lazy mention unavailable): {}",
+                    embedding.getId(), e.getMessage());
+            return false;
+        }
     }
 
     private String uniqueUnknownName(String filePath) {

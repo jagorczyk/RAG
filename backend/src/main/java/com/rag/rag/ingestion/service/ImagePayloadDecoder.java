@@ -1,5 +1,7 @@
 package com.rag.rag.ingestion.service;
 
+import net.coobird.thumbnailator.Thumbnails;
+
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
@@ -10,6 +12,10 @@ import java.util.Iterator;
 import java.util.Locale;
 import java.util.Set;
 
+/**
+ * Decodes JPEG/PNG uploads and applies EXIF orientation so stored pixels match
+ * what the user saw on a phone/camera (no sideways portraits after re-encode).
+ */
 final class ImagePayloadDecoder {
 
     private static final Set<String> SUPPORTED_FORMATS = Set.of("jpg", "png");
@@ -41,8 +47,9 @@ final class ImagePayloadDecoder {
                             + " nie jest obsługiwany. Użyj pliku JPEG lub PNG.");
                 }
 
-                reader.setInput(input, true, true);
-                BufferedImage image = reader.read(0);
+                // Thumbnailator reads EXIF Orientation from the original bytes.
+                // ImageIO alone returns the sensor raster and drops orientation on re-encode.
+                BufferedImage image = readOriented(imageData);
                 if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) {
                     throw invalid(fileName, "Nie udało się zdekodować obrazu.");
                 }
@@ -56,6 +63,16 @@ final class ImagePayloadDecoder {
             throw new InvalidImageException(messagePrefix(fileName)
                     + "Nie udało się zdekodować obrazu. Plik może być uszkodzony.", e);
         }
+    }
+
+    /**
+     * Loads pixels with EXIF orientation applied (no-op when the tag is missing).
+     */
+    static BufferedImage readOriented(byte[] imageData) throws IOException {
+        return Thumbnails.of(new ByteArrayInputStream(imageData))
+                .scale(1.0)
+                .useExifOrientation(true)
+                .asBufferedImage();
     }
 
     private static String normalizeFormat(String formatName) {

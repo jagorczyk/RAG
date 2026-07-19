@@ -15,7 +15,9 @@ import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -93,6 +95,7 @@ public class IngestionService {
     private final KnowledgeEntityRepository knowledgeEntityRepo;
     private final IdentityResolutionService identityResolutionService;
     private final JdbcTemplate jdbcTemplate;
+    private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionService(
@@ -110,7 +113,8 @@ public class IngestionService {
             EntityAliasRepository aliasRepo,
             KnowledgeEntityRepository knowledgeEntityRepo,
             IdentityResolutionService identityResolutionService,
-            JdbcTemplate jdbcTemplate
+            JdbcTemplate jdbcTemplate,
+            PlatformTransactionManager transactionManager
     ) {
         this.ingestor = ingestor;
         this.fileRepository = fileRepository;
@@ -127,6 +131,7 @@ public class IngestionService {
         this.knowledgeEntityRepo = knowledgeEntityRepo;
         this.identityResolutionService = identityResolutionService;
         this.jdbcTemplate = jdbcTemplate;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     private Document chooseParser(byte[] fileData, String path, String fileName, String extension) {
@@ -209,7 +214,6 @@ public class IngestionService {
 
             ExtractionResult result = loadVisionResult(contentHash, base64Image, mimeType);
             setAnalysisStatus(path, ImageAnalysisAnalyzer.VISION, ImageAnalysisStatus.COMPLETED);
-            List<EntityMention> personMentions = new ArrayList<>();
 
             if (result.isStructured() && result.resultDto() != null) {
                 VisionResultDto dto = result.resultDto();
@@ -342,9 +346,6 @@ public class IngestionService {
                         if (newMention) {
                             identityResolutionService.resolve(mention, tagForEntity, entityType);
                         }
-                        if (LivingEntityTypes.PERSON.equals(entityType)) {
-                            personMentions.add(mention);
-                        }
 
                         canonicalText.append("Uczestnik: ").append(label)
                                 .append(" (typ: ").append(entityType).append("). ");
@@ -429,9 +430,8 @@ public class IngestionService {
                     }
 
                 }
-                // Face coordinates must use the same raster that is stored and displayed.
-                // The original upload may be larger than the MAX_WIDTH/MAX_HEIGHT image.
-                runFaceAnalysis(sha256Hex(processedBytes), processedBytes, path, fileName, personMentions);
+                // Face analysis runs after the vision/ingest transaction commits so a face
+                // failure cannot mark the whole upload as rollback-only.
                 return Document.from(canonicalText.toString());
             } else {
                 var fileOpt = fileRepository.findByPath(path);
@@ -440,7 +440,6 @@ public class IngestionService {
                     f.setIngestionStatus(IngestionStatus.NEEDS_REVIEW);
                     fileRepository.save(f);
                 }
-                runFaceAnalysis(sha256Hex(processedBytes), processedBytes, path, fileName, personMentions);
                 return Document.from(result.rawText() != null ? result.rawText() : "Brak opisu obrazu.");
             }
         } catch (InvalidImageException e) {
@@ -462,45 +461,72 @@ public class IngestionService {
         }
     }
 
-    @Transactional
     public void reanalyzeExistingImage(FileEntity file) {
         if (file == null || file.getImageData() == null || file.getImageData().length == 0) {
             return;
         }
-        Document document = processImage(file.getImageData(), file.getPath(), file.getFileName());
-        document.metadata().put("path", file.getPath());
-        document.metadata().put("filename", file.getFileName());
-        document.metadata().put("source_type", "IMAGE");
-        String folder = file.getPath();
-        int slash = folder.indexOf('/', "dir://".length());
-        document.metadata().put("document_id", slash > 0 ? folder.substring("dir://".length(), slash) : "");
-        jdbcTemplate.update("DELETE FROM embeddings WHERE metadata->>'path' = ?", file.getPath());
-        ingestor.ingest(document);
+        String path = file.getPath();
+        transactionTemplate.executeWithoutResult(status -> {
+            Document document = processImage(file.getImageData(), path, file.getFileName());
+            document.metadata().put("path", path);
+            document.metadata().put("filename", file.getFileName());
+            document.metadata().put("source_type", "IMAGE");
+            String folder = path;
+            int slash = folder.indexOf('/', "dir://".length());
+            document.metadata().put("document_id", slash > 0 ? folder.substring("dir://".length(), slash) : "");
+            jdbcTemplate.update("DELETE FROM embeddings WHERE metadata->>'path' = ?", path);
+            ingestor.ingest(document);
+        });
+        completeFaceAnalysisForPath(path);
     }
 
-    @Transactional
     public void reanalyzeExistingFaces(FileEntity file) {
         if (file == null || file.getPath() == null) {
             return;
         }
-        FileEntity lockedFile = fileRepository.findByPathForUpdate(file.getPath()).orElse(null);
-        if (lockedFile == null || lockedFile.getImageData() == null || lockedFile.getImageData().length == 0) {
-            return;
-        }
-        List<EntityMention> personMentions = mentionRepo.findByFilePath(lockedFile.getPath()).stream()
-                .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
-                .filter(mention -> LivingEntityTypes.PERSON.equals(
-                        LivingEntityTypes.normalize(mention.getEntityType())))
-                .toList();
-        boolean completed = runFaceAnalysis(
-                sha256Hex(lockedFile.getImageData()),
-                lockedFile.getImageData(),
-                lockedFile.getPath(),
-                lockedFile.getFileName(),
-                personMentions
-        );
+        boolean completed = completeFaceAnalysisForPath(file.getPath());
         if (!completed) {
-            throw new IllegalStateException("Face analysis failed for " + lockedFile.getPath());
+            throw new IllegalStateException("Face analysis failed for " + file.getPath());
+        }
+    }
+
+    /**
+     * Runs face detection/matching in a separate transaction after vision ingest committed.
+     * Failures are recorded on the file row and never roll back the parent upload.
+     */
+    boolean completeFaceAnalysisForPath(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        try {
+            return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+                FileEntity lockedFile = fileRepository.findByPathForUpdate(path).orElse(null);
+                if (lockedFile == null || lockedFile.getImageData() == null || lockedFile.getImageData().length == 0) {
+                    return false;
+                }
+                List<EntityMention> personMentions = mentionRepo.findByFilePath(lockedFile.getPath()).stream()
+                        .filter(mention -> mention.getStatus() != MentionStatus.REJECTED)
+                        .filter(mention -> LivingEntityTypes.PERSON.equals(
+                                LivingEntityTypes.normalize(mention.getEntityType())))
+                        .toList();
+                // Touch lazy entity associations while the session is open.
+                for (EntityMention mention : personMentions) {
+                    if (mention.getEntity() != null) {
+                        mention.getEntity().getId();
+                    }
+                }
+                return runFaceAnalysis(
+                        sha256Hex(lockedFile.getImageData()),
+                        lockedFile.getImageData(),
+                        lockedFile.getPath(),
+                        lockedFile.getFileName(),
+                        personMentions
+                );
+            }));
+        } catch (Exception e) {
+            log.warn("Face analysis failed for {}", path, e);
+            setAnalysisStatus(path, ImageAnalysisAnalyzer.FACE, ImageAnalysisStatus.FAILED);
+            return false;
         }
     }
 
@@ -657,29 +683,49 @@ public class IngestionService {
         log.info("Cleared all folders, files, embeddings and knowledge graph data");
     }
 
-    @Transactional
+    /**
+     * Vision/embeddings commit first; face analysis runs afterwards so face errors
+     * cannot force UnexpectedRollbackException on the whole upload.
+     */
     public String ingestMultipartFile(MultipartFile file, FolderEntity folder, String entityTag) throws IOException {
         String fileName = file.getOriginalFilename();
         String extension = StringUtils.getFilenameExtension(fileName);
         String group = folder.getName();
 
         String path = "dir://" + folder.getName() + "/" + fileName;
-        if (entityTag != null && !entityTag.isBlank()) {
-            storeEntityTag(path, fileName, entityTag.trim());
-        }
         byte[] data = file.getBytes();
+        boolean image = isImageExtension(extension);
 
-        Document parsedDocument = chooseParser(data, path, fileName, extension);
-        if (parsedDocument != null) {
-            parsedDocument.metadata()
-                    .put("document_id", group)
-                    .put("filename", fileName)
-                    .put("path", path)
-                    .put("source_type", sourceType(fileName));
-            ingestor.ingest(parsedDocument);
-            log.info("Successfully ingested file: {}", path);
+        transactionTemplate.executeWithoutResult(status -> {
+            if (entityTag != null && !entityTag.isBlank()) {
+                storeEntityTag(path, fileName, entityTag.trim());
+            }
+            Document parsedDocument = chooseParser(data, path, fileName, extension);
+            if (parsedDocument != null) {
+                parsedDocument.metadata()
+                        .put("document_id", group)
+                        .put("filename", fileName)
+                        .put("path", path)
+                        .put("source_type", sourceType(fileName));
+                ingestor.ingest(parsedDocument);
+                log.info("Successfully ingested file: {}", path);
+            }
+        });
+
+        if (image) {
+            completeFaceAnalysisForPath(path);
         }
         return path;
+    }
+
+    private boolean isImageExtension(String extension) {
+        if (extension == null) {
+            return false;
+        }
+        return switch (extension.toLowerCase(Locale.ROOT)) {
+            case "png", "jpg", "jpeg" -> true;
+            default -> false;
+        };
     }
 
     private String sourceType(String fileName) {
