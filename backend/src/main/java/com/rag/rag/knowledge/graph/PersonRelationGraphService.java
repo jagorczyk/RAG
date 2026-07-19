@@ -225,13 +225,23 @@ public class PersonRelationGraphService {
                 if (mention.getEntity() == null) {
                     continue;
                 }
+                // Match current label, current entity name, or leftover vision placeholders
+                // when the mention was already renamed/relinked to a named person.
                 if (normalizeName(mention.getLabel()).equals(normalized)
                         || normalizeName(mention.getEntity().getDisplayName()).equals(normalized)) {
                     return mention.getEntity();
                 }
             }
+            // Single certain person on file + placeholder object → that person.
+            if (identityResolutionService.isGenericPersonLabel(objectLabel) && onFile.size() == 1
+                    && onFile.get(0).getEntity() != null) {
+                return onFile.get(0).getEntity();
+            }
         }
 
+        if (identityResolutionService.isGenericPersonLabel(objectLabel)) {
+            return null;
+        }
         return entitiesByName.get(normalized);
     }
 

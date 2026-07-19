@@ -7,6 +7,7 @@ import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.face.FaceObservation;
 import com.rag.rag.knowledge.face.FaceCropService;
 import com.rag.rag.knowledge.face.FaceIdentityService;
+import com.rag.rag.knowledge.graph.MentionEvidencePolicy;
 import com.rag.rag.knowledge.graph.PersonRelationGraphService;
 import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
@@ -59,7 +60,7 @@ class KnowledgeApiControllerDeleteEntityTest {
         IdentityResolutionService identities = mock(IdentityResolutionService.class);
         controller = new KnowledgeApiController(suggestions, mentions, entities, aliases, identities, files,
                 faceEmbeddings, mock(FaceIdentityService.class), mock(FaceCropService.class), faceObservations,
-                facts, mock(PersonRelationGraphService.class));
+                facts, mock(PersonRelationGraphService.class), mock(MentionEvidencePolicy.class));
     }
 
     @Test

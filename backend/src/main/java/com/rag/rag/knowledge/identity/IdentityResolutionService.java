@@ -3,8 +3,10 @@ package com.rag.rag.knowledge.identity;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.rag.knowledge.entity.*;
+import com.rag.rag.knowledge.fact.Fact;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
+import com.rag.rag.knowledge.repository.FactRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
@@ -37,6 +39,7 @@ public class IdentityResolutionService {
     private final EntityMentionRepository mentionRepository;
     private final IdentitySuggestionRepository suggestionRepository;
     private final FaceEmbeddingRepository faceEmbeddingRepository;
+    private final FactRepository factRepository;
     private final ChatLanguageModel chatModel;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -52,6 +55,7 @@ public class IdentityResolutionService {
             EntityMentionRepository mentionRepository,
             IdentitySuggestionRepository suggestionRepository,
             FaceEmbeddingRepository faceEmbeddingRepository,
+            FactRepository factRepository,
             @Qualifier("chatLanguageModel") ChatLanguageModel chatModel
     ) {
         this.entityRepository = entityRepository;
@@ -59,6 +63,7 @@ public class IdentityResolutionService {
         this.mentionRepository = mentionRepository;
         this.suggestionRepository = suggestionRepository;
         this.faceEmbeddingRepository = faceEmbeddingRepository;
+        this.factRepository = factRepository;
         this.chatModel = chatModel;
     }
 
@@ -179,6 +184,10 @@ public class IdentityResolutionService {
         String normalized = normalizeLabel(name);
         if (normalized == null) {
             throw new IllegalArgumentException("Entity name cannot be blank");
+        }
+        if (isGenericLabel(normalized)) {
+            throw new IllegalArgumentException(
+                    "Cannot create a person from a vision placeholder (e.g. person 1 / osoba 2)");
         }
 
         String normalizedType = LivingEntityTypes.normalize(type);
@@ -314,6 +323,154 @@ public class IdentityResolutionService {
                 : entityRepository.findById(entity.getId()).orElse(entity);
         linkMention(managedMention, managedEntity, MentionStatus.CONFIRMED,
                 IdentityEvidenceSource.USER, 1.0, null);
+        removeGenericAliases(managedEntity);
+    }
+
+    /**
+     * Rename a person entity and keep graph/album consistent:
+     * mention labels, fact object labels, aliases, merge-on-collision.
+     */
+    @Transactional
+    public KnowledgeEntity renameNamedEntity(UUID entityId, String newName) {
+        KnowledgeEntity entity = entityRepository.findById(entityId)
+                .orElseThrow(() -> new IllegalArgumentException("Entity not found"));
+        String oldName = entity.getDisplayName();
+        String normalized = normalizeLabel(newName);
+        if (normalized == null) {
+            throw new IllegalArgumentException("Entity name cannot be blank");
+        }
+        if (isGenericLabel(normalized)) {
+            throw new IllegalArgumentException("Cannot rename to a generic vision label");
+        }
+
+        String type = LivingEntityTypes.normalize(entity.getType());
+        if (type == null) {
+            type = LivingEntityTypes.PERSON;
+        }
+
+        Optional<KnowledgeEntity> existing = findEntityByNameOrAlias(normalized, type);
+        if (existing.isPresent() && !existing.get().getId().equals(entityId)) {
+            KnowledgeEntity target = existing.get();
+            mergeEntityInto(target, entity);
+            refreshMentionAndFactLabels(target.getId(), oldName, target.getDisplayName());
+            removeGenericAliases(target);
+            return target;
+        }
+
+        entity.setDisplayName(normalized);
+        entityRepository.save(entity);
+        refreshMentionAndFactLabels(entityId, oldName, normalized);
+        if (oldName != null && !isGenericLabel(oldName) && !normalized.equalsIgnoreCase(oldName)) {
+            addAliasIfMissing(entity, oldName);
+        }
+        removeGenericAliases(entity);
+        return entity;
+    }
+
+    /**
+     * After a mention is named / reassigned by the user: keep fact object labels and
+     * clean orphan previous entities that would still pollute the album/graph.
+     */
+    @Transactional
+    public void afterMentionIdentityAssigned(UUID mentionId, UUID previousEntityId, String newLabel) {
+        if (mentionId == null) {
+            return;
+        }
+        EntityMention mention = mentionRepository.findById(mentionId).orElse(null);
+        if (mention == null) {
+            return;
+        }
+        String label = normalizeLabel(newLabel);
+        if (label != null) {
+            String oldLabel = mention.getLabel();
+            mention.setLabel(label);
+            mentionRepository.save(mention);
+            syncFactObjectLabelsForMention(mention, label, oldLabel);
+        }
+        if (mention.getEntity() != null) {
+            removeGenericAliases(mention.getEntity());
+        }
+        if (previousEntityId != null
+                && (mention.getEntity() == null || !previousEntityId.equals(mention.getEntity().getId()))) {
+            cleanupOrphanEntity(previousEntityId);
+        }
+    }
+
+    private void refreshMentionAndFactLabels(UUID entityId, String oldName, String newName) {
+        for (EntityMention mention : mentionRepository.findByEntityId(entityId)) {
+            String label = mention.getLabel();
+            if (label == null || label.isBlank() || isGenericLabel(label)
+                    || (oldName != null && oldName.equalsIgnoreCase(label))) {
+                mention.setLabel(newName);
+                mentionRepository.save(mention);
+            }
+            syncFactObjectLabelsForMention(mention, newName, oldName);
+        }
+        // Catch facts that still point at this entity via targetMention after reassignment/merge.
+        for (Fact fact : factRepository.findAllWithMentionAndEntity()) {
+            if (fact.getTargetMention() != null
+                    && fact.getTargetMention().getEntity() != null
+                    && entityId.equals(fact.getTargetMention().getEntity().getId())) {
+                fact.setObject(newName);
+                factRepository.save(fact);
+            }
+        }
+    }
+
+    private void syncFactObjectLabelsForMention(EntityMention mention, String newLabel, String oldLabel) {
+        if (mention == null || mention.getId() == null || newLabel == null || mention.getFilePath() == null) {
+            return;
+        }
+        for (Fact fact : factRepository.findByFilePath(mention.getFilePath())) {
+            boolean isTarget = fact.getTargetMention() != null
+                    && mention.getId().equals(fact.getTargetMention().getId());
+            boolean objectIsStalePlaceholder = fact.getObject() != null && (
+                    isGenericLabel(fact.getObject())
+                            || (oldLabel != null && oldLabel.equalsIgnoreCase(fact.getObject()))
+            );
+            if (isTarget) {
+                fact.setObject(newLabel);
+                factRepository.save(fact);
+            } else if (objectIsStalePlaceholder
+                    && fact.getTargetMention() == null
+                    && fact.getMention() != null
+                    && mention.getId().equals(fact.getMention().getId())) {
+                // Subject fact with vision placeholder object and no linked target — keep in sync.
+                fact.setObject(newLabel);
+                factRepository.save(fact);
+            }
+        }
+    }
+
+    private void removeGenericAliases(KnowledgeEntity entity) {
+        if (entity == null || entity.getId() == null) {
+            return;
+        }
+        for (EntityAlias alias : aliasRepository.findAll()) {
+            if (alias.getEntity() != null
+                    && entity.getId().equals(alias.getEntity().getId())
+                    && isGenericLabel(alias.getAlias())) {
+                aliasRepository.delete(alias);
+            }
+        }
+    }
+
+    private void cleanupOrphanEntity(UUID entityId) {
+        if (entityId == null) {
+            return;
+        }
+        List<EntityMention> remaining = mentionRepository.findByEntityId(entityId);
+        if (!remaining.isEmpty()) {
+            return;
+        }
+        KnowledgeEntity entity = entityRepository.findById(entityId).orElse(null);
+        if (entity == null) {
+            return;
+        }
+        faceEmbeddingRepository.deleteByEntityId(entityId);
+        aliasRepository.deleteByEntityId(entityId);
+        entityRepository.delete(entity);
+        log.info("Removed orphan entity '{}' ({})", entity.getDisplayName(), entityId);
     }
 
     @Transactional
@@ -556,13 +713,27 @@ public class IdentityResolutionService {
         if (label == null) {
             return true;
         }
-        String lower = label.toLowerCase(Locale.ROOT);
+        String lower = label.toLowerCase(Locale.ROOT).trim();
+        // Vision uses stable placeholders (person 1 / osoba 2) — never treat as identity names.
         return lower.startsWith("nieznana")
                 || lower.startsWith("nieznany")
-                || lower.matches("osoba\\s+\\d+")
+                || lower.startsWith("unknown")
+                || lower.matches("osoba\\s*\\d*")
+                || lower.matches("person\\s*\\d*")
+                || lower.matches("people\\s*\\d*")
+                || lower.matches("man\\s*\\d*")
+                || lower.matches("woman\\s*\\d*")
                 || lower.equals("osoba")
+                || lower.equals("person")
+                || lower.equals("people")
+                || lower.equals("man")
+                || lower.equals("woman")
+                || lower.equals("boy")
+                || lower.equals("girl")
                 || lower.equals("postać")
-                || lower.equals("postac");
+                || lower.equals("postac")
+                || lower.equals("figure")
+                || lower.equals("individual");
     }
 
     private String extractJson(String text) {

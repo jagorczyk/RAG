@@ -7,6 +7,7 @@ import com.rag.rag.knowledge.entity.IdentityEvidenceSource;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
+import com.rag.rag.knowledge.repository.FactRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -46,6 +47,8 @@ class IdentityResolutionServiceTest {
     @Mock
     private FaceEmbeddingRepository faceEmbeddingRepository;
     @Mock
+    private FactRepository factRepository;
+    @Mock
     private ChatLanguageModel chatModel;
 
     private IdentityResolutionService service;
@@ -58,6 +61,7 @@ class IdentityResolutionServiceTest {
                 mentionRepository,
                 suggestionRepository,
                 faceEmbeddingRepository,
+                factRepository,
                 chatModel
         );
     }
@@ -68,10 +72,23 @@ class IdentityResolutionServiceTest {
             "Pati Kowalska, true",
             "mężczyzna w czerwonej koszulce, false",
             "Osoba 1, false",
+            "person 1, false",
+            "Person 2, false",
             "nieznana postać, false"
     })
     void shouldDetectPersonNameLabels(String label, boolean expected) {
         assertEquals(expected, service.looksLikePersonName(label));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "person 1, true",
+            "Person 2, true",
+            "osoba 3, true",
+            "Bartek, false"
+    })
+    void shouldTreatVisionPlaceholdersAsGeneric(String label, boolean expected) {
+        assertEquals(expected, service.isGenericPersonLabel(label));
     }
 
     @Test

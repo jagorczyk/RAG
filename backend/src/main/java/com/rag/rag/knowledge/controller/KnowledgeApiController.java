@@ -11,6 +11,7 @@ import com.rag.rag.knowledge.dto.IdentitySuggestionViewDto;
 import com.rag.rag.knowledge.dto.IdentityConflictDto;
 import com.rag.rag.knowledge.dto.PersonGraphDto;
 import com.rag.rag.knowledge.dto.SuggestionMentionViewDto;
+import com.rag.rag.knowledge.graph.MentionEvidencePolicy;
 import com.rag.rag.knowledge.graph.PersonRelationGraphService;
 import com.rag.rag.knowledge.entity.EntityAlias;
 import com.rag.rag.knowledge.entity.EntityMention;
@@ -74,6 +75,7 @@ public class KnowledgeApiController {
     private final FaceObservationRepository faceObservationRepository;
     private final FactRepository factRepository;
     private final PersonRelationGraphService personRelationGraphService;
+    private final MentionEvidencePolicy mentionEvidencePolicy;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
 
@@ -171,8 +173,11 @@ public class KnowledgeApiController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mention not found"));
         KnowledgeEntity entity = entityRepository.findById(entityId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found"));
+        UUID previousEntityId = mention.getEntity() != null ? mention.getEntity().getId() : null;
         ensureNoDuplicateOnFile(mention, entity, allowDuplicateOnFile);
         relinkMention(mention.getId(), entity.getId());
+        String label = entity.getDisplayName() != null ? entity.getDisplayName() : mention.getLabel();
+        identityResolutionService.afterMentionIdentityAssigned(id, previousEntityId, label);
         return ResponseEntity.ok().build();
     }
 
@@ -202,11 +207,26 @@ public class KnowledgeApiController {
 
         UUID mentionAId = mA.getId();
         UUID mentionBId = mB.getId();
-        String labelForEntity = mA.getLabel() != null ? mA.getLabel() : mB.getLabel();
-
         KnowledgeEntity entity = mA.getEntity() != null ? mA.getEntity() : mB.getEntity();
         if (entity == null) {
-            entity = identityResolutionService.findOrCreateEntityByName(labelForEntity, "PERSON");
+            String labelA = mA.getLabel();
+            String labelB = mB.getLabel();
+            String labelForEntity = null;
+            if (labelA != null && !identityResolutionService.isGenericPersonLabel(labelA)) {
+                labelForEntity = labelA;
+            } else if (labelB != null && !identityResolutionService.isGenericPersonLabel(labelB)) {
+                labelForEntity = labelB;
+            }
+            if (labelForEntity == null) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Najpierw nadaj imię jednej z osób — nie łącz samych etykiet person/osoba");
+            }
+            try {
+                entity = identityResolutionService.findOrCreateEntityByName(labelForEntity, "PERSON");
+            } catch (IllegalArgumentException ex) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+            }
         }
         UUID entityId = entity.getId();
 
@@ -296,8 +316,11 @@ public class KnowledgeApiController {
             if (mention.getStatus() == MentionStatus.REJECTED) {
                 continue;
             }
-            // Prefer confirmed identity links; still include other non-rejected links
-            // so the album matches photos shown on the entity list.
+            // Album / graph must only use certain identity links — weak face matches
+            // otherwise attach unrelated photos to a renamed person.
+            if (!mentionEvidencePolicy.isCertain(mention)) {
+                continue;
+            }
             String path = mention.getFilePath();
             if (path == null || path.isBlank() || !seenPaths.add(path)) {
                 continue;
@@ -370,6 +393,12 @@ public class KnowledgeApiController {
     private List<EntityPhotoDto> loadPhotosForMentions(List<EntityMention> mentions) {
         Set<String> filePaths = new LinkedHashSet<>();
         for (EntityMention mention : mentions) {
+            if (mention.getStatus() == MentionStatus.REJECTED) {
+                continue;
+            }
+            if (!mentionEvidencePolicy.isCertain(mention)) {
+                continue;
+            }
             if (mention.getFilePath() != null && !mention.getFilePath().isBlank()) {
                 filePaths.add(mention.getFilePath());
             }
@@ -409,9 +438,11 @@ public class KnowledgeApiController {
     @PutMapping("/entities/{id}/rename")
     @Transactional
     public ResponseEntity<Void> renameEntity(@PathVariable UUID id, @RequestParam String newName) {
-        KnowledgeEntity entity = entityRepository.findById(id).orElseThrow();
-        entity.setDisplayName(newName);
-        entityRepository.save(entity);
+        try {
+            identityResolutionService.renameNamedEntity(id, newName);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
         return ResponseEntity.ok().build();
     }
 
@@ -444,11 +475,18 @@ public class KnowledgeApiController {
     public ResponseEntity<Void> renameMention(@PathVariable UUID id, @RequestParam String newName,
                                                @RequestParam(defaultValue = "false") boolean allowDuplicateOnFile) {
         EntityMention mention = mentionRepository.findById(id).orElseThrow();
-        KnowledgeEntity entity = identityResolutionService.findOrCreateEntityByName(newName, "PERSON");
+        UUID previousEntityId = mention.getEntity() != null ? mention.getEntity().getId() : null;
+        KnowledgeEntity entity;
+        try {
+            entity = identityResolutionService.findOrCreateEntityByName(newName, "PERSON");
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
         ensureNoDuplicateOnFile(mention, entity, allowDuplicateOnFile);
         mention.setLabel(newName.trim());
         mentionRepository.save(mention);
         relinkMention(id, entity.getId());
+        identityResolutionService.afterMentionIdentityAssigned(id, previousEntityId, newName.trim());
         return ResponseEntity.ok().build();
     }
 
