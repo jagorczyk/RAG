@@ -87,10 +87,10 @@ export function IdentityReviewPanel() {
     <div className="panel p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-xl font-extrabold tracking-tight text-ink">
+          <h3 className="text-base font-extrabold tracking-tight text-ink">
             Oczekujące potwierdzenia
           </h3>
-          <p className="mt-1 text-sm text-ink-muted">
+          <p className="mt-0.5 text-xs text-ink-muted">
             Potwierdź lub rozdziel sugerowane tożsamości na zdjęciach. Dopiero
             potwierdzone trafiają do pewnych źródeł.
           </p>

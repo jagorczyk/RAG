@@ -107,15 +107,15 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
       contentClassName="bg-surface"
       aria-label={preview.title || "Podgląd pliku"}
     >
-      <header className="flex min-h-[3.4rem] shrink-0 items-center gap-3 border-b border-border px-4">
+      <header className="flex min-h-[2.75rem] shrink-0 items-center gap-2 border-b border-border px-3">
         <button
           type="button"
           onClick={onClose}
-          className="text-[17px] font-semibold text-ink"
+          className="text-base font-semibold text-ink"
         >
           Gotowe
         </button>
-        <h3 className="min-w-0 flex-1 truncate text-center text-[17px] font-bold text-ink">
+        <h3 className="min-w-0 flex-1 truncate text-center text-base font-bold text-ink">
           {preview.title}
         </h3>
         <button

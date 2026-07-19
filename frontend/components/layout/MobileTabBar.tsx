@@ -37,7 +37,7 @@ export function MobileTabBar({ hidden = false }: { hidden?: boolean }) {
               />
             )}
             <Icon
-              size={22}
+              size={18}
               className="relative z-10"
               strokeWidth={active ? 2.25 : 1.9}
               aria-hidden

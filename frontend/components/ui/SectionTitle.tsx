@@ -10,8 +10,8 @@ export function SectionTitle({
   className?: string;
 }) {
   return (
-    <div className={`mt-6 mb-2.5 flex items-center justify-between gap-3 ${className}`}>
-      <h2 className="text-xl font-extrabold tracking-tight text-ink">{children}</h2>
+    <div className={`mt-4 mb-2 flex items-center justify-between gap-2 ${className}`}>
+      <h2 className="text-base font-extrabold tracking-tight text-ink">{children}</h2>
       {action}
     </div>
   );

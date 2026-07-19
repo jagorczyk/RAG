@@ -100,7 +100,7 @@ export default function PersonGraphPage() {
             }
           />
         ) : graph && graph.edges.length === 0 ? (
-          <div className="flex min-h-[480px] flex-1 flex-col gap-3">
+          <div className="flex min-h-[360px] flex-1 flex-col gap-3">
             <div className="status-banner status-banner-info !mb-0" role="status">
               Osoby są widoczne, ale brak potwierdzonych relacji między nimi (wspólne zdjęcia
               lub relacje przestrzenne).
@@ -111,7 +111,7 @@ export default function PersonGraphPage() {
           </div>
         ) : (
           graph && (
-            <div className="min-h-[480px] flex-1">
+            <div className="min-h-[360px] flex-1">
               <PersonRelationGraph nodes={graph.nodes} edges={graph.edges} />
             </div>
           )

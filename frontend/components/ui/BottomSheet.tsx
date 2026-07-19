@@ -64,7 +64,7 @@ export function BottomSheet({
             aria-labelledby={title ? titleId : undefined}
             aria-describedby={description ? descriptionId : undefined}
             tabIndex={-1}
-            className={`relative z-10 max-h-[min(92vh,720px)] w-full max-w-lg overflow-y-auto rounded-t-[26px] bg-surface-raised px-5 pb-[max(2rem,env(safe-area-inset-bottom))] pt-1 shadow-float outline-none sm:rounded-[22px] sm:pb-6 ${className}`}
+            className={`relative z-10 max-h-[min(92vh,540px)] w-full max-w-md overflow-y-auto rounded-t-[18px] bg-surface-raised px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-1 shadow-float outline-none sm:rounded-[16px] sm:pb-4 ${className}`}
             initial={reduced ? { opacity: 0 } : { opacity: 0, y: 48 }}
             animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
             exit={reduced ? { opacity: 0 } : { opacity: 0, y: 48 }}
@@ -77,12 +77,12 @@ export function BottomSheet({
             {(title || description) && (
               <div className="mb-3">
                 {title && (
-                  <h2 id={titleId} className="text-xl font-extrabold tracking-tight text-ink">
+                  <h2 id={titleId} className="text-base font-extrabold tracking-tight text-ink">
                     {title}
                   </h2>
                 )}
                 {description && (
-                  <p id={descriptionId} className="mt-1 text-sm text-ink-muted">
+                  <p id={descriptionId} className="mt-0.5 text-xs text-ink-muted">
                     {description}
                   </p>
                 )}

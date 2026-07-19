@@ -73,7 +73,7 @@ export function FadeModal({
             className={
               variant === "fullscreen"
                 ? `flex h-full w-full flex-col bg-surface outline-none ${contentClassName}`
-                : `relative z-10 w-full max-w-md rounded-[18px] bg-surface p-5 shadow-float outline-none ${contentClassName}`
+                : `relative z-10 w-full max-w-sm rounded-[14px] bg-surface p-4 shadow-float outline-none ${contentClassName}`
             }
             initial={reduced ? { opacity: 0 } : { opacity: 0, scale: 0.985 }}
             animate={{ opacity: 1, scale: 1 }}

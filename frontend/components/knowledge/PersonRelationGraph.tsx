@@ -413,7 +413,7 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
 
   if (nodes.length === 0) {
     return (
-      <div className="flex h-full min-h-[420px] items-center justify-center rounded-[10px] border border-border bg-surface p-6 text-sm text-ink-muted">
+      <div className="flex h-full min-h-[320px] items-center justify-center rounded-[10px] border border-border bg-surface p-4 text-sm text-ink-muted">
         Brak osób do wyświetlenia na mapie relacji.
       </div>
     );
@@ -427,7 +427,7 @@ export function PersonRelationGraph({ nodes, edges }: PersonRelationGraphProps) 
   return (
     <div
       ref={containerRef}
-      className="relative h-full min-h-[420px] w-full overflow-hidden rounded-[10px] border border-border bg-surface"
+      className="relative h-full min-h-[320px] w-full overflow-hidden rounded-[10px] border border-border bg-surface"
     >
       <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-[8px] border border-border bg-surface-raised/95 p-1 shadow-sm">
         <button

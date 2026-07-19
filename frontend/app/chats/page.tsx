@@ -195,10 +195,10 @@ export default function ChatsPage() {
                           <MessageCircle size={18} />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-base font-bold text-ink">
+                          <span className="block truncate text-sm font-bold text-ink">
                             {chat.title || "Nowa rozmowa"}
                           </span>
-                          <span className="mt-0.5 block text-[13px] text-ink-muted">
+                          <span className="mt-0.5 block text-xs text-ink-muted">
                             {formatChatDate(chat.updatedAt)}
                           </span>
                         </span>

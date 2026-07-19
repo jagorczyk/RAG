@@ -11,13 +11,13 @@ export function Loading({
 }) {
   return (
     <div
-      className={`flex flex-col items-center justify-center p-8 ${className}`}
+      className={`flex flex-col items-center justify-center p-5 ${className}`}
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <Loader2 size={22} className="animate-spin text-ink" aria-hidden />
-      <p className="mt-2.5 text-[13px] text-ink-muted">{label}</p>
+      <Loader2 size={18} className="animate-spin text-ink" aria-hidden />
+      <p className="mt-1.5 text-xs text-ink-muted">{label}</p>
     </div>
   );
 }

@@ -136,7 +136,7 @@ export function EntitiesPanel() {
                     }}
                     aria-label={`Pokaż zdjęcia osoby ${entity.displayName}`}
                   >
-                    <div className="relative aspect-square w-full overflow-hidden rounded-[15px] bg-soft">
+                    <div className="relative aspect-square w-full overflow-hidden rounded-[12px] bg-soft">
                       {cover && (
                         <img
                           src={photoUrl(cover)}
@@ -177,10 +177,10 @@ export function EntitiesPanel() {
                       ) : (
                         <div className="flex items-start justify-between gap-1">
                           <div className="min-w-0">
-                            <h4 className="truncate text-[15px] font-bold tracking-tight text-ink">
+                            <h4 className="truncate text-sm font-bold tracking-tight text-ink">
                               {entity.displayName}
                             </h4>
-                            <p className="mt-0.5 text-[13px] text-ink-muted">
+                            <p className="mt-0.5 text-xs text-ink-muted">
                               {photoCount}{" "}
                               {photoCount === 1
                                 ? "zdjęcie"

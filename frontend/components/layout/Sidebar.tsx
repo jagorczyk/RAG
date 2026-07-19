@@ -131,24 +131,24 @@ export function Sidebar() {
     <>
       <aside
         className={`absolute inset-y-0 left-0 z-[var(--z-sticky)] flex h-full shrink-0 flex-col border-r border-border bg-sidebar transition-transform duration-200 md:relative md:transition-none ${
-          isOpen ? "w-72 translate-x-0" : "w-16 -translate-x-full md:translate-x-0"
+          isOpen ? "w-56 translate-x-0" : "w-12 -translate-x-full md:translate-x-0"
         }`}
         style={{ transitionTimingFunction: "var(--ease-out)" }}
         aria-label="Nawigacja boczna"
       >
-        <div className="flex h-16 items-center border-b border-border px-3">
+        <div className="flex h-12 items-center border-b border-border px-2">
           <Link
             href="/folders"
-            className={`flex min-w-0 items-center gap-2.5 ${isOpen ? "flex-1" : "mx-auto justify-center"}`}
+            className={`flex min-w-0 items-center gap-2 ${isOpen ? "flex-1" : "mx-auto justify-center"}`}
             title="RAG"
           >
             <Image
               src="/logo_rag.png"
               alt="RAG"
-              width={30}
-              height={30}
+              width={24}
+              height={24}
               priority
-              className="h-[30px] w-[30px] object-contain"
+              className="h-6 w-6 object-contain"
             />
             <AnimatePresence>
               {isOpen && (

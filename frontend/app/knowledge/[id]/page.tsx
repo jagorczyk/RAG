@@ -95,7 +95,7 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
 
   return (
     <div className="page-shell">
-      <header className="flex min-h-[3.25rem] items-center gap-2 border-b border-border px-4">
+      <header className="flex min-h-[2.75rem] items-center gap-2 border-b border-border px-3">
         <button
           type="button"
           onClick={() => router.push("/knowledge")}
@@ -104,17 +104,17 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
         >
           <ArrowLeft size={20} />
         </button>
-        <h1 className="min-w-0 flex-1 truncate text-center text-[17px] font-bold text-ink">
+        <h1 className="min-w-0 flex-1 truncate text-center text-base font-bold text-ink">
           {entity?.displayName ?? (isLoading ? "Ładowanie…" : "Album osoby")}
         </h1>
         <div className="w-9" />
       </header>
       {!isLoading && entity && (
-        <div className="flex flex-col items-center px-5 pt-6 pb-2">
-          <span className="mb-2.5 flex h-[76px] w-[76px] items-center justify-center rounded-full bg-soft text-ink">
+        <div className="flex flex-col items-center px-4 pt-4 pb-2">
+          <span className="mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-soft text-ink">
             <User size={34} />
           </span>
-          <h2 className="text-[25px] font-extrabold tracking-tight text-ink">
+          <h2 className="text-xl font-extrabold tracking-tight text-ink">
             {entity.displayName}
           </h2>
           <p className="mt-1 text-sm text-ink-muted">{photoLabel}</p>
@@ -142,7 +142,7 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
           <p className="text-sm text-ink-muted">Brak zdjęć z tą osobą.</p>
         ) : (
           <div>
-            <h3 className="mb-3 px-1 text-xl font-extrabold text-ink">Zdjęcia</h3>
+            <h3 className="mb-2 px-1 text-base font-extrabold text-ink">Zdjęcia</h3>
             <ul className="m-0 grid list-none grid-cols-3 gap-0.5 p-0 sm:grid-cols-4 md:grid-cols-5">
               {appearances.map((appearance) => {
                 const thumb = thumbnails[appearance.filePath];

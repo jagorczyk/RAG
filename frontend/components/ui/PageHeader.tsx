@@ -22,7 +22,7 @@ export function PageHeader({
 
   return (
     <header
-      className={`page-header flex min-h-[4rem] items-center justify-between gap-3 !pt-3.5 !pb-3 ${
+      className={`page-header flex min-h-[3rem] items-center justify-between gap-2 !pt-2.5 !pb-2 ${
         border ? "" : "!border-b-0"
       } ${className}`}
     >

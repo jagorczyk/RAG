@@ -34,7 +34,7 @@ export function ChatMessageBubble({
 
   return (
     <motion.article
-      className={`mb-4.5 flex flex-col ${isUser ? "items-end" : "items-start"}`}
+      className={`mb-3 flex flex-col ${isUser ? "items-end" : "items-start"}`}
       initial={reduced ? { opacity: 0 } : { opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{
@@ -44,11 +44,11 @@ export function ChatMessageBubble({
       }}
     >
       {isUser ? (
-        <div className="max-w-[86%] rounded-[20px] rounded-br-[5px] bg-ink px-3.5 py-2.5 text-[15px] leading-[1.45] text-on-accent">
+        <div className="max-w-[86%] rounded-[14px] rounded-br-[4px] bg-ink px-2.5 py-1.5 text-[0.9375rem] leading-[1.4] text-on-accent">
           <div className="whitespace-pre-wrap text-pretty">{children}</div>
         </div>
       ) : (
-        <div className="max-w-[94%] py-0.5 text-[15px] leading-[1.45] text-ink">
+        <div className="max-w-[94%] py-0.5 text-[0.9375rem] leading-[1.4] text-ink">
           <div className="whitespace-pre-wrap text-pretty">{children}</div>
           {uncertain && (
             <p className="mt-2 text-xs font-semibold text-warning" role="status">
@@ -76,7 +76,7 @@ export function ChatMessageBubble({
 
 export function TypingIndicator() {
   return (
-    <div className="mb-4.5 flex items-start" role="status" aria-live="polite">
+    <div className="mb-3 flex items-start" role="status" aria-live="polite">
       <span className="sr-only">Asystent pisze</span>
       <div className="flex gap-1 py-1.5" aria-hidden>
         {[0, 1, 2].map((i) => (

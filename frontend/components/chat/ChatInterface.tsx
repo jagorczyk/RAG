@@ -421,28 +421,28 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
   return (
     <div className="relative flex h-full flex-col bg-surface">
-      <header className="flex min-h-[var(--touch-min)] shrink-0 items-center border-b border-border px-4 py-2 md:px-5">
+      <header className="flex min-h-[var(--touch-min)] shrink-0 items-center border-b border-border px-3 py-1.5 md:px-4">
         <button
           type="button"
           onClick={() => router.push("/chats")}
           className="icon-button -ml-1 shadow-none md:hidden"
           aria-label="Wróć do rozmów"
         >
-          <ChevronLeft size={26} aria-hidden />
+          <ChevronLeft size={22} aria-hidden />
         </button>
         <div className="min-w-0 flex-1 text-center md:pl-1 md:text-left">
-          <h1 className="truncate text-[1.0625rem] font-extrabold tracking-tight text-ink md:text-xl">
+          <h1 className="truncate text-base font-extrabold tracking-tight text-ink md:text-lg">
             Rozmowa
           </h1>
-          <p className="text-xs text-ink-muted" aria-live="polite">
+          <p className="text-[0.6875rem] text-ink-muted" aria-live="polite">
             {isSending ? "Analizuję dokumenty…" : "Twoja baza wiedzy"}
           </p>
         </div>
-        <div className="w-11 md:hidden" aria-hidden />
+        <div className="w-10 md:hidden" aria-hidden />
       </header>
 
       <div
-        className="flex-1 overflow-y-auto px-4 py-5 md:px-6"
+        className="flex-1 overflow-y-auto px-3 py-3.5 md:px-5"
         role="log"
         aria-relevant="additions"
         aria-busy={isSending}
@@ -451,18 +451,18 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         {isInitialLoading && <Loading label="Ładowanie wiadomości" />}
 
         {!isInitialLoading && messages.length === 0 && chatId && (
-          <div className="mx-auto flex h-full max-w-lg flex-col items-center justify-center px-4 pb-12 text-center">
-            <div className="mb-4 flex h-[58px] w-[58px] items-center justify-center rounded-[18px] bg-soft">
-              <AtSign size={26} className="text-ink" aria-hidden />
+          <div className="mx-auto flex h-full max-w-lg flex-col items-center justify-center px-3 pb-8 text-center">
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-[14px] bg-soft">
+              <AtSign size={22} className="text-ink" aria-hidden />
             </div>
-            <h2 className="text-[1.375rem] font-extrabold tracking-tight text-ink md:text-[1.5rem]">
+            <h2 className="text-lg font-extrabold tracking-tight text-ink md:text-xl">
               Zadaj pierwsze pytanie
             </h2>
-            <p className="mt-2 max-w-sm text-sm leading-5 text-ink-muted">
+            <p className="mt-1.5 max-w-sm text-sm leading-snug text-ink-muted">
               Pytaj o osoby na zdjęciach, relacje i dokumenty z biblioteki. Użyj{" "}
               <kbd className="kbd">@</kbd>, aby wskazać folder lub plik.
             </p>
-            <ul className="mt-6 flex w-full list-none flex-col gap-2 p-0">
+            <ul className="mt-4 flex w-full list-none flex-col gap-1.5 p-0">
               {examplePrompts.map((prompt) => (
                 <li key={prompt}>
                   <button
@@ -519,13 +519,13 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="relative shrink-0 border-t border-border bg-surface px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5 md:px-5">
+      <div className="relative shrink-0 border-t border-border bg-surface px-2.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 md:px-4">
         {suggestionsOpen && (
           <div
             id={listboxId}
             role="listbox"
             aria-label="Sugestie folderów i plików"
-            className="absolute bottom-full left-3 right-3 z-[var(--z-dropdown)] mb-2 max-h-56 overflow-y-auto rounded-2xl border border-border bg-surface-raised shadow-float md:left-5 md:right-5"
+            className="absolute bottom-full left-2.5 right-2.5 z-[var(--z-dropdown)] mb-1.5 max-h-48 overflow-y-auto rounded-xl border border-border bg-surface-raised shadow-float md:left-4 md:right-4"
           >
             <div className="flex items-center gap-2 border-b border-border bg-soft px-3 py-2 text-xs font-semibold text-ink-muted">
               <AtSign size={14} aria-hidden />
@@ -573,14 +573,14 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
         <form
           onSubmit={handleSubmit}
-          className="mx-auto flex max-w-3xl items-end gap-1 rounded-3xl border border-border bg-surface-raised py-1.5 pl-4 pr-1.5"
+          className="mx-auto flex max-w-3xl items-end gap-1 rounded-2xl border border-border bg-surface-raised py-1 pl-3 pr-1"
           aria-label="Wyślij wiadomość do asystenta"
         >
           <div className="relative min-h-[var(--touch-min)] flex-1">
             {!inputValue && (
               <div
                 id="chat-input-placeholder"
-                className="pointer-events-none absolute left-0 top-1/2 z-20 -translate-y-1/2 text-[15px] text-ink-muted"
+                className="pointer-events-none absolute left-0 top-1/2 z-20 -translate-y-1/2 text-[0.9375rem] text-ink-muted"
               >
                 {chatId ? "Napisz wiadomość…" : "Wybierz rozmowę"}
               </div>
@@ -591,7 +591,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               onInput={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              className="relative z-20 block max-h-28 min-h-[var(--touch-min)] w-full overflow-y-auto bg-transparent py-2.5 pr-2 text-[15px] text-ink caret-ink outline-none focus-visible:outline-none"
+              className="relative z-20 block max-h-24 min-h-[var(--touch-min)] w-full overflow-y-auto bg-transparent py-2 pr-2 text-[0.9375rem] text-ink caret-ink outline-none focus-visible:outline-none"
               spellCheck={false}
               role="textbox"
               aria-multiline="true"
@@ -630,14 +630,14 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               key={`${item.path}-${index}`}
               type="button"
               onClick={() => openSourcePreview(item)}
-              className="flex min-h-[4.1rem] w-full items-center gap-3 border-b border-border px-1 text-left last:border-b-0 transition-opacity active:opacity-55"
+              className="flex min-h-[var(--touch-min)] w-full items-center gap-2.5 border-b border-border px-1 text-left last:border-b-0 transition-opacity active:opacity-55"
             >
-              <span className="flex h-9.5 w-9.5 items-center justify-center rounded-[11px] bg-soft text-ink">
+              <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-soft text-ink">
                 {sourceIcon(item.type)}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate font-bold text-ink">{item.fileName}</span>
-                <span className="mt-0.5 block text-[13px] text-ink-muted">Otwórz podgląd</span>
+                <span className="block truncate text-sm font-bold text-ink">{item.fileName}</span>
+                <span className="mt-0.5 block text-xs text-ink-muted">Otwórz podgląd</span>
               </span>
             </button>
           ))}

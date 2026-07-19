@@ -54,20 +54,21 @@ typography:
     lineHeight: 1.3
     letterSpacing: "0.04em"
 rounded:
-  sm: "11px"
-  md: "14px"
-  lg: "16px"
-  xl: "18px"
-  pill: "22px"
+  sm: "8px"
+  md: "10px"
+  lg: "12px"
+  xl: "14px"
+  pill: "16px"
   full: "9999px"
 spacing:
-  xs: "0.25rem"
-  sm: "0.5rem"
-  md: "0.75rem"
-  lg: "1.25rem"
-  xl: "1.75rem"
-  page-x: "1.25rem"
-  page-x-md: "1.75rem"
+  xs: "0.2rem"
+  sm: "0.4rem"
+  md: "0.55rem"
+  lg: "0.9rem"
+  xl: "1.25rem"
+  page-x: "0.9rem"
+  page-x-md: "1.25rem"
+  root-scale: "75%"
 components:
   button-primary:
     backgroundColor: "{colors.accent}"
@@ -179,11 +180,13 @@ A near-achromatic product palette: black ink, white surface, cool-gray soft laye
 **Character:** Single geometric-humanist sans. Confidence comes from weight (800 titles, 700 labels), not from display serifs or fluid hero scales.
 
 ### Hierarchy
-- **Display** (800, 1.875–2rem, lh 1.15, tracking −0.04em): Page titles (`page-title`).
-- **Headline** (800, 1.25rem): Section titles (`SectionTitle`).
-- **Title** (700, ~1.0625rem): List row primary names, chat empty heading.
-- **Body** (400, 0.9375rem, lh 1.55): Default UI and assistant prose; chat message text at 15px.
-- **Label** (700, 0.75rem, tracking 0.04em, uppercase sparingly): Section captions (`section-caption`) — not on every block.
+- **Display** (800, 1.5–1.625rem, lh 1.15, tracking −0.04em): Page titles (`page-title`).
+- **Headline** (800, ~1rem / `text-base`): Section titles (`SectionTitle`).
+- **Title** (700, `text-sm`): List row primary names, chat empty heading.
+- **Body** (400, ~13.5px via `html 75%` + body `1.125rem`, lh 1.5): Default UI and chat prose.
+- **Label** (700, ~0.6875–0.75rem, tracking 0.04em, uppercase sparingly): Section captions.
+
+**Density:** Root `font-size: 75%` compresses rem-based layout ~25%; body is re-normalized for readability.
 
 ### Named Rules
 **The Product Scale Rule.** Fixed rem sizes only — no clamp heroes in app chrome.
