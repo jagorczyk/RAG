@@ -3,7 +3,7 @@ name: RAG
 description: Spokojna, precyzyjna biblioteka zdjęć i dokumentów z czatem GraphRAG
 colors:
   ink: "#000000"
-  ink-muted: "#6b6b6b"
+  ink-muted: "#595959"
   surface: "#ffffff"
   surface-raised: "#ffffff"
   sidebar: "#f7f7f8"
@@ -14,6 +14,7 @@ colors:
   accent-hover: "#1a1a1a"
   accent-subtle: "#f7f7f8"
   accent-muted: "#efefef"
+  on-accent: "#ffffff"
   success: "#1a7a4c"
   success-soft: "#e8f5ee"
   warning: "#b45309"
@@ -154,7 +155,9 @@ A near-achromatic product palette: black ink, white surface, cool-gray soft laye
 - **Shelf** (`#f7f7f8`): Sidebar, soft fills, search fields, ask card.
 - **Rule** (`#e5e5e5`): Default borders and dividers.
 - **Strong Rule** (`#d0d0d0`): Stronger separation when needed.
-- **Muted Caption** (`#6b6b6b`): Secondary labels and metadata (body contrast ≥4.5:1 on white).
+- **Muted Caption** (`#595959`): Secondary labels, placeholders, and metadata (≈7:1 on white; AA for body/placeholder).
+- **On accent** (`#ffffff`): Text/icons on black primary fills.
+- **Scrim**: `color-mix` of ink at ~28% for modal/sheet backdrops.
 
 ### Semantic
 - **Confirmed** (`#1a7a4c` / soft `#e8f5ee`): Confirmed identity, success.

@@ -44,15 +44,15 @@ export function ChatMessageBubble({
       }}
     >
       {isUser ? (
-        <div className="max-w-[86%] rounded-[20px] rounded-br-[5px] bg-ink px-3.5 py-2.5 text-[15px] leading-[1.45] text-white">
+        <div className="max-w-[86%] rounded-[20px] rounded-br-[5px] bg-ink px-3.5 py-2.5 text-[15px] leading-[1.45] text-on-accent">
           <div className="whitespace-pre-wrap text-pretty">{children}</div>
         </div>
       ) : (
         <div className="max-w-[94%] py-0.5 text-[15px] leading-[1.45] text-ink">
           <div className="whitespace-pre-wrap text-pretty">{children}</div>
           {uncertain && (
-            <p className="mt-2 text-xs text-ink-muted">
-              Odpowiedź może być niepewna.
+            <p className="mt-2 text-xs font-semibold text-warning" role="status">
+              Odpowiedź może być niepewna — sprawdź źródła.
             </p>
           )}
         </div>
@@ -62,7 +62,7 @@ export function ChatMessageBubble({
         <button
           type="button"
           onClick={() => onSourcesOpen(sources!)}
-          className="chip mt-2"
+          className="chip mt-2 min-h-[var(--touch-min)]"
           aria-label={`Pokaż ${sourceLabel}`}
         >
           <BookOpen size={15} aria-hidden />
@@ -76,8 +76,9 @@ export function ChatMessageBubble({
 
 export function TypingIndicator() {
   return (
-    <div className="mb-4.5 flex items-start">
-      <div className="flex gap-1 py-1.5" aria-label="Asystent pisze">
+    <div className="mb-4.5 flex items-start" role="status" aria-live="polite">
+      <span className="sr-only">Asystent pisze</span>
+      <div className="flex gap-1 py-1.5" aria-hidden>
         {[0, 1, 2].map((i) => (
           <span
             key={i}

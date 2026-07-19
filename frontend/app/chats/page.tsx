@@ -125,7 +125,7 @@ export default function ChatsPage() {
             label="Nowa rozmowa"
             onClick={handleCreate}
             disabled={creating}
-            className="!bg-ink !text-white shadow-md"
+            className="!bg-accent !text-on-accent shadow-md"
           >
             {creating ? (
               <Loader2 size={20} className="animate-spin" aria-hidden />
@@ -185,29 +185,34 @@ export default function ChatsPage() {
               <div className="list-panel">
                 {section.data.map((chat, index) => (
                   <AnimatedItem key={chat.id} index={index}>
-                    <div className="list-row group cursor-pointer" onClick={() => router.push(`/chat/${chat.id}`)}>
-                      <span className="list-row-icon">
-                        <MessageCircle size={18} />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-base font-bold text-ink">
-                          {chat.title || "Nowa rozmowa"}
-                        </p>
-                        <p className="mt-0.5 text-[13px] text-ink-muted">
-                          {formatChatDate(chat.updatedAt)}
-                        </p>
-                      </div>
+                    <div className="list-row group">
                       <button
                         type="button"
-                        className="p-1 text-ink-muted opacity-70 transition-opacity hover:opacity-100"
-                        aria-label={`Zmień nazwę ${chat.title}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        className="flex min-h-[var(--touch-min)] min-w-0 flex-1 items-center gap-3 text-left"
+                        onClick={() => router.push(`/chat/${chat.id}`)}
+                      >
+                        <span className="list-row-icon" aria-hidden>
+                          <MessageCircle size={18} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-base font-bold text-ink">
+                            {chat.title || "Nowa rozmowa"}
+                          </span>
+                          <span className="mt-0.5 block text-[13px] text-ink-muted">
+                            {formatChatDate(chat.updatedAt)}
+                          </span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="touch-target shrink-0 text-ink-muted opacity-70 transition-opacity hover:opacity-100"
+                        aria-label={`Zmień nazwę ${chat.title || "rozmowy"}`}
+                        onClick={() => {
                           setNewName(chat.title === "Nowa rozmowa" ? "" : chat.title);
                           setRenameTarget(chat);
                         }}
                       >
-                        <MoreHorizontal size={20} />
+                        <MoreHorizontal size={20} aria-hidden />
                       </button>
                     </div>
                   </AnimatedItem>
@@ -221,6 +226,7 @@ export default function ChatsPage() {
         open={!!renameTarget}
         onClose={() => !renaming && setRenameTarget(null)}
         variant="card"
+        title="Zmień nazwę rozmowy"
       >
         <h2 className="text-lg font-extrabold text-ink">Zmień nazwę rozmowy</h2>
         <input

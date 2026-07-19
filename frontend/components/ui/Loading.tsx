@@ -2,10 +2,21 @@
 
 import { Loader2 } from "lucide-react";
 
-export function Loading({ label = "Ładowanie", className = "" }: { label?: string; className?: string }) {
+export function Loading({
+  label = "Ładowanie",
+  className = "",
+}: {
+  label?: string;
+  className?: string;
+}) {
   return (
-    <div className={`flex flex-col items-center justify-center p-8 ${className}`}>
-      <Loader2 size={22} className="animate-spin text-ink" />
+    <div
+      className={`flex flex-col items-center justify-center p-8 ${className}`}
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <Loader2 size={22} className="animate-spin text-ink" aria-hidden />
       <p className="mt-2.5 text-[13px] text-ink-muted">{label}</p>
     </div>
   );

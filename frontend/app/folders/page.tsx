@@ -333,11 +333,11 @@ export default function FoldersPage() {
                   </Link>
                   <button
                     type="button"
-                    className="p-1 text-ink-muted"
+                    className="touch-target shrink-0 text-ink-muted"
                     aria-label={`Opcje folderu ${folder.name}`}
                     onClick={() => setSelected(folder)}
                   >
-                    <MoreHorizontal size={20} />
+                    <MoreHorizontal size={20} aria-hidden />
                   </button>
                 </div>
               </AnimatedItem>
@@ -503,6 +503,7 @@ export default function FoldersPage() {
           }
         }}
         variant="card"
+        title="Wyczyścić wszystkie dane?"
       >
         <h3 className="text-lg font-extrabold text-ink">Wyczyścić wszystkie dane?</h3>
         <p className="mt-2 text-sm text-ink-muted">

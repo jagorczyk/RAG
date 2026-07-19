@@ -192,10 +192,10 @@ export function EntitiesPanel() {
                           <button
                             type="button"
                             onClick={(e) => startEdit(entity, e)}
-                            className="shrink-0 p-1 text-ink-muted hover:text-ink"
+                            className="touch-target shrink-0 text-ink-muted hover:text-ink"
                             aria-label={`Edytuj ${entity.displayName}`}
                           >
-                            <Edit2 size={15} />
+                            <Edit2 size={15} aria-hidden />
                           </button>
                         </div>
                       )}

@@ -18,7 +18,7 @@ export function SearchField({
   "aria-label": ariaLabel = "Szukaj",
 }: SearchFieldProps) {
   return (
-    <div className={`search-field ${className}`}>
+    <div className={`search-field ${className}`} role="search">
       <Search size={17} className="shrink-0 text-ink-muted" aria-hidden />
       <input
         value={value}
@@ -27,15 +27,17 @@ export function SearchField({
         aria-label={ariaLabel}
         autoCorrect="off"
         autoComplete="off"
+        type="search"
+        enterKeyHint="search"
       />
       {!!value && (
         <button
           type="button"
           onClick={() => onChange("")}
-          className="shrink-0 text-ink-muted transition-opacity hover:opacity-70"
+          className="touch-target shrink-0 text-ink-muted transition-opacity hover:opacity-70"
           aria-label="Wyczyść wyszukiwanie"
         >
-          <X size={17} />
+          <X size={18} aria-hidden />
         </button>
       )}
     </div>

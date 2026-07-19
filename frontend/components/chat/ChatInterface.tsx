@@ -94,7 +94,13 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const prefersReduced =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    messagesEndRef.current?.scrollIntoView({
+      behavior: prefersReduced ? "auto" : "smooth",
+      block: "end",
+    });
   }, [messages, isSending]);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
@@ -409,16 +415,20 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
   const canSend = !!inputValue.trim() && !isSending && !!chatId;
 
+  const suggestionsOpen = showSuggestions && filteredSuggestions.length > 0;
+  const listboxId = "chat-mention-suggestions";
+  const errorId = "chat-send-error";
+
   return (
     <div className="relative flex h-full flex-col bg-surface">
-      <header className="flex min-h-[3.6rem] shrink-0 items-center border-b border-border px-4 md:px-5">
+      <header className="flex min-h-[var(--touch-min)] shrink-0 items-center border-b border-border px-4 py-2 md:px-5">
         <button
           type="button"
           onClick={() => router.push("/chats")}
           className="icon-button -ml-1 shadow-none md:hidden"
           aria-label="Wróć do rozmów"
         >
-          <ChevronLeft size={26} />
+          <ChevronLeft size={26} aria-hidden />
         </button>
         <div className="min-w-0 flex-1 text-center md:pl-1 md:text-left">
           <h1 className="truncate text-[1.0625rem] font-extrabold tracking-tight text-ink md:text-xl">
@@ -428,10 +438,16 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
             {isSending ? "Analizuję dokumenty…" : "Twoja baza wiedzy"}
           </p>
         </div>
-        <div className="w-9 md:hidden" aria-hidden />
+        <div className="w-11 md:hidden" aria-hidden />
       </header>
 
-      <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
+      <div
+        className="flex-1 overflow-y-auto px-4 py-5 md:px-6"
+        role="log"
+        aria-relevant="additions"
+        aria-busy={isSending}
+        aria-label="Historia rozmowy"
+      >
         {isInitialLoading && <Loading label="Ładowanie wiadomości" />}
 
         {!isInitialLoading && messages.length === 0 && chatId && (
@@ -451,7 +467,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
                 <li key={prompt}>
                   <button
                     type="button"
-                    className="prompt-chip w-full"
+                    className="prompt-chip min-h-[var(--touch-min)] w-full"
                     disabled={isSending}
                     onClick={(e) => handleSubmit(e, prompt)}
                   >
@@ -467,13 +483,14 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
           <div className="mx-auto max-w-3xl">
             {sendError && (
               <div
+                id={errorId}
                 role="alert"
                 className="status-banner status-banner-error mb-4 !mt-0"
               >
                 <span className="flex-1">{sendError}</span>
                 <button
                   type="button"
-                  className="shrink-0 font-extrabold text-ink"
+                  className="touch-target shrink-0 px-2 font-extrabold text-ink"
                   onClick={handleRetrySend}
                   disabled={isSending || !failedMessage}
                 >
@@ -502,29 +519,42 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="relative shrink-0 border-t border-border bg-surface px-3 pb-3 pt-2.5 md:px-5">
-        {showSuggestions && filteredSuggestions.length > 0 && (
-          <div className="absolute bottom-full left-3 right-3 z-20 mb-2 max-h-56 overflow-y-auto rounded-2xl border border-border bg-surface-raised shadow-float md:left-5 md:right-5">
+      <div className="relative shrink-0 border-t border-border bg-surface px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5 md:px-5">
+        {suggestionsOpen && (
+          <div
+            id={listboxId}
+            role="listbox"
+            aria-label="Sugestie folderów i plików"
+            className="absolute bottom-full left-3 right-3 z-[var(--z-dropdown)] mb-2 max-h-56 overflow-y-auto rounded-2xl border border-border bg-surface-raised shadow-float md:left-5 md:right-5"
+          >
             <div className="flex items-center gap-2 border-b border-border bg-soft px-3 py-2 text-xs font-semibold text-ink-muted">
-              <AtSign size={14} />
+              <AtSign size={14} aria-hidden />
               Wybierz folder lub plik
             </div>
             {filteredSuggestions.map((suggestion, index) => (
               <button
                 key={`${suggestion.type}-${suggestion.id}`}
                 type="button"
+                role="option"
+                aria-selected={index === selectedIndex}
+                id={`chat-suggestion-${index}`}
                 onClick={() => selectSuggestion(suggestion)}
                 onMouseEnter={() => setSelectedIndex(index)}
-                className={`flex w-full items-center gap-3 px-3 py-3 text-left text-sm transition-colors ${
+                className={`flex min-h-[var(--touch-min)] w-full items-center gap-3 px-3 py-3 text-left text-sm transition-colors ${
                   index === selectedIndex ? "bg-soft" : "hover:bg-soft/70"
                 }`}
               >
-                <span className="flex h-9 w-9 items-center justify-center rounded-[11px] bg-soft text-ink">
+                <span className="flex h-9 w-9 items-center justify-center rounded-[11px] bg-soft text-ink" aria-hidden>
                   {suggestion.type === "folder" ? (
                     <FolderOpen size={17} />
                   ) : suggestion.url ? (
                     <span className="h-7 w-7 overflow-hidden rounded-md">
-                      <img src={suggestion.url} alt="" className="h-full w-full object-cover" />
+                      <img
+                        src={suggestion.url}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
                     </span>
                   ) : (
                     <FileText size={17} />
@@ -543,11 +573,15 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
         <form
           onSubmit={handleSubmit}
-          className="mx-auto flex max-w-3xl items-end gap-0 rounded-3xl border border-border bg-surface-raised py-1.5 pl-4 pr-1.5"
+          className="mx-auto flex max-w-3xl items-end gap-1 rounded-3xl border border-border bg-surface-raised py-1.5 pl-4 pr-1.5"
+          aria-label="Wyślij wiadomość do asystenta"
         >
-          <div className="relative min-h-[2.4rem] flex-1">
+          <div className="relative min-h-[var(--touch-min)] flex-1">
             {!inputValue && (
-              <div className="pointer-events-none absolute left-0 top-2 z-20 text-[15px] text-ink-muted">
+              <div
+                id="chat-input-placeholder"
+                className="pointer-events-none absolute left-0 top-1/2 z-20 -translate-y-1/2 text-[15px] text-ink-muted"
+              >
                 {chatId ? "Napisz wiadomość…" : "Wybierz rozmowę"}
               </div>
             )}
@@ -557,22 +591,30 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               onInput={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              className="relative z-20 block max-h-28 min-h-[2.4rem] w-full overflow-y-auto bg-transparent py-2 pr-2 text-[15px] text-ink caret-ink outline-none"
+              className="relative z-20 block max-h-28 min-h-[var(--touch-min)] w-full overflow-y-auto bg-transparent py-2.5 pr-2 text-[15px] text-ink caret-ink outline-none focus-visible:outline-none"
               spellCheck={false}
               role="textbox"
               aria-multiline="true"
               aria-label="Wiadomość do asystenta"
+              aria-placeholder={chatId ? "Napisz wiadomość…" : "Wybierz rozmowę"}
+              aria-invalid={!!sendError}
+              aria-describedby={sendError ? errorId : undefined}
+              aria-controls={suggestionsOpen ? listboxId : undefined}
+              aria-expanded={suggestionsOpen}
+              aria-autocomplete="list"
+              aria-activedescendant={
+                suggestionsOpen ? `chat-suggestion-${selectedIndex}` : undefined
+              }
+              data-placeholder={chatId ? "Napisz wiadomość…" : "Wybierz rozmowę"}
             />
           </div>
           <button
             type="submit"
             disabled={!canSend}
-            className={`mb-0.5 flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full transition-colors ${
-              canSend ? "bg-ink text-white" : "bg-border text-white"
-            }`}
+            className={`send-button mb-0.5 ${canSend ? "send-button-ready" : "send-button-idle"}`}
             aria-label="Wyślij wiadomość"
           >
-            <ArrowUp size={20} strokeWidth={2.4} />
+            <ArrowUp size={20} strokeWidth={2.4} aria-hidden />
           </button>
         </form>
       </div>

@@ -100,7 +100,13 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
   };
 
   return (
-    <FadeModal open onClose={onClose} variant="fullscreen" contentClassName="bg-surface">
+    <FadeModal
+      open
+      onClose={onClose}
+      variant="fullscreen"
+      contentClassName="bg-surface"
+      aria-label={preview.title || "Podgląd pliku"}
+    >
       <header className="flex min-h-[3.4rem] shrink-0 items-center gap-3 border-b border-border px-4">
         <button
           type="button"

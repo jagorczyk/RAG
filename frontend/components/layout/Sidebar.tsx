@@ -130,10 +130,11 @@ export function Sidebar() {
   return (
     <>
       <aside
-        className={`absolute inset-y-0 left-0 z-30 flex h-full shrink-0 flex-col border-r border-border bg-sidebar transition-[width,transform] duration-200 md:relative ${
+        className={`absolute inset-y-0 left-0 z-[var(--z-sticky)] flex h-full shrink-0 flex-col border-r border-border bg-sidebar transition-transform duration-200 md:relative md:transition-none ${
           isOpen ? "w-72 translate-x-0" : "w-16 -translate-x-full md:translate-x-0"
         }`}
         style={{ transitionTimingFunction: "var(--ease-out)" }}
+        aria-label="Nawigacja boczna"
       >
         <div className="flex h-16 items-center border-b border-border px-3">
           <Link
@@ -167,10 +168,10 @@ export function Sidebar() {
             <button
               type="button"
               onClick={() => setIsOpen(false)}
-              className="btn-ghost shrink-0 p-1.5"
+              className="touch-target btn-ghost shrink-0"
               aria-label="Zwiń panel"
             >
-              <PanelLeftClose size={18} />
+              <PanelLeftClose size={18} aria-hidden />
             </button>
           )}
           {!isOpen && (

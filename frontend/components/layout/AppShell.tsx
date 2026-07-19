@@ -13,8 +13,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="app-shell h-full w-full">
+      <a href="#main-content" className="skip-link">
+        Przejdź do treści
+      </a>
       <Sidebar />
-      <main className={`app-main ${hideTabBar ? "tab-bar-hidden" : ""}`}>{children}</main>
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className={`app-main outline-none ${hideTabBar ? "tab-bar-hidden" : ""}`}
+      >
+        {children}
+      </main>
       <MobileTabBar hidden={hideTabBar} />
     </div>
   );

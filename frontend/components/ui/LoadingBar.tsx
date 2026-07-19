@@ -1,4 +1,5 @@
 import type { UploadProgress } from "@/lib/api";
+import type { CSSProperties } from "react";
 
 interface LoadingBarProps {
   progress: UploadProgress;
@@ -6,6 +7,9 @@ interface LoadingBarProps {
 
 export function LoadingBar({ progress }: LoadingBarProps) {
   const percent = Math.max(0, Math.min(100, progress.percent));
+  const fillStyle = {
+    ["--progress" as string]: String(percent / 100),
+  } as CSSProperties;
 
   return (
     <div className="mb-4" role="status" aria-live="polite">
@@ -22,17 +26,14 @@ export function LoadingBar({ progress }: LoadingBarProps) {
       </div>
 
       <div
-        className="h-2 overflow-hidden rounded-full bg-border"
+        className="progress-track !mt-0"
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent}
-        aria-label={`${percent}%`}
+        aria-label={`Postęp wgrywania ${progress.fileName}: ${percent}%`}
       >
-        <div
-          className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
-          style={{ width: `${percent}%` }}
-        />
+        <div className="progress-fill" style={fillStyle} />
       </div>
     </div>
   );
