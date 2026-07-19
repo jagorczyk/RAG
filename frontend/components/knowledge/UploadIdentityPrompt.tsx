@@ -215,8 +215,33 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
   const nothingToReview =
     !loading && reviewMentions.length === 0 && suggestions.length === 0;
 
+  // Brak twarzy/sugestii do potwierdzenia — przejdź dalej bez pokazywania pustego UI.
+  useEffect(() => {
+    if (!loading && nothingToReview && currentFile) {
+      goNext();
+    }
+    // goNext is stable enough via fileIndex/files; avoid stale loops by only depending on load state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, nothingToReview, currentFile?.path, fileIndex]);
+
   if (!currentFile) {
     return null;
+  }
+
+  // Ukryj modal na czas auto-skipu (puste potwierdzenia).
+  if (loading || nothingToReview) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+      >
+        <div className="rounded-[14px] border border-border bg-surface-raised px-5 py-4 text-sm text-ink-muted shadow-md">
+          {loading ? "Sprawdzam tożsamości na zdjęciu…" : "Przechodzę dalej…"}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -242,13 +267,6 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
         </header>
 
         <div className="flex-1 overflow-y-auto p-4">
-          {loading ? (
-            <p className="text-sm text-ink-muted">Ładowanie wykrytych osób...</p>
-          ) : nothingToReview ? (
-            <p className="text-sm text-ink-muted">
-              Wszystkie osoby na tym zdjęciu są już potwierdzone.
-            </p>
-          ) : (
             <div className="space-y-5">
               {currentFile.imageUrl && (
                 <FaceAnnotatedImage
@@ -413,7 +431,6 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                 </div>
               )}
             </div>
-          )}
         </div>
 
         <footer className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
