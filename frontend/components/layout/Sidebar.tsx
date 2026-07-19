@@ -39,8 +39,9 @@ function groupChats(chats: Chat[]) {
 }
 
 export function Sidebar() {
-  // Desktop starts open; phone starts closed so the floating tab bar owns primary nav.
-  const [isOpen, setIsOpen] = useState(true);
+  // SSR + first client paint: closed. Tab bar owns primary phone nav (no open-drawer flash).
+  // Desktop opens in the effect below after mount.
+  const [isOpen, setIsOpen] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -68,14 +69,12 @@ export function Sidebar() {
   }, []);
 
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const closeOnPhone = () => {
-      if (mq.matches) setIsOpen(false);
-    };
-    // First paint on phone: drawer closed (tab bar is primary chrome).
-    closeOnPhone();
-    mq.addEventListener("change", closeOnPhone);
-    return () => mq.removeEventListener("change", closeOnPhone);
+    const mq = window.matchMedia("(min-width: 768px)");
+    const syncToViewport = () => setIsOpen(mq.matches);
+    // Desktop: open rail. Phone: stay closed (initial state already closed).
+    syncToViewport();
+    mq.addEventListener("change", syncToViewport);
+    return () => mq.removeEventListener("change", syncToViewport);
   }, []);
 
   // After navigation on phone, dismiss the drawer so content is full-width.
@@ -340,7 +339,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="icon-button fixed left-3 top-3 z-40 border border-border md:hidden"
+          className="mobile-drawer-toggle icon-button fixed z-40 border border-border md:hidden"
           aria-label="Otwórz panel rozmów"
         >
           <PanelLeftOpen size={18} />

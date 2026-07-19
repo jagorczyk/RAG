@@ -47,12 +47,30 @@
   /* Mobile fat-finger / HIG floor — absolute CSS px (root rem scale does not shrink this). */
   --touch-min-mobile: 44px;
   --tab-bar-height: 4rem;
+  /* Phone: left offset (0.75rem) + 44px toggle + gap — titles clear the fixed control */
+  --mobile-drawer-clearance: calc(0.75rem + var(--touch-min-mobile) + 0.5rem);
   --z-dropdown: 20;
   --z-sticky: 30;
   --z-tab-bar: 40;
   --z-modal-backdrop: 50;
   --z-modal: 50;
   --z-toast: 60;
+}
+
+/*
+ * Unlayered mobile token overrides — must sit outside @layer so they beat
+ * the unlayered desktop :root (layered :root inside @layer would lose).
+ */
+@media (max-width: 767px) {
+  :root {
+    --touch-min: var(--touch-min-mobile);
+    --tab-bar-height: calc(var(--touch-min-mobile) + 1.75rem);
+  }
+
+  body {
+    /* 1.25rem × 12px root ≈ 15px — readable on phone without re-scaling all rem chrome */
+    font-size: 1.25rem;
+  }
 }
 
 @theme inline {
@@ -185,6 +203,33 @@
     .page-header {
       padding-left: 1.25rem;
       padding-right: 1.25rem;
+    }
+  }
+
+  /*
+   * Phone drawer toggle: fixed, ≥44×44, must not clip page titles.
+   * Clearance token is unlayered on :root; pad applies only on narrow viewports.
+   */
+  .mobile-drawer-toggle {
+    left: 0.75rem;
+    top: 0.65rem;
+  }
+
+  @media (max-width: 767px) {
+    .page-header {
+      padding-left: var(--mobile-drawer-clearance);
+    }
+
+    /* Ad-hoc top bars (chat / folder detail / entity album) share the same clearance */
+    .mobile-top-bar {
+      padding-left: var(--mobile-drawer-clearance);
+    }
+
+    .mobile-drawer-toggle {
+      height: var(--touch-min-mobile);
+      width: var(--touch-min-mobile);
+      min-height: var(--touch-min-mobile);
+      min-width: var(--touch-min-mobile);
     }
   }
 
@@ -929,21 +974,9 @@
 
   /*
    * Mobile adaptation (Kole Jain checklist / /impeccable adapt):
-   * fat-finger ≥44px, non-squished type, one primary scroll axis, floating tab chrome.
-   * Desktop keeps dense rem scale; only narrow viewports elevate touch + type.
+   * Component rules only — token overrides live in unlayered @media above.
    */
   @media (max-width: 767px) {
-    :root {
-      --touch-min: var(--touch-min-mobile);
-      /* Floating bar (~52px) + bottom inset + safe-area clearance for main padding */
-      --tab-bar-height: calc(var(--touch-min-mobile) + 1.75rem);
-    }
-
-    body {
-      /* 1.25rem × 12px root ≈ 15px — readable on phone without re-scaling all rem chrome */
-      font-size: 1.25rem;
-    }
-
     .page-title {
       font-size: 1.625rem;
     }

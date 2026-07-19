@@ -95,7 +95,7 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
 
   return (
     <div className="page-shell">
-      <header className="flex min-h-[2.75rem] items-center gap-2 border-b border-border px-3">
+      <header className="mobile-top-bar flex min-h-[2.75rem] items-center gap-2 border-b border-border px-3">
         <button
           type="button"
           onClick={() => router.push("/knowledge")}

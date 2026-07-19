@@ -341,7 +341,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
       onDragOver={handleDrag}
       onDrop={handleDrop}
     >
-      <header className="flex flex-col gap-3 border-b border-border px-4 pt-3 pb-3 md:px-6">
+      <header className="mobile-top-bar flex flex-col gap-3 border-b border-border px-4 pt-3 pb-3 md:px-6">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1">
             <button

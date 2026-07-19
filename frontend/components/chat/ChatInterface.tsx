@@ -421,7 +421,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
   return (
     <div className="relative flex h-full flex-col bg-surface">
-      <header className="flex min-h-[var(--touch-min)] shrink-0 items-center border-b border-border px-3 py-1.5 md:px-4">
+      <header className="mobile-top-bar flex min-h-[var(--touch-min)] shrink-0 items-center border-b border-border px-3 py-1.5 md:px-4">
         <button
           type="button"
           onClick={() => router.push("/chats")}

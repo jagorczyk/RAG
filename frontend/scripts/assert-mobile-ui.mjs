@@ -56,9 +56,14 @@ const touchMobileMatch = css.match(/--touch-min-mobile:\s*([^;]+);/);
 const touchMobile = touchMobileMatch?.[1]?.trim() ?? "";
 assert(touchMobile === "44px", `--touch-min-mobile must be 44px, got "${touchMobile}"`);
 
+// Unlayered override (must not live only inside @layer — layered :root loses to unlayered desktop :root)
+const unlayeredMobileTokens =
+  /@media\s*\(max-width:\s*767px\)\s*\{\s*:root\s*\{[\s\S]*?--touch-min:\s*var\(--touch-min-mobile\)/.test(
+    css
+  );
 assert(
-  /@media\s*\(max-width:\s*767px\)[\s\S]*--touch-min:\s*var\(--touch-min-mobile\)/.test(css),
-  "Mobile media query must set --touch-min to --touch-min-mobile (44px)"
+  unlayeredMobileTokens,
+  "Unlayered @media (max-width:767px) :root must set --touch-min to --touch-min-mobile so 44px wins cascade"
 );
 
 const rootRemPercent = css.match(/html\s*\{[^}]*font-size:\s*([\d.]+%)/s);
@@ -82,6 +87,25 @@ assert(
   "mobile-tab-bar must be position:fixed (floating)"
 );
 assert(tabBar.includes("mobile-tab-bar"), "MobileTabBar uses mobile-tab-bar class");
+
+// Drawer toggle must not clip titles: clearance token + page-header pad
+assert(
+  css.includes("--mobile-drawer-clearance") &&
+    /@media\s*\(max-width:\s*767px\)[\s\S]*\.page-header\s*\{[\s\S]*padding-left:\s*var\(--mobile-drawer-clearance\)/.test(
+      css
+    ),
+  "Mobile page-header must pad with --mobile-drawer-clearance so 44px drawer toggle does not clip titles"
+);
+assert(css.includes(".mobile-drawer-toggle"), "Drawer open control uses .mobile-drawer-toggle");
+const sidebarSrc = read("components/layout/Sidebar.tsx");
+assert(
+  /const\s*\[\s*isOpen\s*,\s*setIsOpen\s*\]\s*=\s*useState\(\s*false\s*\)/.test(sidebarSrc),
+  "Sidebar isOpen must initialize false (phone-closed first paint, no open-drawer flash)"
+);
+assert(
+  sidebarSrc.includes("mobile-drawer-toggle"),
+  "Sidebar open control uses mobile-drawer-toggle class"
+);
 
 const tabHrefMatches = [...tabBar.matchAll(/href:\s*"([^"]+)"/g)].map((m) => m[1]);
 assert(tabHrefMatches.length >= 3 && tabHrefMatches.length <= 5, `Tab count must be 3–5, got ${tabHrefMatches.length}`);
