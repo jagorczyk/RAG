@@ -4,5 +4,6 @@ public enum IngestionStatus {
     PENDING,
     EXTRACTED,
     NEEDS_REVIEW,
-    READY
+    READY,
+    FAILED
 }

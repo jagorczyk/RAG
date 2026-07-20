@@ -222,6 +222,32 @@ export interface UploadResult {
   path: string;
   fileName: string;
   image: boolean;
+  status?: "PENDING" | "READY" | "FAILED" | "EXTRACTED" | "NEEDS_REVIEW" | string;
+}
+
+export async function getIngestionStatus(path: string): Promise<{ path: string; status: string }> {
+  const params = new URLSearchParams({ path });
+  const response = await apiFetch(`${BASE_URL}/api/data/files/ingestion-status?${params.toString()}`);
+  if (!response.ok) throw new Error("Failed to read ingestion status");
+  return response.json();
+}
+
+/** Poll until READY/FAILED (or timeout). Used after async upload (202 + PENDING). */
+export async function waitForIngestionReady(
+  path: string,
+  options?: { timeoutMs?: number; intervalMs?: number; onTick?: (status: string) => void }
+): Promise<string> {
+  const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000;
+  const intervalMs = options?.intervalMs ?? 1500;
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const { status } = await getIngestionStatus(path);
+    options?.onTick?.(status);
+    if (status === "READY" || status === "NEEDS_REVIEW") return status;
+    if (status === "FAILED") throw new Error("Przetwarzanie pliku nie powiodło się.");
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error("Przekroczono limit czasu oczekiwania na przetworzenie pliku.");
 }
 
 export function uploadFileToFolderWithProgress(
@@ -262,16 +288,31 @@ export function uploadFileToFolderWithProgress(
     xhr.addEventListener("load", () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         report(1, "processing");
+        let parsed: UploadResult;
         try {
-          const parsed = JSON.parse(xhr.responseText) as UploadResult;
-          resolve(parsed);
+          parsed = JSON.parse(xhr.responseText) as UploadResult;
         } catch {
-          resolve({
+          parsed = {
             path: "",
             fileName: file.name,
             image: file.type.startsWith("image/"),
-          });
+          };
         }
+
+        // Async ingest: HTTP returned quickly with PENDING — poll worker status.
+        if (parsed.path && parsed.status === "PENDING") {
+          waitForIngestionReady(parsed.path, {
+            onTick: () => report(0.95, "processing"),
+          })
+            .then((finalStatus) => {
+              report(1, "processing");
+              resolve({ ...parsed, status: finalStatus });
+            })
+            .catch(reject);
+          return;
+        }
+
+        resolve(parsed);
         return;
       }
       let message = "Nie udało się wgrać pliku.";

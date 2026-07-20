@@ -72,7 +72,7 @@ public class FolderController {
     }
 
     @PostMapping("/{id}/upload")
-    public UploadResultDto upload(
+    public ResponseEntity<UploadResultDto> upload(
             @PathVariable UUID id,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "entityTag", required = false) String entityTag
@@ -82,12 +82,14 @@ public class FolderController {
         FolderEntity folder = requireOwnedFolder(id, ownerId);
 
         try {
-            String path = ingestionService.ingestMultipartFile(file, folder, entityTag, ownerId);
+            UploadResultDto result = ingestionService.acceptUpload(file, folder, entityTag, ownerId);
             folder.setUpdatedAt(LocalDateTime.now());
             folderRepository.save(folder);
-            String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
-            boolean image = isImageFile(fileName, file.getContentType());
-            return new UploadResultDto(path, fileName, image);
+            // PENDING → 202 Accepted (worker continues); READY → 200 (sync / idempotent)
+            if ("PENDING".equals(result.status())) {
+                return ResponseEntity.accepted().body(result);
+            }
+            return ResponseEntity.ok(result);
         } catch (IOException e) {
             log.error("Failed to upload file to folder {}", folder.getName(), e);
             throw ApiException.badRequest("UPLOAD_FAILED", "Nie udało się przetworzyć wgranego pliku.");

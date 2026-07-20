@@ -8,6 +8,7 @@ import com.rag.rag.folder.dto.FileMoveDto;
 import com.rag.rag.folder.dto.FileRenameDto;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.entity.FolderEntity;
+import com.rag.rag.folder.entity.IngestionStatus;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.folder.repository.FolderRepository;
 import com.rag.rag.ingestion.service.IngestionService;
@@ -204,6 +205,18 @@ public class IngestionController {
         ingestionService.clearAllData();
         return ResponseEntity.ok(Map.of(
                 "message", "Wyczyszczono foldery, pliki, embeddingi i powiązane dane grafu bieżącego użytkownika."
+        ));
+    }
+
+    /** Poll ingestion job status after async upload (Sprint 2). */
+    @GetMapping("/files/ingestion-status")
+    public ResponseEntity<Map<String, String>> ingestionStatus(@RequestParam("path") String path) {
+        UUID ownerId = currentUserService.requireUserId();
+        IngestionStatus status = ingestionService.getIngestionStatus(path, ownerId)
+                .orElseThrow(() -> ApiException.notFound("FILE_NOT_FOUND", "Plik nie istnieje."));
+        return ResponseEntity.ok(Map.of(
+                "path", path,
+                "status", status.name()
         ));
     }
 

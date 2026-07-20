@@ -4,17 +4,19 @@ Spring Boot backend + Next.js frontend: dokumenty i zdjęcia, hybrid retrieval (
 
 ## Stack
 
-- **Backend:** Java 17, Spring Boot 4, JPA, PostgreSQL + PGVector, Spring Security JWT, Flyway, springdoc OpenAPI
+- **Backend:** Java 17, Spring Boot 4, JPA, PostgreSQL + PGVector, Spring Security JWT, Flyway, RabbitMQ async ingest, springdoc OpenAPI
 - **Frontend:** Next.js, token Bearer w `localStorage`
-- **Infra:** Docker Compose (`pgvector`, `face-service`)
+- **Infra:** Docker Compose (`pgvector`, `rabbitmq`, `face-service`)
 
 ## Szybki start
 
-### 1. Baza i face-service
+### 1. Baza, RabbitMQ i face-service
 
 ```bash
 docker compose up -d
 ```
+
+RabbitMQ management UI: `http://localhost:15672` (guest/guest)
 
 ### 2. Backend
 
@@ -80,7 +82,28 @@ W Swagger UI: **Authorize** → `Bearer <token>` (bez słowa „Bearer” w polu
 | `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | localhost:5433 / user / password | PostgreSQL |
 | `DEEPINFRA_API_KEY` | — | LLM / vision |
 | `FACE_SERVICE_URL` | `http://localhost:8001` | Serwis twarzy |
+| `RAG_INGEST_ASYNC` | `true` | `false` = synchroniczny ingest bez RabbitMQ |
+| `RABBITMQ_HOST` / `PORT` / `USER` / `PASSWORD` | localhost:5672 guest | Broker ingestu |
 | `NEXT_PUBLIC_BACKEND_URL` | `http://localhost:8080` | URL API dla frontu |
+
+## Async ingest (Sprint 2)
+
+Upload pliku:
+
+1. `POST /api/folders/{id}/upload` zapisuje bajty ze statusem **`PENDING`** i publikuje event na RabbitMQ → **HTTP 202**.
+2. Worker (`DocumentIngestListener`) robi vision / embeddingi / face → **`READY`** lub **`FAILED`**.
+3. Poll statusu: `GET /api/data/files/ingestion-status?path=dir://folder/file.jpg`
+4. Frontend po 202 automatycznie polluje do `READY` / `FAILED`.
+
+Idempotency: ten sam `path` + `contentHash` przy statusie `READY` nie dubluje ciężkiej pracy.
+
+Kolejka: `rag.ingest.document-uploaded` z DLQ `rag.ingest.document-uploaded.dlq` (retry 3×).
+
+Bez brokera (dev/test):
+
+```properties
+rag.ingest.async-enabled=false
+```
 
 **Nie commituj** `.env`, kluczy API ani haseł produkcyjnych.
 

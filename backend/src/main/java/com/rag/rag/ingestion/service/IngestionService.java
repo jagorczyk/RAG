@@ -1,11 +1,14 @@
 package com.rag.rag.ingestion.service;
 
 import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.folder.dto.UploadResultDto;
 import com.rag.rag.folder.entity.FolderEntity;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.folder.repository.FolderRepository;
 import com.rag.rag.ingestion.dto.SourceDto;
+import com.rag.rag.ingestion.messaging.DocumentIngestPublisher;
+import com.rag.rag.ingestion.messaging.DocumentUploadedEvent;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.parser.TextDocumentParser;
 import dev.langchain4j.data.document.parser.apache.tika.ApacheTikaDocumentParser;
@@ -13,6 +16,7 @@ import dev.langchain4j.service.Result;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
 import lombok.extern.slf4j.Slf4j;
 import net.coobird.thumbnailator.Thumbnails;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -61,6 +65,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -81,6 +86,9 @@ public class IngestionService {
     @Value("${face.analyzer-version:v1}")
     private String faceAnalyzerVersion;
 
+    @Value("${rag.ingest.async-enabled:true}")
+    private boolean asyncIngestEnabled;
+
     private final EmbeddingStoreIngestor ingestor;
     private final FileRepository fileRepository;
     private final FolderRepository folderRepository;
@@ -98,6 +106,7 @@ public class IngestionService {
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
     private final CurrentUserService currentUserService;
+    private final ObjectProvider<DocumentIngestPublisher> documentIngestPublisher;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionService(
@@ -117,7 +126,8 @@ public class IngestionService {
             IdentityResolutionService identityResolutionService,
             JdbcTemplate jdbcTemplate,
             PlatformTransactionManager transactionManager,
-            CurrentUserService currentUserService
+            CurrentUserService currentUserService,
+            ObjectProvider<DocumentIngestPublisher> documentIngestPublisher
     ) {
         this.ingestor = ingestor;
         this.fileRepository = fileRepository;
@@ -136,6 +146,7 @@ public class IngestionService {
         this.jdbcTemplate = jdbcTemplate;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.currentUserService = currentUserService;
+        this.documentIngestPublisher = documentIngestPublisher;
     }
 
     private Document chooseParser(byte[] fileData, String path, String fileName, String extension) {
@@ -695,14 +706,13 @@ public class IngestionService {
     }
 
     /**
-     * Vision/embeddings commit first; face analysis runs afterwards so face errors
-     * cannot force UnexpectedRollbackException on the whole upload.
+     * HTTP accept path: store bytes as PENDING and either enqueue (async) or process inline.
      */
     public String ingestMultipartFile(MultipartFile file, FolderEntity folder, String entityTag) throws IOException {
         UUID ownerId = folder.getOwnerId() != null
                 ? folder.getOwnerId()
                 : currentUserService.requireUserId();
-        return ingestMultipartFile(file, folder, entityTag, ownerId);
+        return acceptUpload(file, folder, entityTag, ownerId).path();
     }
 
     public String ingestMultipartFile(
@@ -711,40 +721,209 @@ public class IngestionService {
             String entityTag,
             UUID ownerId
     ) throws IOException {
-        String fileName = file.getOriginalFilename();
-        String extension = StringUtils.getFilenameExtension(fileName);
-        String group = folder.getName();
+        return acceptUpload(file, folder, entityTag, ownerId).path();
+    }
 
+    public UploadResultDto acceptUpload(
+            MultipartFile file,
+            FolderEntity folder,
+            String entityTag,
+            UUID ownerId
+    ) throws IOException {
+        String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "file";
+        String extension = StringUtils.getFilenameExtension(fileName);
         String path = "dir://" + folder.getName() + "/" + fileName;
         byte[] data = file.getBytes();
-        boolean image = isImageExtension(extension);
+        String contentHash = sha256Hex(data);
+        boolean image = isImageFile(fileName, file.getContentType());
+        String mimeType = resolveMimeType(file.getContentType(), extension);
+
+        // Idempotency: same path + same hash already READY → do not re-queue heavy work.
+        Optional<FileEntity> existingOpt = fileRepository.findByPath(path);
+        if (existingOpt.isPresent()) {
+            FileEntity existing = existingOpt.get();
+            if (existing.getOwnerId() != null && !existing.getOwnerId().equals(ownerId)) {
+                throw new IllegalStateException("Path already owned by another user");
+            }
+            if (IngestionStatus.READY.equals(existing.getIngestionStatus())
+                    && contentHash.equals(existing.getContentHash())) {
+                log.info("Idempotent upload skip (already READY) path={}", path);
+                return new UploadResultDto(path, fileName, image, IngestionStatus.READY.name());
+            }
+        }
 
         transactionTemplate.executeWithoutResult(status -> {
+            FileEntity entity = existingOpt.orElseGet(() -> FileEntity.builder().path(path).build());
+            entity.setFileName(fileName);
+            entity.setFileType(mimeType);
+            entity.setImageData(data);
+            entity.setContentHash(contentHash);
+            entity.setOwnerId(ownerId);
+            entity.setIngestionStatus(IngestionStatus.PENDING);
             if (entityTag != null && !entityTag.isBlank()) {
-                storeEntityTag(path, fileName, entityTag.trim(), ownerId);
+                entity.setEntityTag(entityTag.trim());
             }
-            Document parsedDocument = chooseParser(data, path, fileName, extension);
-            if (parsedDocument != null) {
-                parsedDocument.metadata()
-                        .put("document_id", group)
-                        .put("filename", fileName)
-                        .put("path", path)
-                        .put("source_type", sourceType(fileName));
-                ingestor.ingest(parsedDocument);
-                log.info("Successfully ingested file: {}", path);
+            fileRepository.save(entity);
+        });
+
+        DocumentUploadedEvent event = new DocumentUploadedEvent(
+                path,
+                ownerId,
+                contentHash,
+                folder.getName(),
+                fileName,
+                entityTag != null && !entityTag.isBlank() ? entityTag.trim() : null
+        );
+
+        if (asyncIngestEnabled) {
+            DocumentIngestPublisher publisher = documentIngestPublisher.getIfAvailable();
+            if (publisher == null) {
+                log.warn("Async ingest enabled but no publisher bean — processing inline for {}", path);
+                processQueuedDocument(event);
+                return new UploadResultDto(path, fileName, image, statusOf(path));
             }
+            publisher.publish(event);
+            return new UploadResultDto(path, fileName, image, IngestionStatus.PENDING.name());
+        }
+
+        processQueuedDocument(event);
+        return new UploadResultDto(path, fileName, image, statusOf(path));
+    }
+
+    /**
+     * Worker path (Rabbit consumer or inline fallback). Vision/embeddings then face.
+     */
+    public void processQueuedDocument(DocumentUploadedEvent event) {
+        if (event == null || event.path() == null || event.path().isBlank()) {
+            return;
+        }
+        String path = event.path();
+        try {
+            FileEntity file = fileRepository.findByPath(path)
+                    .orElseThrow(() -> new IllegalStateException("Missing file for ingest path: " + path));
+
+            if (IngestionStatus.READY.equals(file.getIngestionStatus())
+                    && event.contentHash() != null
+                    && event.contentHash().equals(file.getContentHash())) {
+                log.info("Skip processQueuedDocument — already READY path={}", path);
+                return;
+            }
+
+            byte[] data = file.getImageData();
+            if (data == null || data.length == 0) {
+                throw new IllegalStateException("No stored bytes for path: " + path);
+            }
+
+            String fileName = file.getFileName() != null ? file.getFileName() : event.fileName();
+            String extension = StringUtils.getFilenameExtension(fileName);
+            String group = event.folderName() != null ? event.folderName() : extractFolderName(path);
+            boolean image = isImageExtension(extension);
+
+            if (event.entityTag() != null && !event.entityTag().isBlank()) {
+                storeEntityTag(path, fileName, event.entityTag(), event.ownerId());
+            }
+
+            transactionTemplate.executeWithoutResult(status -> {
+                jdbcTemplate.update("DELETE FROM embeddings WHERE metadata->>'path' = ?", path);
+                Document parsedDocument = chooseParser(data, path, fileName, extension);
+                if (parsedDocument != null) {
+                    parsedDocument.metadata()
+                            .put("document_id", group)
+                            .put("filename", fileName)
+                            .put("path", path)
+                            .put("source_type", sourceType(fileName));
+                    ingestor.ingest(parsedDocument);
+                    log.info("Successfully processed queued file: {}", path);
+                }
+                fileRepository.findByPath(path).ifPresent(entity -> {
+                    if (entity.getOwnerId() == null && event.ownerId() != null) {
+                        entity.setOwnerId(event.ownerId());
+                    }
+                    // READY unless vision left NEEDS_REVIEW or FAILED earlier
+                    if (!IngestionStatus.NEEDS_REVIEW.equals(entity.getIngestionStatus())
+                            && !IngestionStatus.FAILED.equals(entity.getIngestionStatus())) {
+                        if (entity.getIngestionStatus() == null
+                                || IngestionStatus.PENDING.equals(entity.getIngestionStatus())
+                                || IngestionStatus.EXTRACTED.equals(entity.getIngestionStatus())) {
+                            entity.setIngestionStatus(IngestionStatus.READY);
+                        }
+                    }
+                    if (IngestionStatus.EXTRACTED.equals(entity.getIngestionStatus())
+                            || IngestionStatus.NEEDS_REVIEW.equals(entity.getIngestionStatus())) {
+                        // Promote EXTRACTED → READY after embeddings; keep NEEDS_REVIEW for human review.
+                        if (IngestionStatus.EXTRACTED.equals(entity.getIngestionStatus())) {
+                            entity.setIngestionStatus(IngestionStatus.READY);
+                        }
+                    }
+                    fileRepository.save(entity);
+                });
+            });
+
+            if (image) {
+                completeFaceAnalysisForPath(path);
+            }
+
             fileRepository.findByPath(path).ifPresent(entity -> {
-                if (entity.getOwnerId() == null) {
-                    entity.setOwnerId(ownerId);
+                if (!IngestionStatus.FAILED.equals(entity.getIngestionStatus())
+                        && !IngestionStatus.NEEDS_REVIEW.equals(entity.getIngestionStatus())) {
+                    entity.setIngestionStatus(IngestionStatus.READY);
                     fileRepository.save(entity);
                 }
             });
-        });
-
-        if (image) {
-            completeFaceAnalysisForPath(path);
+        } catch (Exception e) {
+            log.error("Queued ingest failed for path={}", path, e);
+            fileRepository.findByPath(path).ifPresent(entity -> {
+                entity.setIngestionStatus(IngestionStatus.FAILED);
+                fileRepository.save(entity);
+            });
+            throw e instanceof RuntimeException re ? re : new RuntimeException(e);
         }
-        return path;
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<IngestionStatus> getIngestionStatus(String path, UUID ownerId) {
+        return fileRepository.findByPathAndOwnerId(path, ownerId).map(FileEntity::getIngestionStatus);
+    }
+
+    private String statusOf(String path) {
+        return fileRepository.findByPath(path)
+                .map(FileEntity::getIngestionStatus)
+                .map(Enum::name)
+                .orElse(IngestionStatus.PENDING.name());
+    }
+
+    private String extractFolderName(String path) {
+        if (path == null || !path.startsWith("dir://")) {
+            return "";
+        }
+        int slash = path.indexOf('/', "dir://".length());
+        return slash > 0 ? path.substring("dir://".length(), slash) : path.substring("dir://".length());
+    }
+
+    private String resolveMimeType(String contentType, String extension) {
+        if (contentType != null && !contentType.isBlank()) {
+            return contentType;
+        }
+        if (extension == null) {
+            return "application/octet-stream";
+        }
+        return switch (extension.toLowerCase(Locale.ROOT)) {
+            case "png" -> "image/png";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "gif" -> "image/gif";
+            case "webp" -> "image/webp";
+            case "pdf" -> "application/pdf";
+            case "txt" -> "text/plain";
+            default -> "application/octet-stream";
+        };
+    }
+
+    private boolean isImageFile(String fileName, String contentType) {
+        if (contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("image/")) {
+            return true;
+        }
+        String extension = StringUtils.getFilenameExtension(fileName);
+        return isImageExtension(extension);
     }
 
     private boolean isImageExtension(String extension) {
