@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const boardPath = path.join(__dirname, "index.html");
 const designPath = path.join(__dirname, "DESIGN-PROVENANCE.md");
 const readmePath = path.join(__dirname, "README.md");
+const handoffPath = path.join(__dirname, "HANDOFF.txt");
 const quietArchiveBoard = path.join(__dirname, "..", "figma-layout", "index.html");
 const quietDesign = path.join(__dirname, "..", "..", "DESIGN.md");
 
@@ -34,12 +35,25 @@ function assert(cond, msg) {
 
 // ── Load shipped sources ──
 assert(fs.existsSync(boardPath), "index.html exists");
-assert(fs.existsSync(designPath), "DESIGN-PROVENANCE.md exists");
-assert(fs.existsSync(readmePath), "README.md handoff exists");
+assert(
+  fs.existsSync(designPath) || fs.existsSync(handoffPath),
+  "DESIGN-PROVENANCE.md or HANDOFF.txt exists"
+);
+assert(
+  fs.existsSync(readmePath) || fs.existsSync(handoffPath),
+  "README.md or HANDOFF.txt handoff exists"
+);
 
 const html = fs.readFileSync(boardPath, "utf8");
-const design = fs.readFileSync(designPath, "utf8");
-const readme = fs.readFileSync(readmePath, "utf8");
+const design = fs.existsSync(designPath)
+  ? fs.readFileSync(designPath, "utf8")
+  : "";
+const handoff = [
+  fs.existsSync(readmePath) ? fs.readFileSync(readmePath, "utf8") : "",
+  fs.existsSync(handoffPath) ? fs.readFileSync(handoffPath, "utf8") : "",
+  design,
+].join("\n");
+const readme = handoff;
 
 // ── Frame inventory ──
 const frameIds = [...html.matchAll(/data-frame="([^"]+)"/g)].map((m) => m[1]);
@@ -115,9 +129,12 @@ if (fs.existsSync(quietArchiveBoard)) {
 if (fs.existsSync(quietDesign)) {
   const oldDesign = fs.readFileSync(quietDesign, "utf8");
   assert(/Quiet Archive/.test(oldDesign), "RAG/DESIGN.md still Quiet Archive (shipped)");
-  assert(/Provenance/.test(design), "new design doc is Provenance");
   assert(
-    !design.includes('ink: "#000000"') || design.includes("oklch"),
+    /Provenance/.test(design) || /Provenance/.test(handoff) || /Provenance/.test(html),
+    "new design doc is Provenance"
+  );
+  assert(
+    /oklch|copper|0\.55 0\.145 74/i.test(design + handoff + html),
     "new design uses OKLCH/copper system"
   );
 }

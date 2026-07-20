@@ -1,0 +1,69 @@
+RAG · Provenance · Figma handoff
+================================
+
+Open board: design/provenance/index.html  (start / browser / npx serve)
+No Figma API in environment — import via html.to.design or Place image.
+
+NORTH STAR: Provenance (NOT Quiet Archive)
+- Primary: copper oklch(0.55 0.145 74)  approx #C26A1A
+- Type: IBM Plex Sans (not Inter)
+- Chrome: cool slate sidebar + dark icon rail (not #f7f7f8 + black CTAs)
+- Strategy: Restrained product UI
+
+TOKEN TABLE
+  bg            oklch(1 0 0)
+  sidebar       oklch(0.955 0.014 250)
+  ink           oklch(0.22 0.028 55)
+  ink-muted     oklch(0.48 0.02 55)
+  primary       oklch(0.55 0.145 74)   copper CTA / evidence
+  on-primary    oklch(1 0 0)
+  accent        oklch(0.40 0.07 245)   slate-blue structure
+  success       oklch(0.50 0.11 155)   Potwierdzone
+  warning       oklch(0.58 0.13 65)    Do potwierdzenia
+  error         oklch(0.55 0.17 25)
+  touch min     44px
+  radius        6 / 10 / 14 / 18 / full
+
+FRAME MAP
+  T-00  Tokens              960×720
+  P-00  Kole Jain map       960×520
+  D-01  Biblioteka          1440×900
+  D-02  Osoby               1440×900
+  D-03  Chat + źródła       1440×900
+  D-04  Folder detail       1440×900
+  D-05  Review tożsamości   1440×900
+  M-01  Biblioteka          390×844
+  M-02  Osoby               390×844
+  M-03  Rozmowy             390×844
+  M-04  Chat deep           390×844
+  M-05  Profil osoby        390×844
+  M-06  Sheet · Źródła      390×844
+  M-07  Sheet · Opcje       390×844
+  M-08  Folder detail       390×844
+  M-09  Review tożsamości   390×844
+
+IMPORT TO FIGMA
+  1. Open index.html at 100% zoom
+  2. html.to.design plugin OR screenshot each .frame
+  3. Place image / import; name frames as above
+  4. Create color styles from T-00
+
+KOLE JAIN (youtube.com/watch?v=Gfsd8NNuD9g)
+  Navigation  4 tabs ≤5 (Biblioteka, Osoby, Chat, Więcej)
+  Scale       touch ≥44px
+  Content     photos/faces/answers first
+  One job     sheets for secondary actions
+  Gestures    swipe-dismiss sheets, back on deep routes
+
+PRODUCT RULES
+  suggested ≠ confirmed badges
+  sources never in answer prose
+  Polish UI copy
+  no gradient text / glass / side-stripes / metric KPI grids
+
+VERIFY
+  node design/provenance/verify-board.mjs
+  PROVENANCE_SCRATCH=... node design/provenance/screenshot-board.mjs
+
+ANTI-REF: design/figma-layout (Quiet Archive) remains previous look.
+Implementation in frontend/rag-mobile is OUT OF SCOPE (design only).
