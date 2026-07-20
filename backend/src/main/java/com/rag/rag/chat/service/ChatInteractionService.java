@@ -6,9 +6,9 @@ import com.rag.rag.chat.dto.QueryEvidenceDto;
 import com.rag.rag.chat.entity.ChatMessageEntity;
 import com.rag.rag.chat.repository.ChatMemoryRepository;
 import com.rag.rag.chat.repository.ChatMessageRepository;
+import com.rag.rag.core.retrieval.RetrievalPathScope;
 import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
-import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphQueryService;
 import com.rag.rag.knowledge.graph.GraphEvidenceResult;
 import com.rag.rag.knowledge.query.DynamicVisualMatcher;
@@ -21,7 +21,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,43 +77,62 @@ public class ChatInteractionService {
                 plan.entities(), plan.fileScope(), plan.entityMatchMode());
         // Co-presence is a set operation on planner output: when ALL_SAME_FILE has no
         // intersection evidence, never let the LLM or hybrid retrieval affirm a joint photo.
-        if (requiresJointFileEvidence(plan) && !graphEvidence.hasEvidence()) {
+        if (ChatRetrievalPolicy.mustDenyJointFile(plan, graphEvidence)) {
             String denial = "Nie znaleziono potwierdzonego wspólnego zdjęcia tych osób.";
             saveAiMessage(chatId, denial, List.of(), List.of(), plan.retrievalMode().name(), true);
             return new MessageResponse(denial, List.of(), true, List.of(), plan.retrievalMode().name());
         }
+
+        boolean graphMissFallback = ChatRetrievalPolicy.shouldFallbackFromGraph(plan, graphEvidence);
+        QueryPlan.RetrievalMode effectiveMode = ChatRetrievalPolicy.effectiveRetrievalMode(plan, graphEvidence);
+
         String graphContext = graphEvidence.context();
-        String prompt = graphContext.isBlank() ? plan.question() : """
-                [Kontekst zweryfikowany]
-                %s
+        String prompt;
+        if (graphMissFallback) {
+            // No certain graph rows — answer from hybrid document retrieval on the question.
+            prompt = """
+                    [Instrukcja odpowiedzi]
+                    %s
+                    Graf wiedzy nie ma pewnych dowodów dla tego pytania; użyj wyłącznie kontekstu dokumentów z retrieval.
+                    Odpowiedź: jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
 
-                [Instrukcja odpowiedzi]
-                %s
-                Odpowiedź: jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
+                    Pytanie użytkownika: %s
+                    """.formatted(plan.answerInstruction(), plan.question());
+        } else if (graphContext.isBlank()) {
+            prompt = plan.question();
+        } else {
+            prompt = """
+                    [Kontekst zweryfikowany]
+                    %s
 
-                Pytanie użytkownika: %s
-                """.formatted(graphContext, plan.answerInstruction(), plan.question());
-        Result<String> result = chatAiService.answer(chatId, answerPrompt(prompt));
+                    [Instrukcja odpowiedzi]
+                    %s
+                    Odpowiedź: jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
+
+                    Pytanie użytkownika: %s
+                    """.formatted(graphContext, plan.answerInstruction(), plan.question());
+        }
+
+        RetrievalPathScope.set(plan.fileScope());
+        Result<String> result;
+        try {
+            result = chatAiService.answer(chatId, answerPrompt(prompt));
+        } finally {
+            RetrievalPathScope.clear();
+        }
+
         String answer = result == null ? "" : result.content();
         if (answer == null || answer.isBlank()) {
             answer = "Nie udało się przygotować odpowiedzi na podstawie dostępnych danych.";
         }
-        List<SourceDto> sources = mergeSources(result, plan, graphEvidence);
+        List<SourceDto> sources = mergeSources(result, plan, graphEvidence, effectiveMode);
         String cleaned = removeTechnicalReferences(answer, sources);
-        boolean uncertain = plan.ambiguous() || (sources.isEmpty() && !graphContext.isBlank());
-        if (plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH && !graphEvidence.hasEvidence()) {
-            cleaned = "Nie znaleziono pewnych informacji w grafie wiedzy.";
-            uncertain = true;
-        }
-        saveAiMessage(chatId, cleaned, sources, List.of(), plan.retrievalMode().name(), uncertain);
-        return new MessageResponse(cleaned, sources, uncertain, List.of(), plan.retrievalMode().name());
-    }
-
-    /** True when the planner requires every named entity on the same file. */
-    private static boolean requiresJointFileEvidence(QueryPlan plan) {
-        return plan.entityMatchMode() == EntityMatchMode.ALL_SAME_FILE
-                && plan.entities() != null
-                && !plan.entities().isEmpty();
+        boolean uncertain = plan.ambiguous()
+                || graphMissFallback
+                || (sources.isEmpty() && !graphContext.isBlank());
+        String answerKind = effectiveMode.name();
+        saveAiMessage(chatId, cleaned, sources, List.of(), answerKind, uncertain);
+        return new MessageResponse(cleaned, sources, uncertain, List.of(), answerKind);
     }
 
     private MessageResponse processVisualPlan(UUID chatId, QueryPlan plan) {
@@ -148,13 +166,15 @@ public class ChatInteractionService {
     }
 
     private List<SourceDto> mergeSources(Result<String> result, QueryPlan plan,
-                                         GraphEvidenceResult graphEvidence) {
+                                         GraphEvidenceResult graphEvidence,
+                                         QueryPlan.RetrievalMode effectiveMode) {
         Map<String, SourceDto> unique = new LinkedHashMap<>();
-        QueryPlan.RetrievalMode mode = plan.retrievalMode();
+        QueryPlan.RetrievalMode mode = effectiveMode == null ? plan.retrievalMode() : effectiveMode;
+        List<String> fileScope = plan.fileScope();
 
         // ALL_SAME_FILE: only joint-intersection files may appear as sources.
         // Hybrid/vector hits that cover only a subset of entities must not be re-injected.
-        if (requiresJointFileEvidence(plan)) {
+        if (ChatRetrievalPolicy.requiresJointFileEvidence(plan)) {
             for (String path : graphEvidence.certainPaths()) {
                 addSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0));
             }
@@ -163,13 +183,17 @@ public class ChatInteractionService {
 
         if (mode != QueryPlan.RetrievalMode.GRAPH && result != null) {
             for (SourceDto source : ingestionService.getSources(result)) {
-                addSource(unique, source);
+                if (source != null && RetrievalPathScope.pathInScope(source.path(), fileScope)) {
+                    addSource(unique, source);
+                }
             }
         }
 
         if (mode != QueryPlan.RetrievalMode.DOCUMENT) {
             for (String path : graphEvidence.certainPaths()) {
-                addSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0));
+                if (RetrievalPathScope.pathInScope(path, fileScope)) {
+                    addSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0));
+                }
             }
         }
 

@@ -70,13 +70,22 @@ public class LexicalEmbeddingSearch {
         sql.append(')');
 
         if (pathFilter != null && !pathFilter.isEmpty()) {
-            sql.append(" AND metadata->>'path' IN (");
+            // Exact paths use =; folder-style entries (trailing slash or no filename extension)
+            // use prefix LIKE so HYBRID stays inside plan fileScope.
+            sql.append(" AND (");
             for (int i = 0; i < pathFilter.size(); i++) {
                 if (i > 0) {
-                    sql.append(',');
+                    sql.append(" OR ");
                 }
-                sql.append('?');
-                params.add(pathFilter.get(i));
+                String entry = pathFilter.get(i);
+                String folderPrefix = RetrievalPathScope.folderPrefix(entry);
+                if (!folderPrefix.isEmpty()) {
+                    sql.append("metadata->>'path' LIKE ?");
+                    params.add(escapeLike(folderPrefix) + "%");
+                } else {
+                    sql.append("metadata->>'path' = ?");
+                    params.add(entry);
+                }
             }
             sql.append(')');
         }

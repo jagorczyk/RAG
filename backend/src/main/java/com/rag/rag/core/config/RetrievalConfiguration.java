@@ -3,6 +3,7 @@ package com.rag.rag.core.config;
 import com.rag.rag.core.rerank.LlmDocumentReranker;
 import com.rag.rag.core.retrieval.HybridRetrievalMerger;
 import com.rag.rag.core.retrieval.LexicalEmbeddingSearch;
+import com.rag.rag.core.retrieval.RetrievalPathScope;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
@@ -126,6 +127,22 @@ public class RetrievalConfiguration {
                 pathFilter.addAll(graphPaths);
             }
 
+            // Plan fileScope (exact paths and/or folder prefixes) from chat turn.
+            List<String> planScope = RetrievalPathScope.get();
+            if (!planScope.isEmpty()) {
+                logger.info("PLAN FILE SCOPE: {}", planScope);
+                pathFilter.clear();
+                pathFilter.addAll(planScope);
+                List<String> exactPaths = planScope.stream()
+                        .filter(p -> RetrievalPathScope.folderPrefix(p).isEmpty())
+                        .toList();
+                if (!exactPaths.isEmpty() && exactPaths.size() == planScope.size()) {
+                    // All exact files — push filter into vector search when possible.
+                    searchRequestBuilder.filter(metadataKey("path").isIn(exactPaths));
+                    searchRequestBuilder.minScore(0.01);
+                }
+            }
+
             EmbeddingSearchResult<TextSegment> vectorResults = embeddingStore.search(searchRequestBuilder.build());
             logger.info("VECTOR RESULTS COUNT: {}", vectorResults.matches().size());
             vectorResults.matches().forEach(match -> logger.info(
@@ -136,6 +153,8 @@ public class RetrievalConfiguration {
             ));
 
             List<Content> vectorContents = vectorResults.matches().stream()
+                    .filter(match -> RetrievalPathScope.pathInScope(
+                            match.embedded().metadata().getString("path"), planScope))
                     .map(match -> {
                         TextSegment segment = match.embedded();
                         Map<String, Object> metadata = new HashMap<>(segment.metadata().toMap());
@@ -157,6 +176,13 @@ public class RetrievalConfiguration {
                         lexicalHits,
                         Math.max(recallMaxResults, lexicalMaxResults)
                 );
+                // Enforce plan scope after merge (lexical may expand; folder prefixes already SQL-filtered).
+                if (!planScope.isEmpty()) {
+                    hybridContents = hybridContents.stream()
+                            .filter(content -> RetrievalPathScope.pathInScope(
+                                    content.textSegment().metadata().getString("path"), planScope))
+                            .collect(Collectors.toList());
+                }
                 logger.info("HYBRID MERGED COUNT: {}", hybridContents.size());
             }
 
@@ -174,6 +200,8 @@ public class RetrievalConfiguration {
             });
 
             return rerankedContents.stream()
+                    .filter(content -> RetrievalPathScope.pathInScope(
+                            content.textSegment().metadata().getString("path"), planScope))
                     .limit(photoSearch ? photoMaxResults : maxResults)
                     .collect(Collectors.toList());
         };

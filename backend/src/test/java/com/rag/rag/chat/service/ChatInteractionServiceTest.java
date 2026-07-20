@@ -79,20 +79,84 @@ class ChatInteractionServiceTest {
     }
 
     @Test
-    void doesNotPromoteUncertainGraphPathsAsSources() {
-        QueryPlan plan = new QueryPlan("Co robi Igor?", List.of("Igor"), List.of("dir://maybe.jpg"),
+    void graphMissFallsBackToHybridDocumentRetrieval() {
+        QueryPlan plan = new QueryPlan("Co robi Igor?", List.of("Igor"), List.of(),
                 "Co robi Igor?", "", false, false, QueryPlan.RetrievalMode.GRAPH,
                 "Odpowiedz z grafu.");
         when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
         when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
                 .thenReturn(new GraphEvidenceResult("", List.of()));
-        Result<String> result = Result.<String>builder().content("Nie znaleziono informacji w dokumentach.").build();
+        Result<String> result = Result.<String>builder().content("Igor je zupę według dokumentu.").build();
         when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        SourceDto docSource = new SourceDto("dir://doc.txt", "doc.txt", 0.8, null, "TEXT");
+        when(ingestionService.getSources(result)).thenReturn(List.of(docSource));
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
 
-        assertTrue(response.sources().isEmpty());
+        // Graph-empty GRAPH plans must still invoke hybrid/document answer path (not hard graph denial).
+        verify(chatAiService).answer(eq(chatId), anyString());
+        verify(ingestionService).getSources(result);
         verify(ingestionService, never()).createGraphFactSourceDto(anyString(), any(), anyDouble());
+        assertEquals("Igor je zupę według dokumentu.", response.response());
+        assertFalse(response.response().contains("Nie znaleziono pewnych informacji w grafie wiedzy"));
+        assertEquals(QueryPlan.RetrievalMode.HYBRID.name(), response.answerKind());
+        assertEquals(1, response.sources().size());
+        assertEquals("dir://doc.txt", response.sources().get(0).path());
+        assertTrue(response.uncertain());
+    }
+
+    @Test
+    void fileScopeExcludesOutOfScopeHybridSources() {
+        QueryPlan plan = new QueryPlan(
+                "Co w folderze?",
+                List.of("Igor"),
+                List.of("dir://wakacje/a.jpg"),
+                "Co w folderze?",
+                "",
+                false,
+                false,
+                QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z dowodów.");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("[Fakty]\n- Igor", List.of("dir://wakacje/a.jpg", "dir://other/x.jpg")));
+        Result<String> result = Result.<String>builder().content("Igor jest na wakacjach.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of(
+                new SourceDto("dir://wakacje/a.jpg", "a.jpg", 0.9, null, "IMAGE"),
+                new SourceDto("dir://other/x.jpg", "x.jpg", 0.85, null, "IMAGE")
+        ));
+        when(ingestionService.createGraphFactSourceDto(eq("dir://wakacje/a.jpg"), any(), anyDouble()))
+                .thenReturn(new SourceDto("dir://wakacje/a.jpg", "a.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertTrue(response.sources().stream().allMatch(s -> "dir://wakacje/a.jpg".equals(s.path())));
+        assertTrue(response.sources().stream().noneMatch(s -> "dir://other/x.jpg".equals(s.path())));
+        verify(chatAiService).answer(eq(chatId), anyString());
+    }
+
+    @Test
+    void graphSuccessStillUsesGraphSourcesWithoutForcedDenial() {
+        QueryPlan plan = new QueryPlan("Co robi Igor?", List.of("Igor"), List.of(),
+                "Co robi Igor?", "", false, false, QueryPlan.RetrievalMode.GRAPH,
+                "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("- entity=Igor; file=dir://a.jpg", List.of("dir://a.jpg")));
+        Result<String> result = Result.<String>builder().content("Igor je zupę.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq("dir://a.jpg"), any(), anyDouble()))
+                .thenReturn(new SourceDto("dir://a.jpg", "a.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals("Igor je zupę.", response.response());
+        assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
+        assertEquals(1, response.sources().size());
+        verify(ingestionService).createGraphFactSourceDto(eq("dir://a.jpg"), any(), anyDouble());
+        // Pure GRAPH with evidence does not pull hybrid document sources
+        verify(ingestionService, never()).getSources(any());
     }
 
     @Test
