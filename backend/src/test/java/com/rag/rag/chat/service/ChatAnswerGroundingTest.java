@@ -20,12 +20,28 @@ class ChatAnswerGroundingTest {
                 "Nie jestem w stanie odpowiedzieć na to pytanie, ponieważ nie mam informacji, o kogo konkretnie pytasz."));
         assertTrue(ChatAnswerGrounding.isCapabilityDenial(
                 "Nie wiem, o kogo pytasz — podaj więcej szczegółów."));
+        assertTrue(ChatAnswerGrounding.isCapabilityDenial(
+                "Aby odpowiedzieć na pytanie, potrzebuję więcej informacji. Czy możesz podać dostępne zdjęcia lub opisać, jak wygląda osoba?"));
+        assertTrue(ChatAnswerGrounding.isCapabilityDenial(
+                "Need more information — describe how they look."));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(
                 "Na zdjęciu są Igor i Anna."));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(
                 "Nie znaleziono informacji w dokumentach."));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(""));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(null));
+    }
+
+    @Test
+    void detectsGeneralKnowledgeEssayShape() {
+        assertTrue(ChatAnswerGrounding.isGeneralKnowledgeEssay(
+                "To imię męskie, które jest zdrobnieniem od imienia. Imię pochodzi z języka greckiego."));
+        assertTrue(ChatAnswerGrounding.isGeneralKnowledgeEssay(
+                "W kulturze popularnej istnieje wiele postaci o tym imieniu."));
+        assertFalse(ChatAnswerGrounding.isGeneralKnowledgeEssay(
+                "Osoba stoi w siłowni w czarnej koszulce."));
+        assertFalse(ChatAnswerGrounding.isGeneralKnowledgeEssay(
+                "Nie znaleziono informacji w dokumentach."));
     }
 
     @Test
@@ -49,6 +65,46 @@ class ChatAnswerGroundingTest {
                 ChatAnswerGrounding.formatParticipantRoster(List.of("Igor", "Anna", "Dawid")));
         assertEquals(ChatAnswerGrounding.GROUNDED_NO_ROSTER_FALLBACK,
                 ChatAnswerGrounding.formatParticipantRoster(List.of()));
+    }
+
+    @Test
+    void entityScopedPresenceDoesNotListUnrelatedCoPresentPeople() {
+        String denial = "Potrzebuję więcej informacji. Opisz, jak wygląda ta osoba.";
+        // Recovery names are only the plan entities — not the full multi-file roster.
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                denial, List.of("Anna"), true, true);
+        assertTrue(resolved.contains("Anna"));
+        assertTrue(resolved.contains("potwierdzonych zdjęciach"));
+        assertFalse(resolved.contains("Igor"));
+        assertFalse(resolved.contains("Dawid"));
+        assertFalse(ChatAnswerGrounding.isCapabilityDenial(resolved));
+        // Full roster shape must not be used for entity-scoped recovery.
+        assertFalse(resolved.startsWith("Na zdjęciu są"));
+    }
+
+    @Test
+    void entityScopedGeneralKnowledgeEssayIsReplacedByPresence() {
+        String essay = "To imię męskie, które jest zdrobnieniem. Imię pochodzi z języka greckiego i oznacza skałę. "
+                + "W kulturze popularnej jest popularne.";
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                essay, List.of("Anna"), true, true);
+        assertEquals("Anna jest na potwierdzonych zdjęciach w bibliotece.", resolved);
+        assertFalse(ChatAnswerGrounding.isGeneralKnowledgeEssay(resolved));
+    }
+
+    @Test
+    void nonEntityScopedKeepsFullRosterOnDenial() {
+        String denial = "Nie mogę zobaczyć zdjęć.";
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                denial, List.of("Igor", "Anna", "Dawid"), true, false);
+        assertEquals("Na zdjęciu są Igor, Anna i Dawid.", resolved);
+    }
+
+    @Test
+    void goodEvidenceBackedAnswerUnchangedEvenWhenEntityScoped() {
+        String good = "Osoba stoi w siłowni w czarnej koszulce i niebieskiej czapce.";
+        assertEquals(good, ChatAnswerGrounding.resolveGroundedAnswer(
+                good, List.of("Anna"), true, true));
     }
 
     @Test
@@ -88,5 +144,16 @@ class ChatAnswerGroundingTest {
         String withEmptyDouble = "Brak pliku \"\" w bibliotece.";
         String cleaned2 = ChatAnswerGrounding.cleanEmptyQuoteArtifacts(withEmptyDouble);
         assertFalse(cleaned2.contains("\"\""));
+    }
+
+    @Test
+    void formatEntityScopedPresenceHasNoFilenames() {
+        String one = ChatAnswerGrounding.formatEntityScopedPresence(List.of("Igor"));
+        assertEquals("Igor jest na potwierdzonych zdjęciach w bibliotece.", one);
+        assertFalse(one.contains(".jpg"));
+        assertFalse(one.contains("dir://"));
+
+        String multi = ChatAnswerGrounding.formatEntityScopedPresence(List.of("Igor", "Anna"));
+        assertEquals("Igor i Anna są na potwierdzonych zdjęciach w bibliotece.", multi);
     }
 }

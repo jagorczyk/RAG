@@ -35,15 +35,17 @@ public class MentionEvidencePolicy {
         if (mention == null || mention.getStatus() != MentionStatus.CONFIRMED || mention.getEntity() == null) {
             return false;
         }
-        // Vision placeholders (person 1 / animal 1) are never certain identity sources.
-        if (isVisionPlaceholderLabel(mention.getLabel())
-                || isVisionPlaceholderLabel(mention.getEntity().getDisplayName())) {
+        // Placeholder *entity* display names (person 1 / animal 1) are never certain identity
+        // sources. Vision labels on the mention may still be person N after FACE_MATCH when the
+        // linked entity already has a real display name — those may be certain.
+        if (isVisionPlaceholderLabel(mention.getEntity().getDisplayName())) {
             return false;
         }
 
         IdentityEvidenceSource source = mention.getIdentitySource();
         if (source == null) {
             // Backwards compatibility only. Existing data keeps the old semantics.
+            // Unnamed vision slots without a real entity name stay non-certain via displayName.
             return atLeast(mention.getConfidence(), minMentionConfidence);
         }
 

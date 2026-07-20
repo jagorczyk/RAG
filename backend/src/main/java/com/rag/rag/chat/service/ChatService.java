@@ -26,8 +26,12 @@ public interface ChatService {
             Kontekst tekstowy o obrazach z bazy i grafu jest pełnoprawnym dowodem — nie mów,
             że nie widzisz zdjęć, nie masz dostępu do plików, nie możesz określić kto jest
             na zdjęciu ani że nie wiesz o kogo pyta użytkownik, gdy w kontekście są
-            potwierdzone imiona lub encje. Nie używaj placeholderów vision (person 1, animal 1)
-            jako imion — pomiń je i podaj tylko prawdziwe nazwy z grafu.
+            potwierdzone imiona lub encje. Nie proś użytkownika o opis wyglądu ani o listę
+            zdjęć, gdy w kontekście są już potwierdzone encje lub pliki.
+            Nie używaj placeholderów vision (person 1, animal 1) jako imion — pomiń je i podaj
+            tylko prawdziwe nazwy z grafu.
+            Nie podawaj etymologii imion, biografii ogólnych ani wiedzy encyklopedycznej
+            niezwiązanej z dostarczonymi dowodami.
             Gdy brakuje istotnych informacji, odpowiedz dokładnie:
             "Nie znaleziono informacji w dokumentach."
             Odpowiedź ma być krótka i zwięzła: zwykle jedno zdanie, najwyżej dwa.

@@ -535,7 +535,7 @@ class ChatInteractionServiceTest {
 
     @Test
     void certainGraphParticipantsOverrideVisionCapabilityDenial() {
-        // Shipped text/graph path: model refuses vision while certain graph names exist → roster.
+        // Empty entities + fileScope: who-is-on-photo → full certain co-presence roster.
         String question = "Pytanie o uczestników pliku w zakresie.";
         String path = "dir://awdaw/4C Matura-342.jpg";
         QueryPlan plan = new QueryPlan(question, List.of(), List.of(path),
@@ -568,6 +568,73 @@ class ChatInteractionServiceTest {
         assertFalse(response.uncertain());
         assertNotEquals("NO_EVIDENCE", response.answerKind());
         verify(graphQueryService).certainParticipantNamesForPaths(anyList());
+    }
+
+    @Test
+    void namedEntityDenialUsesEntityScopedPresenceNotFullRoster() {
+        // Plan names one entity; recovery must not dump co-present people from other sources.
+        String question = "Na których zdjęciach jest ta osoba?";
+        String pathA = "dir://awdaw/a.jpg";
+        String pathB = "dir://awdaw/b.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Anna"), List.of(),
+                question, "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "- entity=Anna; file=" + pathA + "\n- entity=Anna; file=" + pathB,
+                        List.of(pathA, pathB)));
+        // If the service wrongly used full-path roster, these names would appear.
+        lenient().when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Anna", "Igor", "Dawid", "Olek", "Zosia"));
+        Result<String> result = Result.<String>builder()
+                .content("Potrzebuję więcej informacji. Opisz, jak wygląda ta osoba, abym mógł pomóc.")
+                .build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq(pathA), any(), anyDouble()))
+                .thenReturn(new SourceDto(pathA, "a.jpg", 1.0, null, "GRAPH_FACT"));
+        when(ingestionService.createGraphFactSourceDto(eq(pathB), any(), anyDouble()))
+                .thenReturn(new SourceDto(pathB, "b.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertFalse(ChatAnswerGrounding.isCapabilityDenial(response.response()));
+        assertTrue(response.response().contains("Anna"));
+        assertTrue(response.response().contains("potwierdzonych zdjęciach"));
+        assertFalse(response.response().contains("Igor"));
+        assertFalse(response.response().contains("Dawid"));
+        assertFalse(response.response().contains("Olek"));
+        assertFalse(response.response().contains("Zosia"));
+        assertFalse(response.response().contains(".jpg"));
+        assertEquals(2, response.sources().size());
+        assertNotEquals("NO_EVIDENCE", response.answerKind());
+        // Entity-scoped path must not load multi-person roster from all source paths.
+        verify(graphQueryService, never()).certainParticipantNamesForPaths(anyList());
+    }
+
+    @Test
+    void namedEntityGeneralKnowledgeEssayIsGroundedToPresence() {
+        String question = "Opisz osobę z grafu";
+        String path = "dir://awdaw/x.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Anna"), List.of(),
+                question, "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("- entity=Anna; file=" + path, List.of(path)));
+        Result<String> result = Result.<String>builder()
+                .content("To imię męskie, które jest zdrobnieniem. Imię pochodzi z języka greckiego. "
+                        + "W kulturze popularnej jest lubiane.")
+                .build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "x.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertFalse(ChatAnswerGrounding.isGeneralKnowledgeEssay(response.response()));
+        assertEquals("Anna jest na potwierdzonych zdjęciach w bibliotece.", response.response());
+        assertEquals(1, response.sources().size());
     }
 
     @Test

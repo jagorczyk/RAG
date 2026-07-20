@@ -173,11 +173,19 @@ public class ChatInteractionService {
             answer = "Nie znaleziono informacji w dokumentach.";
             sources = List.of();
         } else {
-            // Certain graph/sources win over free-form vision/file capability refusals.
-            List<String> rosterPaths = rosterPaths(plan, graphEvidence, sources);
-            List<String> certainNames = graphQueryService.certainParticipantNamesForPaths(rosterPaths);
+            // Certain graph/sources win over capability refusals and ungrounded general knowledge.
+            // Named plan.entities → entity-scoped recovery only (not multi-file co-presence roster).
+            boolean entityScoped = ChatRetrievalPolicy.hasNamedEntities(plan);
+            List<String> recoveryNames;
+            if (entityScoped) {
+                recoveryNames = plan.entities();
+            } else {
+                List<String> rosterPaths = rosterPaths(plan, graphEvidence, sources);
+                recoveryNames = graphQueryService.certainParticipantNamesForPaths(rosterPaths);
+            }
             boolean hasCertain = graphEvidence.hasEvidence() || !sources.isEmpty();
-            answer = ChatAnswerGrounding.resolveAgainstDenial(answer, certainNames, hasCertain);
+            answer = ChatAnswerGrounding.resolveGroundedAnswer(
+                    answer, recoveryNames, hasCertain, entityScoped);
         }
         String cleaned = removeTechnicalReferences(answer, sources);
         List<QueryEvidenceDto> sourceEvidence = sources.stream()
@@ -240,7 +248,12 @@ public class ChatInteractionService {
             uncertain = true;
         }
         if (!visualSources.isEmpty()) {
-            answer = ChatAnswerGrounding.resolveAgainstDenial(answer, certainNames, true);
+            boolean entityScoped = ChatRetrievalPolicy.hasNamedEntities(plan);
+            List<String> recoveryNames = entityScoped && plan.entities() != null
+                    ? plan.entities()
+                    : certainNames;
+            answer = ChatAnswerGrounding.resolveGroundedAnswer(
+                    answer, recoveryNames, true, entityScoped);
         }
         String cleaned = removeTechnicalReferences(answer, visualSources);
         if (cleaned == null || cleaned.isBlank()) {

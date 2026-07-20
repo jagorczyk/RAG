@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 
 /**
  * Pure post-answer decisions for chat: capability-denial detection, participant roster
- * formatting, and cleanup after technical path/filename stripping.
+ * formatting, entity-scoped presence fallback, and cleanup after technical path/filename stripping.
  * No question-phrase routing (AGENTS.md).
  */
 public final class ChatAnswerGrounding {
@@ -16,6 +16,13 @@ public final class ChatAnswerGrounding {
     /** Short PL fallback when evidence exists but no certain participant names are available. */
     public static final String GROUNDED_NO_ROSTER_FALLBACK =
             "Znaleziono potwierdzone informacje w grafie wiedzy.";
+
+    /**
+     * When named entities have certain evidence but the model invents general knowledge
+     * or refuses without using graph detail about appearance.
+     */
+    public static final String GROUNDED_NO_DETAIL_FALLBACK =
+            "Brak potwierdzonego szczegółowego opisu w dowodach.";
 
     private static final Pattern EMPTY_QUOTE_SHELL = Pattern.compile(
             "[„\"«‚'']\\s*[”\"»‚'']");
@@ -62,6 +69,29 @@ public final class ChatAnswerGrounding {
                 "nie wiem o kogo",
                 "brakuje mi kontekstu",
                 "brakuje mi informacji, o kogo",
+                // Need-more-info / describe-how-they-look refusals (answer shape only)
+                "potrzebuję więcej informacji",
+                "potrzebuje wiecej informacji",
+                "potrzebuję wiecej informacji",
+                "potrzebuje więcej informacji",
+                "podać dostępne zdjęcia",
+                "podac dostepne zdjecia",
+                "podaj dostępne zdjęcia",
+                "podaj dostepne zdjecia",
+                "opisz, jak wygląda",
+                "opisz jak wygląda",
+                "opisz, jak wyglada",
+                "opisz jak wyglada",
+                "opisać, jak wygląda",
+                "opisac, jak wyglada",
+                "opisać jak wygląda",
+                "opisac jak wyglada",
+                "czekam na więcej informacji",
+                "czekam na wiecej informacji",
+                "podaj więcej szczegółów",
+                "podaj wiecej szczegolow",
+                "podać więcej szczegółów",
+                "podac wiecej szczegolow",
                 "cannot see image",
                 "can't see image",
                 "i cannot see",
@@ -75,26 +105,110 @@ public final class ChatAnswerGrounding {
                 "unable to see the image",
                 "i don't know who you're asking",
                 "i do not know who you're asking",
-                "more details or context");
+                "more details or context",
+                "need more information",
+                "need more info",
+                "describe how they look",
+                "describe what they look");
+    }
+
+    /**
+     * True when the answer is free-form encyclopedic / etymology-style prose about a name
+     * rather than evidence-backed photo content. Answer shape only — no person-name routing.
+     */
+    public static boolean isGeneralKnowledgeEssay(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+        String lower = answer.toLowerCase(Locale.ROOT);
+        return containsAny(lower,
+                "pochodzi z języka",
+                "pochodzi z jezyka",
+                "jest zdrobnieniem",
+                "zdrobnienie od",
+                "imię męskie",
+                "imie meskie",
+                "imię żeńskie",
+                "imie zenskie",
+                "jedno z najpopularniejszych imion",
+                "w kulturze popularnej",
+                "biblijne korzenie",
+                "etymolog",
+                "oznacza „skała",
+                "oznacza \"skała",
+                "oznacza „skala",
+                "is a diminutive of",
+                "derives from the greek",
+                "derives from greek",
+                "popular name meaning",
+                "etymology of the name");
     }
 
     /**
      * Prefer a grounded roster (or non-denial fallback) when the model refuses vision/file
      * access despite certain graph paths or final sources.
-     * Leaves non-denial answers unchanged.
+     * Leaves non-denial answers unchanged. Uses full participant roster (not entity-scoped).
      */
     public static String resolveAgainstDenial(
             String modelAnswer,
             List<String> certainParticipantNames,
             boolean hasCertainEvidenceOrSources) {
-        if (!hasCertainEvidenceOrSources || !isCapabilityDenial(modelAnswer)) {
+        return resolveGroundedAnswer(
+                modelAnswer, certainParticipantNames, hasCertainEvidenceOrSources, false);
+    }
+
+    /**
+     * Grounds model answers when certain evidence exists.
+     * <ul>
+     *   <li>Capability denials → entity-scoped presence (when {@code entityScoped}) or full roster</li>
+     *   <li>General-knowledge essays with named entities → entity-scoped presence / no-detail</li>
+     *   <li>Otherwise leaves the model answer unchanged</li>
+     * </ul>
+     *
+     * @param entityScoped when true, recovery names are plan entities only (not co-present people)
+     */
+    public static String resolveGroundedAnswer(
+            String modelAnswer,
+            List<String> recoveryNames,
+            boolean hasCertainEvidenceOrSources,
+            boolean entityScoped) {
+        if (!hasCertainEvidenceOrSources) {
             return modelAnswer == null ? "" : modelAnswer;
         }
-        List<String> names = normalizeNames(certainParticipantNames);
-        if (!names.isEmpty()) {
-            return formatParticipantRoster(names);
+        boolean rewrite = isCapabilityDenial(modelAnswer)
+                || (entityScoped && isGeneralKnowledgeEssay(modelAnswer));
+        if (!rewrite) {
+            return modelAnswer == null ? "" : modelAnswer;
         }
-        return GROUNDED_NO_ROSTER_FALLBACK;
+        List<String> names = normalizeNames(recoveryNames);
+        if (names.isEmpty()) {
+            return entityScoped ? GROUNDED_NO_DETAIL_FALLBACK : GROUNDED_NO_ROSTER_FALLBACK;
+        }
+        if (entityScoped) {
+            return formatEntityScopedPresence(names);
+        }
+        return formatParticipantRoster(names);
+    }
+
+    /**
+     * Short Polish presence statement for named entities with certain graph/file evidence.
+     * No filenames in prose (sources list carries paths).
+     */
+    public static String formatEntityScopedPresence(List<String> entityNames) {
+        List<String> names = normalizeNames(entityNames);
+        if (names.isEmpty()) {
+            return GROUNDED_NO_DETAIL_FALLBACK;
+        }
+        if (names.size() == 1) {
+            return names.get(0) + " jest na potwierdzonych zdjęciach w bibliotece.";
+        }
+        if (names.size() == 2) {
+            return names.get(0) + " i " + names.get(1)
+                    + " są na potwierdzonych zdjęciach w bibliotece.";
+        }
+        String head = String.join(", ", names.subList(0, names.size() - 1));
+        return head + " i " + names.get(names.size() - 1)
+                + " są na potwierdzonych zdjęciach w bibliotece.";
     }
 
     /** Polish one-sentence roster of certain participant display names. */

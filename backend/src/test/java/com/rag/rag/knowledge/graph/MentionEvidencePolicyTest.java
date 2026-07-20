@@ -78,6 +78,56 @@ class MentionEvidencePolicyTest {
         assertTrue(policy.isCertain(mention));
     }
 
+    @Test
+    void faceMatchWithPlaceholderLabelAndRealEntityDisplayNameIsCertain() {
+        EntityMention mention = EntityMention.builder()
+                .entity(person)
+                .label("person 1")
+                .entityType("PERSON")
+                .status(MentionStatus.CONFIRMED)
+                .confidence(new BigDecimal("0.900"))
+                .identitySource(IdentityEvidenceSource.FACE_MATCH)
+                .identityConfidence(new BigDecimal("0.810"))
+                .identityMargin(new BigDecimal("0.791"))
+                .build();
+        assertTrue(policy.isCertain(mention));
+        assertEquals(new BigDecimal("0.810"), policy.evidenceConfidence(mention));
+    }
+
+    @Test
+    void faceMatchWithPlaceholderEntityDisplayNameIsNotCertain() {
+        KnowledgeEntity placeholder = KnowledgeEntity.builder()
+                .displayName("person 1")
+                .type("PERSON")
+                .build();
+        EntityMention mention = EntityMention.builder()
+                .entity(placeholder)
+                .label("person 1")
+                .entityType("PERSON")
+                .status(MentionStatus.CONFIRMED)
+                .confidence(new BigDecimal("0.900"))
+                .identitySource(IdentityEvidenceSource.FACE_MATCH)
+                .identityConfidence(new BigDecimal("0.810"))
+                .identityMargin(new BigDecimal("0.791"))
+                .build();
+        assertFalse(policy.isCertain(mention));
+        assertEquals(BigDecimal.ZERO, policy.evidenceConfidence(mention));
+    }
+
+    @Test
+    void faceMatchPlaceholderLabelStillRequiresThresholds() {
+        EntityMention lowMargin = EntityMention.builder()
+                .entity(person)
+                .label("person 2")
+                .status(MentionStatus.CONFIRMED)
+                .confidence(new BigDecimal("0.900"))
+                .identitySource(IdentityEvidenceSource.FACE_MATCH)
+                .identityConfidence(new BigDecimal("0.620"))
+                .identityMargin(new BigDecimal("0.040"))
+                .build();
+        assertFalse(policy.isCertain(lowMargin));
+    }
+
     private EntityMention mention(String observation, IdentityEvidenceSource source,
                                   String identity, String margin) {
         return EntityMention.builder()
