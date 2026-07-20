@@ -2,10 +2,12 @@ package com.rag.rag.knowledge.identity;
 
 import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.folder.repository.FileRepository;
+import com.rag.rag.knowledge.entity.AliasSource;
+import com.rag.rag.knowledge.entity.EntityAlias;
 import com.rag.rag.knowledge.entity.EntityMention;
+import com.rag.rag.knowledge.entity.IdentityEvidenceSource;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
-import com.rag.rag.knowledge.entity.IdentityEvidenceSource;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
@@ -22,6 +24,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -248,4 +251,214 @@ class IdentityResolutionServiceTest {
                 () -> service.findOrCreateEntityByName("Krzesło", "OBJECT")
         );
     }
+
+    @Test
+    void resolveConfirmsWhenHeuristicScoreAtLeast085() {
+        // Equal non-generic labels → heuristic 0.99 ≥ 0.85 → auto-confirm to candidate entity
+        KnowledgeEntity known = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Szymon").type("PERSON").ownerId(ownerId).build();
+        EntityMention candidate = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Szymon").entity(known).entityType("PERSON").build();
+        EntityMention mention = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Szymon").entityType("PERSON").build();
+
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Szymon", "PERSON", ownerId))
+                .thenReturn(Optional.empty());
+        when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(
+                "Szymon", "PERSON", ownerId)).thenReturn(Optional.empty());
+        when(mentionRepository.findAll()).thenReturn(List.of(mention, candidate));
+
+        service.resolve(mention, null, "PERSON");
+
+        ArgumentCaptor<EntityMention> captor = ArgumentCaptor.forClass(EntityMention.class);
+        verify(mentionRepository).save(captor.capture());
+        assertEquals(MentionStatus.CONFIRMED, captor.getValue().getStatus());
+        assertEquals(known, captor.getValue().getEntity());
+        assertEquals(IdentityEvidenceSource.DESCRIPTION_MATCH, captor.getValue().getIdentitySource());
+        verify(suggestionRepository, never()).save(any());
+    }
+
+    @Test
+    void resolveCreatesPendingSuggestionInBand060To085() {
+        // Partial label overlap + shared visual cues → score in suggestion band, not auto-confirm
+        KnowledgeEntity known = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Jan Nowak").type("PERSON").ownerId(ownerId).build();
+        String cues = "[\"czerwona koszulka\",\"krótkie włosy\"]";
+        EntityMention candidate = EntityMention.builder()
+                .id(UUID.randomUUID())
+                .label("Jan Nowak")
+                .entity(known)
+                .entityType("PERSON")
+                .visualCues(cues)
+                .build();
+        EntityMention mention = EntityMention.builder()
+                .id(UUID.randomUUID())
+                .label("Nowak")
+                .entityType("PERSON")
+                .visualCues(cues)
+                .build();
+
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Nowak", "PERSON", ownerId))
+                .thenReturn(Optional.empty());
+        when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(
+                "Nowak", "PERSON", ownerId)).thenReturn(Optional.empty());
+        when(mentionRepository.findAll()).thenReturn(List.of(mention, candidate));
+        when(suggestionRepository.existsBetweenMentions(mention.getId(), candidate.getId())).thenReturn(false);
+        when(entityRepository.save(any(KnowledgeEntity.class))).thenAnswer(inv -> {
+            KnowledgeEntity e = inv.getArgument(0);
+            if (e.getId() == null) {
+                e.setId(UUID.randomUUID());
+            }
+            return e;
+        });
+        when(aliasRepository.save(any())).thenReturn(null);
+
+        service.resolve(mention, null, "PERSON");
+
+        ArgumentCaptor<IdentitySuggestion> suggestionCaptor = ArgumentCaptor.forClass(IdentitySuggestion.class);
+        verify(suggestionRepository).save(suggestionCaptor.capture());
+        assertEquals(SuggestionStatus.PENDING, suggestionCaptor.getValue().getStatus());
+        assertTrue(suggestionCaptor.getValue().getSimilarityScore().doubleValue() >= 0.60);
+        assertTrue(suggestionCaptor.getValue().getSimilarityScore().doubleValue() < 0.85);
+    }
+
+    @Test
+    void suggestFaceMatchPersistsPendingSuggestion() {
+        KnowledgeEntity matched = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Igor").type("PERSON").ownerId(ownerId).build();
+        EntityMention existing = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Igor").entity(matched).build();
+        EntityMention mention = EntityMention.builder()
+                .id(UUID.randomUUID()).label("person 1").build();
+
+        when(mentionRepository.findByEntityId(matched.getId())).thenReturn(List.of(existing));
+        when(suggestionRepository.existsBetweenMentions(mention.getId(), existing.getId())).thenReturn(false);
+
+        service.suggestFaceMatch(mention, matched, 0.68);
+
+        ArgumentCaptor<IdentitySuggestion> captor = ArgumentCaptor.forClass(IdentitySuggestion.class);
+        verify(suggestionRepository).save(captor.capture());
+        assertEquals(SuggestionStatus.PENDING, captor.getValue().getStatus());
+        assertEquals(0, new BigDecimal("0.68").compareTo(captor.getValue().getSimilarityScore()));
+    }
+
+    @Test
+    void renameNamedEntityUpdatesDisplayNameAndKeepsOldAsAlias() {
+        UUID entityId = UUID.randomUUID();
+        KnowledgeEntity entity = KnowledgeEntity.builder()
+                .id(entityId).displayName("Bartek").type("PERSON").ownerId(ownerId).build();
+        when(entityRepository.findById(entityId)).thenReturn(Optional.of(entity));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Bartosz", "PERSON", ownerId))
+                .thenReturn(Optional.empty());
+        when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(
+                "Bartosz", "PERSON", ownerId)).thenReturn(Optional.empty());
+        when(entityRepository.save(any(KnowledgeEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(mentionRepository.findByEntityId(entityId)).thenReturn(List.of());
+        when(factRepository.findAllWithMentionAndEntity()).thenReturn(List.of());
+        when(aliasRepository.findAll()).thenReturn(List.of());
+        when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCase("Bartek", "PERSON"))
+                .thenReturn(Optional.empty());
+
+        KnowledgeEntity renamed = service.renameNamedEntity(entityId, "Bartosz");
+
+        assertEquals("Bartosz", renamed.getDisplayName());
+        ArgumentCaptor<EntityAlias> aliasCaptor = ArgumentCaptor.forClass(EntityAlias.class);
+        verify(aliasRepository).save(aliasCaptor.capture());
+        assertEquals("Bartek", aliasCaptor.getValue().getAlias());
+    }
+
+    @Test
+    void renameNamedEntityMergesIntoExistingNameCollision() {
+        UUID sourceId = UUID.randomUUID();
+        UUID targetId = UUID.randomUUID();
+        KnowledgeEntity source = KnowledgeEntity.builder()
+                .id(sourceId).displayName("Igor K").type("PERSON").ownerId(ownerId).build();
+        KnowledgeEntity target = KnowledgeEntity.builder()
+                .id(targetId).displayName("Igor").type("PERSON").ownerId(ownerId).build();
+        EntityMention sourceMention = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Igor K").entity(source).filePath("dir://a.jpg").build();
+
+        when(entityRepository.findById(sourceId)).thenReturn(Optional.of(source));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Igor", "PERSON", ownerId))
+                .thenReturn(Optional.of(target));
+        when(mentionRepository.findByEntityId(sourceId)).thenReturn(List.of(sourceMention));
+        when(mentionRepository.findByEntityId(targetId)).thenReturn(List.of());
+        when(aliasRepository.findAll()).thenReturn(List.of());
+        when(factRepository.findAllWithMentionAndEntity()).thenReturn(List.of());
+
+        KnowledgeEntity result = service.renameNamedEntity(sourceId, "Igor");
+
+        assertEquals(target, result);
+        verify(mentionRepository).save(sourceMention);
+        assertEquals(target, sourceMention.getEntity());
+        assertEquals(MentionStatus.CONFIRMED, sourceMention.getStatus());
+        verify(entityRepository).delete(source);
+        verify(faceEmbeddingRepository).relinkEntity(sourceId, target);
+    }
+
+    @Test
+    void consolidateDuplicateEntitiesMergesSameNameAndType() {
+        KnowledgeEntity a = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Pati").type("PERSON").ownerId(ownerId).build();
+        KnowledgeEntity b = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Pati").type("PERSON").ownerId(ownerId).build();
+        when(entityRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(a, b));
+        when(mentionRepository.findByEntityId(b.getId())).thenReturn(List.of());
+        when(aliasRepository.findAll()).thenReturn(List.of());
+
+        int merged = service.consolidateDuplicateEntities();
+
+        assertEquals(1, merged);
+        verify(entityRepository).delete(b);
+        verify(faceEmbeddingRepository).relinkEntity(b.getId(), a);
+    }
+
+    @Test
+    void afterMentionIdentityAssignedKeepsPreviousEntityWithUserAlias() {
+        UUID previousId = UUID.randomUUID();
+        UUID mentionId = UUID.randomUUID();
+        KnowledgeEntity previous = KnowledgeEntity.builder()
+                .id(previousId).displayName("Stara").type("PERSON").ownerId(ownerId).build();
+        KnowledgeEntity next = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Nowa").type("PERSON").ownerId(ownerId).build();
+        EntityMention mention = EntityMention.builder()
+                .id(mentionId).label("Nowa").entity(next).filePath("dir://x.jpg").build();
+
+        when(mentionRepository.findById(mentionId)).thenReturn(Optional.of(mention));
+        when(mentionRepository.findByEntityId(previousId)).thenReturn(List.of());
+        when(aliasRepository.existsByEntityIdAndSource(previousId, AliasSource.USER)).thenReturn(true);
+        when(aliasRepository.findAll()).thenReturn(List.of());
+        when(factRepository.findByFilePath("dir://x.jpg")).thenReturn(List.of());
+
+        service.afterMentionIdentityAssigned(mentionId, previousId, "Nowa");
+
+        verify(entityRepository, never()).delete(any());
+        verify(faceEmbeddingRepository, never()).deleteByEntityId(previousId);
+    }
+
+    @Test
+    void afterMentionIdentityAssignedDeletesTrueOrphanPreviousEntity() {
+        UUID previousId = UUID.randomUUID();
+        UUID mentionId = UUID.randomUUID();
+        KnowledgeEntity previous = KnowledgeEntity.builder()
+                .id(previousId).displayName("Orphan").type("PERSON").ownerId(ownerId).build();
+        KnowledgeEntity next = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Nowa").type("PERSON").ownerId(ownerId).build();
+        EntityMention mention = EntityMention.builder()
+                .id(mentionId).label("Nowa").entity(next).filePath("dir://x.jpg").build();
+
+        when(mentionRepository.findById(mentionId)).thenReturn(Optional.of(mention));
+        when(mentionRepository.findByEntityId(previousId)).thenReturn(List.of());
+        when(aliasRepository.existsByEntityIdAndSource(previousId, AliasSource.USER)).thenReturn(false);
+        when(entityRepository.findById(previousId)).thenReturn(Optional.of(previous));
+        when(aliasRepository.findAll()).thenReturn(List.of());
+        when(factRepository.findByFilePath("dir://x.jpg")).thenReturn(List.of());
+
+        service.afterMentionIdentityAssigned(mentionId, previousId, "Nowa");
+
+        verify(faceEmbeddingRepository).deleteByEntityId(previousId);
+        verify(aliasRepository).deleteByEntityId(previousId);
+        verify(entityRepository).delete(previous);
+    }
 }
+
