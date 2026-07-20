@@ -10,13 +10,27 @@ import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
 import dev.langchain4j.store.embedding.pgvector.PgVectorEmbeddingStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 @Configuration
 public class EmbeddingConfiguration {
+
+    private static final Logger log = LoggerFactory.getLogger(EmbeddingConfiguration.class);
+    private static final Pattern VECTOR_DIM = Pattern.compile("vector\\((\\d+)\\)", Pattern.CASE_INSENSITIVE);
+    private static final String EMBEDDINGS_TABLE = "embeddings";
 
     @Value("${ollama.base.url:http://localhost:11434}")
     private String baseUrl;
@@ -32,6 +46,10 @@ public class EmbeddingConfiguration {
 
     @Value("${llm.deepinfra.embedding-model:Qwen/Qwen3-Embedding-4B}")
     private String deepInfraEmbeddingModel;
+
+    /** Qwen3-Embedding-4B default max dim (MRL). Must match pgvector column typmod. */
+    @Value("${llm.deepinfra.embedding-dimensions:2560}")
+    private int deepInfraEmbeddingDimensions;
 
     @Value("${spring.datasource.username}")
     private String dbUser;
@@ -67,6 +85,7 @@ public class EmbeddingConfiguration {
                 .baseUrl(deepInfraBaseUrl)
                 .apiKey(deepInfraApiKey)
                 .modelName(deepInfraEmbeddingModel)
+                .dimensions(deepInfraEmbeddingDimensions)
                 .build();
     }
 
@@ -85,22 +104,85 @@ public class EmbeddingConfiguration {
 
     @Bean
     EmbeddingStore<TextSegment> embeddingStore(
+            DataSource dataSource,
             @Value("${pgvector.host:localhost}") String host,
             @Value("${pgvector.port:5433}") int port,
             @Value("${pgvector.database:vector_db}") String database,
             EmbeddingModel embeddingModel
     ) {
+        int dimension = embeddingModel.dimension();
+        ensureEmbeddingsTableDimension(dataSource, dimension);
+
         return PgVectorEmbeddingStore.builder()
                 .host(host)
                 .port(port)
                 .database(database)
                 .user(dbUser)
                 .password(dbPassword)
-                .table("embeddings")
-                .dimension(embeddingModel.dimension())
+                .table(EMBEDDINGS_TABLE)
+                .dimension(dimension)
                 .useIndex(true)
                 .indexListSize(100)
                 .createTable(true)
                 .build();
+    }
+
+    /**
+     * LangChain4j only creates the table when missing — it never alters vector typmod.
+     * After a model switch (e.g. 1024 → 2560) drop the incompatible table so createTable rebuilds it.
+     */
+    static void ensureEmbeddingsTableDimension(DataSource dataSource, int expectedDimension) {
+        if (expectedDimension <= 0) {
+            log.warn("Embedding model reported dimension {}; skipping schema check", expectedDimension);
+            return;
+        }
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            Integer existing = readVectorDimension(statement, EMBEDDINGS_TABLE, "embedding");
+            if (existing == null) {
+                return;
+            }
+            if (existing == expectedDimension) {
+                return;
+            }
+            log.warn(
+                    "Dropping {} table: vector column is {}-dim but embedding model is {}-dim (re-ingest required)",
+                    EMBEDDINGS_TABLE,
+                    existing,
+                    expectedDimension
+            );
+            statement.execute("DROP TABLE IF EXISTS " + EMBEDDINGS_TABLE + " CASCADE");
+        } catch (SQLException e) {
+            throw new IllegalStateException(
+                    "Failed to align embeddings table with model dimension " + expectedDimension, e);
+        }
+    }
+
+    /** @return vector typmod dimension, or null if table/column missing */
+    static Integer readVectorDimension(Statement statement, String table, String column) throws SQLException {
+        String sql = """
+                SELECT format_type(a.atttypid, a.atttypmod)
+                FROM pg_attribute a
+                JOIN pg_class c ON a.attrelid = c.oid
+                JOIN pg_namespace n ON c.relnamespace = n.oid
+                WHERE n.nspname = 'public'
+                  AND c.relname = '%s'
+                  AND a.attname = '%s'
+                  AND NOT a.attisdropped
+                """.formatted(table, column);
+        try (ResultSet rs = statement.executeQuery(sql)) {
+            if (!rs.next()) {
+                return null;
+            }
+            String type = rs.getString(1);
+            if (type == null) {
+                return null;
+            }
+            Matcher matcher = VECTOR_DIM.matcher(type);
+            if (!matcher.find()) {
+                return null;
+            }
+            return Integer.parseInt(matcher.group(1));
+        }
     }
 }
