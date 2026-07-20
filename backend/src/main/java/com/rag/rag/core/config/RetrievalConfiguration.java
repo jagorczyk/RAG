@@ -92,6 +92,7 @@ public class RetrievalConfiguration {
                     .maxResults(recallMaxResults)
                     .minScore(minScore);
 
+            // Technical @path / @filename tokens only — not phrase routing over people/actions.
             List<String> mentions = new ArrayList<>();
             Matcher matcher = Pattern.compile("@\"([^\"]+)\"|@([^\\s,\\]\\!\\?]+)").matcher(queryText);
             while (matcher.find()) {
@@ -109,25 +110,12 @@ public class RetrievalConfiguration {
 
                 searchRequestBuilder.filter(pathMetaFilter.or(filenameFilter).or(folderFilter));
                 searchRequestBuilder.minScore(0.01);
-                boolean graphFirst = extractGraphContext(queryText).contains("[Osoby z grafu wiedzy na pliku]");
-                long distinctMentions = mentions.stream().distinct().count();
-                boolean combinedDocAndGraph = graphFirst && distinctMentions >= 2;
-                searchRequestBuilder.maxResults(graphFirst && !combinedDocAndGraph ? graphMaxResults : recallMaxResults);
+                searchRequestBuilder.maxResults(recallMaxResults);
                 pathFilter.addAll(mentions);
             }
 
-            List<String> graphPaths = extractGraphPaths(queryText);
-            boolean photoSearch = queryText.contains("[Wyszukiwanie zdjęć]")
-                    || queryText.contains("[Wyszukiwanie zdjec]");
-            if (!graphPaths.isEmpty()) {
-                searchRequestBuilder.filter(metadataKey("path").isIn(graphPaths));
-                searchRequestBuilder.minScore(0.01);
-                searchRequestBuilder.maxResults(photoSearch ? photoMaxResults : recallMaxResults);
-                pathFilter.clear();
-                pathFilter.addAll(graphPaths);
-            }
-
-            // Plan fileScope (exact paths and/or folder prefixes) from chat turn.
+            // Plan fileScope / certain graph paths (exact paths and/or folder prefixes) from chat turn.
+            // No closed Polish phrase markers — scope is set by ChatInteractionService only.
             List<String> planScope = RetrievalPathScope.get();
             if (!planScope.isEmpty()) {
                 logger.info("PLAN FILE SCOPE: {}", planScope);
@@ -140,6 +128,8 @@ public class RetrievalConfiguration {
                     // All exact files — push filter into vector search when possible.
                     searchRequestBuilder.filter(metadataKey("path").isIn(exactPaths));
                     searchRequestBuilder.minScore(0.01);
+                    // Named-entity / joint-file scopes are usually small — prefer graph-sized recall.
+                    searchRequestBuilder.maxResults(Math.min(recallMaxResults, Math.max(graphMaxResults, exactPaths.size())));
                 }
             }
 
@@ -199,10 +189,15 @@ public class RetrievalConfiguration {
                 );
             });
 
+            // Wider final cut when the plan scoped to a small set of proven image paths
+            // (multi-entity / visual-adjacent hybrid turns); otherwise default maxResults.
+            int finalLimit = !planScope.isEmpty() && planScope.size() <= graphMaxResults
+                    ? Math.max(maxResults, Math.min(photoMaxResults, planScope.size() * 2))
+                    : maxResults;
             return rerankedContents.stream()
                     .filter(content -> RetrievalPathScope.pathInScope(
                             content.textSegment().metadata().getString("path"), planScope))
-                    .limit(photoSearch ? photoMaxResults : maxResults)
+                    .limit(finalLimit)
                     .collect(Collectors.toList());
         };
     }
@@ -299,19 +294,5 @@ public class RetrievalConfiguration {
     private static String extractRetrievalQuery(String queryText) {
         String question = extractUserQuestion(queryText);
         return question.replaceAll("@[^\\s,\\]]+", "").trim();
-    }
-
-    private static List<String> extractGraphPaths(String queryText) {
-        if (queryText == null || !queryText.contains("[Pliki z grafu wiedzy]")) {
-            return List.of();
-        }
-        Matcher matcher = Pattern.compile("\\|\\s*plik:\\s*([^\\s]+)").matcher(queryText);
-        List<String> paths = new ArrayList<>();
-        while (matcher.find()) {
-            if (!paths.contains(matcher.group(1))) {
-                paths.add(matcher.group(1));
-            }
-        }
-        return paths;
     }
 }

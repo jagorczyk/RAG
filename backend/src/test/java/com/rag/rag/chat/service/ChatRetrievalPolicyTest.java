@@ -72,4 +72,36 @@ class ChatRetrievalPolicyTest {
         assertTrue(ChatRetrievalPolicy.allowsHybridSourceForNamedEntities(plan, evidence, "dir://any.jpg"));
         assertFalse(ChatRetrievalPolicy.hasNamedEntities(plan));
     }
+
+    @Test
+    void lacksGroundingWhenNoGraphAndNoFinalSources() {
+        GraphEvidenceResult empty = new GraphEvidenceResult("", List.of());
+        assertTrue(ChatRetrievalPolicy.lacksGrounding(empty, false));
+        assertTrue(ChatRetrievalPolicy.lacksGrounding(null, false));
+    }
+
+    @Test
+    void hasGroundingWhenGraphEvidenceOrFinalSourcesExist() {
+        GraphEvidenceResult hit = new GraphEvidenceResult("ctx", List.of("dir://a.jpg"));
+        assertFalse(ChatRetrievalPolicy.lacksGrounding(hit, false));
+        assertFalse(ChatRetrievalPolicy.lacksGrounding(new GraphEvidenceResult("", List.of()), true));
+    }
+
+    @Test
+    void retrievalScopePrefersPlannerFileScopeThenCertainGraphPaths() {
+        QueryPlan withScope = new QueryPlan("q", List.of("Igor"), List.of("dir://folder/a.jpg"), "q", "",
+                false, false, QueryPlan.RetrievalMode.HYBRID, "instr");
+        GraphEvidenceResult evidence = new GraphEvidenceResult("ctx", List.of("dir://graph.jpg"));
+        assertEquals(List.of("dir://folder/a.jpg"),
+                ChatRetrievalPolicy.retrievalScope(withScope, evidence));
+
+        QueryPlan namedOnly = new QueryPlan("q", List.of("Igor"), List.of(), "q", "",
+                false, false, QueryPlan.RetrievalMode.GRAPH, "instr");
+        assertEquals(List.of("dir://graph.jpg"),
+                ChatRetrievalPolicy.retrievalScope(namedOnly, evidence));
+
+        QueryPlan open = new QueryPlan("q", List.of(), List.of(), "q", "",
+                false, false, QueryPlan.RetrievalMode.HYBRID, "instr");
+        assertTrue(ChatRetrievalPolicy.retrievalScope(open, evidence).isEmpty());
+    }
 }

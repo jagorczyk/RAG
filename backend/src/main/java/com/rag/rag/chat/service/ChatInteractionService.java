@@ -94,6 +94,7 @@ public class ChatInteractionService {
                     [Instrukcja odpowiedzi]
                     %s
                     Graf wiedzy nie ma pewnych dowodów dla tego pytania; użyj wyłącznie kontekstu dokumentów z retrieval.
+                    Gdy brak fragmentów dokumentów, odpowiedz dokładnie: Nie znaleziono informacji w dokumentach.
                     Odpowiedź: jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
 
                     Pytanie użytkownika: %s
@@ -108,12 +109,16 @@ public class ChatInteractionService {
                     [Instrukcja odpowiedzi]
                     %s
                     Odpowiedź: jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
+                    Używaj wyłącznie powyższego kontekstu i fragmentów dokumentów z retrieval — nie zgaduj.
 
                     Pytanie użytkownika: %s
                     """.formatted(graphContext, plan.answerInstruction(), plan.question());
         }
 
-        RetrievalPathScope.set(plan.fileScope());
+        // Named-entity turns with certain graph paths: restrict hybrid RAG to those files
+        // (plus planner fileScope). Prevents off-person corpus chunks from polluting the prompt.
+        List<String> retrievalScope = ChatRetrievalPolicy.retrievalScope(plan, graphEvidence);
+        RetrievalPathScope.set(retrievalScope);
         Result<String> result;
         try {
             result = chatAiService.answer(chatId, answerPrompt(prompt));
@@ -126,17 +131,13 @@ public class ChatInteractionService {
             answer = "Nie udało się przygotować odpowiedzi na podstawie dostępnych danych.";
         }
         List<SourceDto> sources = mergeSources(result, plan, graphEvidence, effectiveMode);
-        // Only probe raw retrieval when there is no graph grounding — avoid extra work / side effects
-        // on pure GRAPH / joint-file turns (tests and source merge already special-case those).
-        boolean mayLackGraph = graphContext.isBlank() && !graphEvidence.hasEvidence();
-        List<SourceDto> retrievedSources = List.of();
-        if (mayLackGraph && result != null) {
-            retrievedSources = ingestionService.getSources(result);
-        }
-        // Empty index + no graph: do not let the LLM invent answers from world knowledge.
-        boolean noGrounding = mayLackGraph && retrievedSources.isEmpty();
+        // Grounding uses post-filter sources (certain graph / allowed hybrid), not raw retrieval hits.
+        // Named-entity hybrid hits without certain graph paths never become sources and must not
+        // keep a free-form LLM answer (anti-hallucination, AGENTS.md principle 2).
+        boolean noGrounding = ChatRetrievalPolicy.lacksGrounding(graphEvidence, !sources.isEmpty());
         if (noGrounding) {
             answer = "Nie znaleziono informacji w dokumentach.";
+            sources = List.of();
         }
         String cleaned = removeTechnicalReferences(answer, sources);
         boolean uncertain = plan.ambiguous()

@@ -3,9 +3,13 @@ package com.rag.rag.chat.service;
 import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphEvidenceResult;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+
 /**
- * Pure decisions for chat retrieval: joint-file denial and graph-miss → hybrid fallback.
- * No question-language routing (AGENTS.md).
+ * Pure decisions for chat retrieval: joint-file denial, graph-miss → hybrid fallback,
+ * certain-source gating, and no-grounding denial. No question-language routing (AGENTS.md).
  */
 public final class ChatRetrievalPolicy {
 
@@ -66,5 +70,50 @@ public final class ChatRetrievalPolicy {
             return false;
         }
         return evidence.certainPaths() != null && evidence.certainPaths().contains(path);
+    }
+
+    /**
+     * No certain graph evidence and no final sources after filtering → refuse to invent an answer.
+     * Graph context alone counts as grounding (LLM answers from verified graph block).
+     */
+    public static boolean lacksGrounding(GraphEvidenceResult evidence, boolean hasFinalSources) {
+        if (evidence != null && evidence.hasEvidence()) {
+            return false;
+        }
+        return !hasFinalSources;
+    }
+
+    /**
+     * Path scope for hybrid retrieval this turn:
+     * <ul>
+     *   <li>planner {@code fileScope} when present</li>
+     *   <li>else certain graph paths when entities are named (keep RAG on proven files)</li>
+     *   <li>else unrestricted (empty)</li>
+     * </ul>
+     * Technical set ops only — no phrase routing.
+     */
+    public static List<String> retrievalScope(QueryPlan plan, GraphEvidenceResult evidence) {
+        LinkedHashSet<String> scope = new LinkedHashSet<>();
+        if (plan != null && plan.fileScope() != null) {
+            for (String path : plan.fileScope()) {
+                if (path != null && !path.isBlank()) {
+                    scope.add(path.trim());
+                }
+            }
+        }
+        if (!scope.isEmpty()) {
+            return List.copyOf(scope);
+        }
+        if (hasNamedEntities(plan)
+                && evidence != null
+                && evidence.certainPaths() != null
+                && !evidence.certainPaths().isEmpty()) {
+            for (String path : evidence.certainPaths()) {
+                if (path != null && !path.isBlank()) {
+                    scope.add(path.trim());
+                }
+            }
+        }
+        return scope.isEmpty() ? List.of() : List.copyOf(new ArrayList<>(scope));
     }
 }

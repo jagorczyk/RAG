@@ -79,7 +79,7 @@ class ChatInteractionServiceTest {
     }
 
     @Test
-    void graphMissFallsBackToHybridDocumentRetrieval() {
+    void graphMissWithNamedEntityAndUnrelatedHybridHitsForcesNoEvidence() {
         QueryPlan plan = new QueryPlan("Co robi Igor?", List.of("Igor"), List.of(),
                 "Co robi Igor?", "", false, false, QueryPlan.RetrievalMode.GRAPH,
                 "Odpowiedz z grafu.");
@@ -88,21 +88,43 @@ class ChatInteractionServiceTest {
                 .thenReturn(new GraphEvidenceResult("", List.of()));
         Result<String> result = Result.<String>builder().content("Igor je zupę według dokumentu.").build();
         when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
-        SourceDto docSource = new SourceDto("dir://doc.txt", "doc.txt", 0.8, null, "TEXT");
+        // Unrelated hybrid hit must not become a certain source for Igor, nor keep a free-form answer.
+        SourceDto docSource = new SourceDto("dir://other-person.txt", "other-person.txt", 0.8, null, "TEXT");
         when(ingestionService.getSources(result)).thenReturn(List.of(docSource));
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
 
-        // Graph-empty GRAPH plans must still invoke hybrid/document answer path (not hard graph denial).
-        // Named entities without certain graph paths: hybrid text may answer, but sources stay empty
-        // so another person's document is not promoted as a certain source for Igor.
+        // Graph-empty GRAPH plans still invoke hybrid retrieval (not hard joint-file denial).
         verify(chatAiService).answer(eq(chatId), anyString());
         verify(ingestionService, atLeastOnce()).getSources(result);
         verify(ingestionService, never()).createGraphFactSourceDto(anyString(), any(), anyDouble());
-        assertEquals("Igor je zupę według dokumentu.", response.response());
-        assertFalse(response.response().contains("Nie znaleziono pewnych informacji w grafie wiedzy"));
-        assertEquals(QueryPlan.RetrievalMode.HYBRID.name(), response.answerKind());
+        // Post-filter sources empty + no graph → refuse hallucination from world/wrong docs.
+        assertEquals("Nie znaleziono informacji w dokumentach.", response.response());
+        assertEquals("NO_EVIDENCE", response.answerKind());
         assertTrue(response.sources().isEmpty());
+        assertTrue(response.uncertain());
+    }
+
+    @Test
+    void graphMissWithoutNamedEntitiesKeepsHybridSourcesAndAnswer() {
+        QueryPlan plan = new QueryPlan("Jakie jest saldo na fakturze?", List.of(), List.of(),
+                "Jakie jest saldo na fakturze?", "", false, false, QueryPlan.RetrievalMode.GRAPH,
+                "Odpowiedz z dokumentów.");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("", List.of()));
+        Result<String> result = Result.<String>builder().content("Saldo wynosi 1200 zł.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        SourceDto docSource = new SourceDto("dir://invoice.pdf", "invoice.pdf", 0.88, null, "PDF");
+        when(ingestionService.getSources(result)).thenReturn(List.of(docSource));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals("Saldo wynosi 1200 zł.", response.response());
+        assertEquals(QueryPlan.RetrievalMode.HYBRID.name(), response.answerKind());
+        assertEquals(1, response.sources().size());
+        assertEquals("dir://invoice.pdf", response.sources().get(0).path());
+        // Graph-miss hybrid answers remain marked uncertain (no certain graph proof).
         assertTrue(response.uncertain());
     }
 
