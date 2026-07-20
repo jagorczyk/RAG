@@ -1,0 +1,13 @@
+{
+  "name": "rag-provenance-board",
+  "private": true,
+  "type": "module",
+  "description": "Figma-importable Provenance design board for RAG (design-only)",
+  "scripts": {
+    "verify": "node verify-board.mjs",
+    "screenshot": "node screenshot-board.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
