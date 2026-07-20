@@ -24,6 +24,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -65,6 +66,10 @@ class IdentityResolutionServiceTest {
     private ChatLanguageModel chatModel;
     @Mock
     private IdentityMatchCacheService identityMatchCacheService;
+    @Mock
+    private ObjectProvider<CanonicalEmbeddingRefreshService> embeddingRefreshProvider;
+    @Mock
+    private CanonicalEmbeddingRefreshService embeddingRefresh;
 
     private IdentityResolutionService service;
     private final UUID ownerId = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -74,6 +79,7 @@ class IdentityResolutionServiceTest {
         lenient().when(currentUserService.findUserId()).thenReturn(Optional.of(ownerId));
         lenient().when(identityMatchCacheService.buildKey(any(), any(), org.mockito.ArgumentMatchers.anyDouble()))
                 .thenAnswer(inv -> "key:" + inv.getArgument(1));
+        lenient().when(embeddingRefreshProvider.getIfAvailable()).thenReturn(embeddingRefresh);
         service = new IdentityResolutionService(
                 entityRepository,
                 aliasRepository,
@@ -84,7 +90,8 @@ class IdentityResolutionServiceTest {
                 fileRepository,
                 currentUserService,
                 chatModel,
-                identityMatchCacheService
+                identityMatchCacheService,
+                embeddingRefreshProvider
         );
         ReflectionTestUtils.setField(service, "autoConfirmThreshold", 0.85);
         ReflectionTestUtils.setField(service, "suggestThreshold", 0.60);

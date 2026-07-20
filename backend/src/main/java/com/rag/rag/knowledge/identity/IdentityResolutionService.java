@@ -15,6 +15,7 @@ import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -48,6 +49,7 @@ public class IdentityResolutionService {
     private final CurrentUserService currentUserService;
     private final ChatLanguageModel chatModel;
     private final IdentityMatchCacheService identityMatchCacheService;
+    private final ObjectProvider<CanonicalEmbeddingRefreshService> embeddingRefreshProvider;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${identity.llm-matcher.enabled:false}")
@@ -76,7 +78,8 @@ public class IdentityResolutionService {
             FileRepository fileRepository,
             CurrentUserService currentUserService,
             @Qualifier("chatLanguageModel") ChatLanguageModel chatModel,
-            IdentityMatchCacheService identityMatchCacheService
+            IdentityMatchCacheService identityMatchCacheService,
+            ObjectProvider<CanonicalEmbeddingRefreshService> embeddingRefreshProvider
     ) {
         this.entityRepository = entityRepository;
         this.aliasRepository = aliasRepository;
@@ -88,6 +91,7 @@ public class IdentityResolutionService {
         this.currentUserService = currentUserService;
         this.chatModel = chatModel;
         this.identityMatchCacheService = identityMatchCacheService;
+        this.embeddingRefreshProvider = embeddingRefreshProvider;
     }
 
     @Transactional
@@ -505,6 +509,7 @@ public class IdentityResolutionService {
             mergeEntityInto(target, entity);
             refreshMentionAndFactLabels(target.getId(), oldName, target.getDisplayName());
             removeGenericAliases(target);
+            refreshDocumentEmbeddingsForEntity(target.getId());
             return target;
         }
 
@@ -515,6 +520,7 @@ public class IdentityResolutionService {
             addAliasIfMissing(entity, oldName);
         }
         removeGenericAliases(entity);
+        refreshDocumentEmbeddingsForEntity(entityId);
         return entity;
     }
 
@@ -544,6 +550,22 @@ public class IdentityResolutionService {
         if (previousEntityId != null
                 && (mention.getEntity() == null || !previousEntityId.equals(mention.getEntity().getId()))) {
             cleanupOrphanEntity(previousEntityId);
+        }
+        // Mention label / entity reassignment must update hybrid document text for that person.
+        if (mention.getEntity() != null && mention.getEntity().getId() != null) {
+            refreshDocumentEmbeddingsForEntity(mention.getEntity().getId());
+        } else if (mention.getFilePath() != null && !mention.getFilePath().isBlank()) {
+            CanonicalEmbeddingRefreshService refresh = embeddingRefreshProvider.getIfAvailable();
+            if (refresh != null) {
+                refresh.refreshPaths(List.of(mention.getFilePath()));
+            }
+        }
+    }
+
+    private void refreshDocumentEmbeddingsForEntity(UUID entityId) {
+        CanonicalEmbeddingRefreshService refresh = embeddingRefreshProvider.getIfAvailable();
+        if (refresh != null) {
+            refresh.refreshForEntity(entityId);
         }
     }
 
