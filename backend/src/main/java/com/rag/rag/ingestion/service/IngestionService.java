@@ -47,9 +47,11 @@ import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
+import com.rag.rag.knowledge.repository.FaceObservationRepository;
 import com.rag.rag.knowledge.repository.FactRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
+import com.rag.rag.knowledge.entity.KnowledgeEntity;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -97,6 +99,7 @@ public class IngestionService {
     private final FactRepository factRepo;
     private final IdentitySuggestionRepository suggestionRepo;
     private final FaceEmbeddingRepository faceEmbeddingRepository;
+    private final FaceObservationRepository faceObservationRepository;
     private final FaceIdentityService faceIdentityService;
     private final FaceRecognitionClient faceRecognitionClient;
     private final ImageAnalysisCacheService imageAnalysisCacheService;
@@ -118,6 +121,7 @@ public class IngestionService {
             FactRepository factRepo,
             IdentitySuggestionRepository suggestionRepo,
             FaceEmbeddingRepository faceEmbeddingRepository,
+            FaceObservationRepository faceObservationRepository,
             FaceIdentityService faceIdentityService,
             FaceRecognitionClient faceRecognitionClient,
             ImageAnalysisCacheService imageAnalysisCacheService,
@@ -137,6 +141,7 @@ public class IngestionService {
         this.factRepo = factRepo;
         this.suggestionRepo = suggestionRepo;
         this.faceEmbeddingRepository = faceEmbeddingRepository;
+        this.faceObservationRepository = faceObservationRepository;
         this.faceIdentityService = faceIdentityService;
         this.faceRecognitionClient = faceRecognitionClient;
         this.imageAnalysisCacheService = imageAnalysisCacheService;
@@ -657,6 +662,10 @@ public class IngestionService {
     }
 
     private record CachedVisionResult(VisionResultDto resultDto, String rawText, boolean structured) {}
+    /**
+     * Cascades file delete across embeddings, graph mentions/facts, face data and orphan entities
+     * that no longer have any mentions. Same path used by the data API delete endpoint.
+     */
     @Transactional
     public void deleteFiles(List<String> filePaths) {
         for (String path : filePaths) {
@@ -664,23 +673,57 @@ public class IngestionService {
                 continue;
             }
 
-            List<UUID> mentionIds = mentionRepo.findByFilePath(path).stream()
-                    .map(mention -> mention.getId())
+            List<EntityMention> mentions = mentionRepo.findByFilePath(path);
+            List<UUID> mentionIds = mentions.stream()
+                    .map(EntityMention::getId)
+                    .filter(java.util.Objects::nonNull)
                     .toList();
+            Set<UUID> touchedEntityIds = mentions.stream()
+                    .map(EntityMention::getEntity)
+                    .filter(java.util.Objects::nonNull)
+                    .map(KnowledgeEntity::getId)
+                    .filter(java.util.Objects::nonNull)
+                    .collect(Collectors.toCollection(HashSet::new));
 
             if (!mentionIds.isEmpty()) {
                 suggestionRepo.deleteByMentionIds(mentionIds);
                 faceEmbeddingRepository.deleteByMentionIdIn(mentionIds);
+                faceObservationRepository.deleteByMentionIds(mentionIds);
             }
 
             factRepo.deleteByFilePath(path);
             faceEmbeddingRepository.deleteByFilePath(path);
+            faceObservationRepository.deleteByFilePath(path);
             mentionRepo.deleteByFilePath(path);
             jdbcTemplate.update("DELETE FROM embeddings WHERE metadata->>'path' = ?", path);
+
+            for (UUID entityId : touchedEntityIds) {
+                cleanupOrphanKnowledgeEntity(entityId);
+            }
+
             fileRepository.findByPath(path).ifPresent(fileRepository::delete);
 
             log.info("Deleted file and related data for path: {}", path);
         }
+    }
+
+    /**
+     * Removes a knowledge entity when it has no remaining mentions (and cleans face embeddings / aliases).
+     */
+    void cleanupOrphanKnowledgeEntity(UUID entityId) {
+        if (entityId == null) {
+            return;
+        }
+        List<EntityMention> remaining = mentionRepo.findByEntityId(entityId);
+        if (!remaining.isEmpty()) {
+            return;
+        }
+        faceEmbeddingRepository.deleteByEntityId(entityId);
+        aliasRepo.deleteByEntityId(entityId);
+        knowledgeEntityRepo.findById(entityId).ifPresent(entity -> {
+            knowledgeEntityRepo.delete(entity);
+            log.info("Removed orphan knowledge entity '{}' ({})", entity.getDisplayName(), entityId);
+        });
     }
 
     @Transactional

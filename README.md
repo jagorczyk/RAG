@@ -4,19 +4,21 @@ Spring Boot backend + Next.js frontend: dokumenty i zdjęcia, hybrid retrieval (
 
 ## Stack
 
-- **Backend:** Java 17, Spring Boot 4, JPA, PostgreSQL + PGVector, Spring Security JWT, Flyway, RabbitMQ async ingest, springdoc OpenAPI
+- **Backend:** Java 17, Spring Boot 4, JPA, PostgreSQL + PGVector, Spring Security JWT, Flyway, RabbitMQ async ingest, Redis (rate limit + identity cache), Actuator health, springdoc OpenAPI
 - **Frontend:** Next.js, token Bearer w `localStorage`
-- **Infra:** Docker Compose (`pgvector`, `rabbitmq`, `face-service`)
+- **Infra:** Docker Compose (`pgvector`, `rabbitmq`, `redis`, `face-service`)
 
 ## Szybki start
 
-### 1. Baza, RabbitMQ i face-service
+### 1. Baza, RabbitMQ, Redis i face-service
 
 ```bash
 docker compose up -d
 ```
 
-RabbitMQ management UI: `http://localhost:15672` (guest/guest)
+RabbitMQ management UI: `http://localhost:15672` (guest/guest)  
+Redis: `localhost:6379`  
+Health: `http://localhost:8080/actuator/health` (public; components: db, redis, rabbit, faceService)
 
 ### 2. Backend
 
@@ -84,6 +86,12 @@ W Swagger UI: **Authorize** → `Bearer <token>` (bez słowa „Bearer” w polu
 | `FACE_SERVICE_URL` | `http://localhost:8001` | Serwis twarzy |
 | `RAG_INGEST_ASYNC` | `true` | `false` = synchroniczny ingest bez RabbitMQ |
 | `RABBITMQ_HOST` / `PORT` / `USER` / `PASSWORD` | localhost:5672 guest | Broker ingestu |
+| `REDIS_HOST` / `REDIS_PORT` | localhost / 6379 | Rate limit + identity cache |
+| `RATE_LIMIT_ENABLED` | `true` | Rate limit na chat send i upload |
+| `RATE_LIMIT_CHAT_SEND` / `RATE_LIMIT_UPLOAD` | 30 / 20 per window | Limity żądań |
+| `RATE_LIMIT_FAIL_OPEN` | `true` | Gdy Redis down — przepuszczaj (dev) |
+| `IDENTITY_CACHE_ENABLED` | `true` | Cache wyników face identity match |
+| `IDENTITY_CACHE_TTL_SECONDS` | `300` | TTL cache identity |
 | `NEXT_PUBLIC_BACKEND_URL` | `http://localhost:8080` | URL API dla frontu |
 
 ## Async ingest (Sprint 2)
@@ -106,6 +114,15 @@ rag.ingest.async-enabled=false
 ```
 
 **Nie commituj** `.env`, kluczy API ani haseł produkcyjnych.
+
+## Redis, rate limit i health (Sprint 3)
+
+- **Rate limit (Redis fixed window):** `POST /api/chat/{id}/send` oraz `POST /api/folders/{id}/upload`.
+  Przy przekroczeniu → **HTTP 429** z JSON (`code: RATE_LIMIT_EXCEEDED`, czytelny `message`).
+  Klucz: użytkownik (`user:<uuid>`) lub IP gdy brak auth.
+- **Identity cache:** wyniki drogiego face match (`findBestEntityMatch`) w Redis (TTL konfigurowalny).
+- **Delete cascade:** `POST /api/data/files/delete` usuwa embeddingi, mentions, facts, face embeddings/observations, suggestions oraz osierocone encje knowledge bez pozostałych mentions.
+- **Health:** `GET /actuator/health` — DB, Redis, RabbitMQ, face-service (public).
 
 ## Flyway
 

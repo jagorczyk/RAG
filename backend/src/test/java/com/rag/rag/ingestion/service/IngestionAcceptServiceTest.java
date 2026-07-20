@@ -15,6 +15,7 @@ import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
+import com.rag.rag.knowledge.repository.FaceObservationRepository;
 import com.rag.rag.knowledge.repository.FactRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
@@ -73,6 +74,7 @@ class IngestionAcceptServiceTest {
                 mock(FactRepository.class),
                 mock(IdentitySuggestionRepository.class),
                 mock(FaceEmbeddingRepository.class),
+                mock(FaceObservationRepository.class),
                 mock(FaceIdentityService.class),
                 mock(FaceRecognitionClient.class),
                 mock(ImageAnalysisCacheService.class),

@@ -1,6 +1,8 @@
 package com.rag.rag.knowledge.face;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rag.rag.core.cache.IdentityMatchCacheService;
+import com.rag.rag.core.cache.IdentityMatchCacheService.CachedIdentityMatch;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
@@ -11,6 +13,7 @@ import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
 import com.rag.rag.knowledge.repository.FaceObservationRepository;
 import com.rag.rag.knowledge.repository.FactRepository;
 import com.rag.rag.knowledge.repository.IdentitySuggestionRepository;
+import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,6 +50,8 @@ public class FaceIdentityService {
     private final MentionEvidencePolicy mentionEvidencePolicy;
     private final IdentitySuggestionRepository suggestionRepository;
     private final FactRepository factRepository;
+    private final IdentityMatchCacheService identityMatchCacheService;
+    private final KnowledgeEntityRepository knowledgeEntityRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
@@ -57,7 +62,9 @@ public class FaceIdentityService {
                                IdentityResolutionService identityResolutionService,
                                MentionEvidencePolicy mentionEvidencePolicy,
                                IdentitySuggestionRepository suggestionRepository,
-                               FactRepository factRepository) {
+                               FactRepository factRepository,
+                               IdentityMatchCacheService identityMatchCacheService,
+                               KnowledgeEntityRepository knowledgeEntityRepository) {
         this.faceClient = faceClient;
         this.faceEmbeddingRepository = faceEmbeddingRepository;
         this.faceObservationRepository = faceObservationRepository;
@@ -66,6 +73,8 @@ public class FaceIdentityService {
         this.mentionEvidencePolicy = mentionEvidencePolicy;
         this.suggestionRepository = suggestionRepository;
         this.factRepository = factRepository;
+        this.identityMatchCacheService = identityMatchCacheService;
+        this.knowledgeEntityRepository = knowledgeEntityRepository;
     }
 
     FaceIdentityService(FaceRecognitionClient faceClient,
@@ -74,7 +83,7 @@ public class FaceIdentityService {
                         EntityMentionRepository mentionRepository,
                         IdentityResolutionService identityResolutionService) {
         this(faceClient, faceEmbeddingRepository, faceObservationRepository, mentionRepository,
-                identityResolutionService, new MentionEvidencePolicy(), null, null);
+                identityResolutionService, new MentionEvidencePolicy(), null, null, null, null);
     }
 
     @Value("${face.match.threshold:0.55}")
@@ -321,8 +330,47 @@ public class FaceIdentityService {
     }
 
     public Optional<EntityMatch> findBestEntityMatch(float[] queryEmbedding, String excludeFilePath, double threshold) {
+        float[] normalizedQuery = normalizeEmbedding(queryEmbedding);
+        String cacheKey = identityMatchCacheService != null
+                ? identityMatchCacheService.buildKey(normalizedQuery, excludeFilePath, threshold)
+                : null;
+        if (cacheKey != null && identityMatchCacheService != null) {
+            Optional<CachedIdentityMatch> cached = identityMatchCacheService.get(cacheKey);
+            if (cached.isPresent()) {
+                CachedIdentityMatch hit = cached.get();
+                if (hit.isNegative()) {
+                    return Optional.empty();
+                }
+                if (knowledgeEntityRepository != null) {
+                    Optional<KnowledgeEntity> entity = knowledgeEntityRepository.findById(hit.entityId());
+                    if (entity.isPresent()) {
+                        return Optional.of(new EntityMatch(
+                                entity.get(), hit.score(), hit.rankingScore(), hit.margin()));
+                    }
+                }
+            }
+        }
+
+        Optional<EntityMatch> match = findBestEntityMatchUncached(normalizedQuery, excludeFilePath, threshold);
+
+        if (cacheKey != null && identityMatchCacheService != null) {
+            if (match.isPresent()) {
+                EntityMatch m = match.get();
+                identityMatchCacheService.putHit(
+                        cacheKey, m.entity().getId(), m.score(), m.rankingScore(), m.margin());
+            } else {
+                identityMatchCacheService.putMiss(cacheKey);
+            }
+        }
+        return match;
+    }
+
+    /**
+     * Full gallery / vector search path without Redis. Used by cache miss and tests.
+     */
+    Optional<EntityMatch> findBestEntityMatchUncached(float[] queryEmbedding, String excludeFilePath, double threshold) {
         List<FaceEmbedding> storedEmbeddings = List.of();
-        if (vectorSearchEnabled) {
+        if (vectorSearchEnabled && faceEmbeddingRepository != null) {
             try {
                 storedEmbeddings = faceEmbeddingRepository.findTopKByVectorDistance(
                         toVectorLiteral(normalizeEmbedding(queryEmbedding)),
@@ -348,7 +396,7 @@ public class FaceIdentityService {
                 storedEmbeddings = List.of();
             }
         }
-        if (storedEmbeddings.isEmpty()) {
+        if (storedEmbeddings.isEmpty() && faceEmbeddingRepository != null) {
             storedEmbeddings = excludeFilePath == null || excludeFilePath.isBlank()
                     ? faceEmbeddingRepository.findAllConfirmedGallery()
                     : faceEmbeddingRepository.findAllExceptFilePath(excludeFilePath);

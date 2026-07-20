@@ -135,7 +135,7 @@ class FaceIdentityServiceTest {
         FactRepository facts = mock(FactRepository.class);
         FaceIdentityService cleanupService = new FaceIdentityService(
                 null, embeddings, observations, mentions, mock(IdentityResolutionService.class),
-                new MentionEvidencePolicy(), suggestions, facts);
+                new MentionEvidencePolicy(), suggestions, facts, null, null);
 
         UUID orphanId = UUID.randomUUID();
         EntityMention orphan = EntityMention.builder().id(orphanId).filePath("photo.jpg")
