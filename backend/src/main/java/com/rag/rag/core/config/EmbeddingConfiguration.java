@@ -18,10 +18,10 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class EmbeddingConfiguration {
 
-    @Value("${ollama.base.url}")
+    @Value("${ollama.base.url:http://localhost:11434}")
     private String baseUrl;
 
-    @Value("${embedding.model}")
+    @Value("${embedding.model:bge-m3}")
     private String embeddingModel;
 
     @Value("${llm.deepinfra.base-url}")
@@ -30,7 +30,7 @@ public class EmbeddingConfiguration {
     @Value("${llm.deepinfra.api-key}")
     private String deepInfraApiKey;
 
-    @Value("${llm.deepinfra.embedding-model:Qwen/Qwen3-Embedding-8B}")
+    @Value("${llm.deepinfra.embedding-model:Qwen/Qwen3-Embedding-4B}")
     private String deepInfraEmbeddingModel;
 
     @Value("${spring.datasource.username}")
@@ -52,7 +52,7 @@ public class EmbeddingConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(name = "llm.embedding.provider", havingValue = "ollama", matchIfMissing = true)
+    @ConditionalOnProperty(name = "llm.embedding.provider", havingValue = "ollama")
     EmbeddingModel ollamaEmbeddingModel() {
         return OllamaEmbeddingModel.builder()
                 .baseUrl(baseUrl)
@@ -61,7 +61,7 @@ public class EmbeddingConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(name = "llm.embedding.provider", havingValue = "deepinfra")
+    @ConditionalOnProperty(name = "llm.embedding.provider", havingValue = "deepinfra", matchIfMissing = true)
     EmbeddingModel deepInfraEmbeddingModel() {
         return OpenAiEmbeddingModel.builder()
                 .baseUrl(deepInfraBaseUrl)

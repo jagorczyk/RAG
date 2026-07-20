@@ -14,13 +14,13 @@ import java.time.Duration;
 @Configuration
 public class LlmConfiguration {
 
-    @Value("${ollama.base.url}")
+    @Value("${ollama.base.url:http://localhost:11434}")
     private String BASE_URL;
 
-    @Value("${chat.language.model}")
+    @Value("${chat.language.model:llama3.1}")
     private String TEXT_MODEL;
 
-    @Value("${vision.language.model}")
+    @Value("${vision.language.model:minicpm-v}")
     private String VISION_MODEL;
 
     @Value("${llm.deepinfra.base-url}")
@@ -53,7 +53,7 @@ public class LlmConfiguration {
 
     @Bean("chatLanguageModel")
     @Primary
-    @ConditionalOnProperty(name = "llm.provider", havingValue = "ollama", matchIfMissing = true)
+    @ConditionalOnProperty(name = "llm.provider", havingValue = "ollama")
     public ChatLanguageModel ollamaChatModel() {
         return OllamaChatModel.builder()
                 .baseUrl(BASE_URL)
@@ -64,7 +64,7 @@ public class LlmConfiguration {
     }
 
     @Bean("visionModel")
-    @ConditionalOnProperty(name = "llm.provider", havingValue = "ollama", matchIfMissing = true)
+    @ConditionalOnProperty(name = "llm.provider", havingValue = "ollama")
     public ChatLanguageModel ollamaVisionModel() {
         return OllamaChatModel.builder()
                 .baseUrl(BASE_URL)
@@ -77,7 +77,7 @@ public class LlmConfiguration {
 
     @Bean("chatLanguageModel")
     @Primary
-    @ConditionalOnProperty(name = "llm.provider", havingValue = "deepinfra")
+    @ConditionalOnProperty(name = "llm.provider", havingValue = "deepinfra", matchIfMissing = true)
     public ChatLanguageModel deepInfraChatModel() {
         return OpenAiChatModel.builder()
                 .baseUrl(deepInfraBaseUrl)
@@ -91,7 +91,7 @@ public class LlmConfiguration {
     }
 
     @Bean("visionModel")
-    @ConditionalOnProperty(name = "llm.provider", havingValue = "deepinfra")
+    @ConditionalOnProperty(name = "llm.provider", havingValue = "deepinfra", matchIfMissing = true)
     public ChatLanguageModel deepInfraVisionModel() {
         return OpenAiChatModel.builder()
                 .baseUrl(deepInfraBaseUrl)
