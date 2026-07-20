@@ -513,8 +513,12 @@ public class IdentityResolutionService {
         if (entityId == null) {
             return;
         }
-        List<EntityMention> remaining = mentionRepository.findByEntityId(entityId);
-        if (!remaining.isEmpty()) {
+        boolean hasRemainingMentions = !mentionRepository.findByEntityId(entityId).isEmpty();
+        boolean hasUserAlias = aliasRepository.existsByEntityIdAndSource(entityId, AliasSource.USER);
+        if (!OrphanEntityCleanupPolicy.shouldDeleteOrphan(hasRemainingMentions, hasUserAlias)) {
+            if (!hasRemainingMentions && hasUserAlias) {
+                log.debug("Kept entity {} — no mentions but has USER alias", entityId);
+            }
             return;
         }
         KnowledgeEntity entity = entityRepository.findById(entityId).orElse(null);

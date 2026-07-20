@@ -5,9 +5,11 @@ import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.folder.repository.FolderRepository;
 import com.rag.rag.ingestion.cache.ImageAnalysisCacheService;
+import com.rag.rag.knowledge.entity.AliasSource;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.entity.OrphanEntityCleanupPolicy;
 import com.rag.rag.knowledge.extraction.StructuredVisionExtractor;
 import com.rag.rag.knowledge.face.FaceIdentityService;
 import com.rag.rag.knowledge.face.FaceRecognitionClient;
@@ -22,6 +24,8 @@ import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -33,14 +37,13 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -48,8 +51,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Drives the real {@link IngestionService#deleteFiles} path and asserts cascade cleanup
- * (embeddings SQL, mentions, facts, face data, suggestions, orphan knowledge entities).
+ * Drives the real {@link IngestionService#deleteFiles} / orphan-cleanup path and asserts:
+ * path-scoped cascade, true-orphan delete, remaining-mention keep, USER-alias keep.
  */
 class DeleteFilesCascadeTest {
 
@@ -69,7 +72,6 @@ class DeleteFilesCascadeTest {
     private UUID mentionId;
     private UUID entityId;
     private KnowledgeEntity entity;
-    private final AtomicBoolean entityDeleted = new AtomicBoolean(false);
 
     @BeforeEach
     void setUp() {
@@ -135,6 +137,7 @@ class DeleteFilesCascadeTest {
         when(mentionRepo.findByFilePath(PATH)).thenReturn(List.of(mention));
         // After deleteByFilePath, entity has no remaining mentions → orphan cleanup
         when(mentionRepo.findByEntityId(entityId)).thenReturn(List.of());
+        when(aliasRepo.existsByEntityIdAndSource(entityId, AliasSource.USER)).thenReturn(false);
         when(knowledgeEntityRepo.findById(entityId)).thenReturn(Optional.of(entity));
         when(fileRepository.findByPath(PATH)).thenReturn(Optional.of(new FileEntity()));
     }
@@ -143,6 +146,7 @@ class DeleteFilesCascadeTest {
     void deleteFilesRemovesAllPathArtifactsAndOrphanEntity() {
         service.deleteFiles(List.of(PATH));
 
+        // (a) path-scoped deletes
         verify(suggestionRepo).deleteByMentionIds(anyCollection());
         verify(faceEmbeddingRepository).deleteByMentionIdIn(anyList());
         verify(faceObservationRepository).deleteByMentionIds(anyCollection());
@@ -153,7 +157,8 @@ class DeleteFilesCascadeTest {
         verify(jdbcTemplate).update(eq("DELETE FROM embeddings WHERE metadata->>'path' = ?"), eq(PATH));
         verify(fileRepository).delete(any(FileEntity.class));
 
-        // Orphan entity cleanup
+        // (b) true orphan: no mentions, no USER alias → entity deleted
+        verify(aliasRepo).existsByEntityIdAndSource(entityId, AliasSource.USER);
         verify(faceEmbeddingRepository).deleteByEntityId(entityId);
         verify(aliasRepo).deleteByEntityId(entityId);
         verify(knowledgeEntityRepo).delete(entity);
@@ -174,9 +179,36 @@ class DeleteFilesCascadeTest {
 
         service.deleteFiles(List.of(PATH));
 
+        // path still cleaned
         verify(mentionRepo).deleteByFilePath(PATH);
+        verify(factRepo).deleteByFilePath(PATH);
+        verify(jdbcTemplate).update(eq("DELETE FROM embeddings WHERE metadata->>'path' = ?"), eq(PATH));
+
+        // (c) entity with remaining mentions is never deleted
         verify(knowledgeEntityRepo, never()).delete(any());
         verify(faceEmbeddingRepository, never()).deleteByEntityId(entityId);
+        verify(aliasRepo, never()).deleteByEntityId(entityId);
+    }
+
+    @Test
+    void deleteFilesKeepsEntityWhenUserAliasAndNoMentions() {
+        when(mentionRepo.findByEntityId(entityId)).thenReturn(List.of());
+        when(aliasRepo.existsByEntityIdAndSource(entityId, AliasSource.USER)).thenReturn(true);
+
+        service.deleteFiles(List.of(PATH));
+
+        // path-scoped cascade still runs
+        verify(mentionRepo).deleteByFilePath(PATH);
+        verify(factRepo).deleteByFilePath(PATH);
+        verify(faceEmbeddingRepository).deleteByFilePath(PATH);
+        verify(jdbcTemplate).update(eq("DELETE FROM embeddings WHERE metadata->>'path' = ?"), eq(PATH));
+        verify(fileRepository).delete(any(FileEntity.class));
+
+        // (d) USER alias keeps entity even with zero mentions
+        verify(aliasRepo).existsByEntityIdAndSource(entityId, AliasSource.USER);
+        verify(knowledgeEntityRepo, never()).delete(any());
+        verify(faceEmbeddingRepository, never()).deleteByEntityId(entityId);
+        verify(aliasRepo, never()).deleteByEntityId(entityId);
     }
 
     @Test
@@ -189,12 +221,13 @@ class DeleteFilesCascadeTest {
         service.cleanupOrphanKnowledgeEntity(entityId);
 
         verify(knowledgeEntityRepo, never()).delete(any());
-        assertFalse(entityDeleted.get());
+        verify(aliasRepo, never()).deleteByEntityId(entityId);
     }
 
     @Test
-    void cleanupOrphanKnowledgeEntityDeletesWhenNoMentions() {
+    void cleanupOrphanKnowledgeEntityDeletesWhenNoMentionsAndNoUserAlias() {
         when(mentionRepo.findByEntityId(entityId)).thenReturn(List.of());
+        when(aliasRepo.existsByEntityIdAndSource(entityId, AliasSource.USER)).thenReturn(false);
         when(knowledgeEntityRepo.findById(entityId)).thenReturn(Optional.of(entity));
 
         service.cleanupOrphanKnowledgeEntity(entityId);
@@ -202,6 +235,53 @@ class DeleteFilesCascadeTest {
         verify(faceEmbeddingRepository).deleteByEntityId(entityId);
         verify(aliasRepo).deleteByEntityId(entityId);
         verify(knowledgeEntityRepo).delete(entity);
-        assertTrue(true);
+    }
+
+    @Test
+    void cleanupOrphanKnowledgeEntityKeepsWhenUserAliasAndNoMentions() {
+        when(mentionRepo.findByEntityId(entityId)).thenReturn(List.of());
+        when(aliasRepo.existsByEntityIdAndSource(entityId, AliasSource.USER)).thenReturn(true);
+
+        service.cleanupOrphanKnowledgeEntity(entityId);
+
+        verify(knowledgeEntityRepo, never()).delete(any());
+        verify(faceEmbeddingRepository, never()).deleteByEntityId(entityId);
+        verify(aliasRepo, never()).deleteByEntityId(entityId);
+    }
+
+    @Test
+    void cleanupOrphanKnowledgeEntityDeletesWhenOnlyAutoAlias() {
+        // AUTO/FACE aliases do not protect the entity — only USER does
+        when(mentionRepo.findByEntityId(entityId)).thenReturn(List.of());
+        when(aliasRepo.existsByEntityIdAndSource(entityId, AliasSource.USER)).thenReturn(false);
+        when(knowledgeEntityRepo.findById(entityId)).thenReturn(Optional.of(entity));
+
+        service.cleanupOrphanKnowledgeEntity(entityId);
+
+        verify(knowledgeEntityRepo).delete(entity);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "true,  true,  false",
+            "true,  false, false",
+            "false, true,  false",
+            "false, false, true"
+    })
+    void orphanPolicyDecidesDeleteOnlyForTrueOrphans(
+            boolean hasRemainingMentions, boolean hasUserAlias, boolean expectDelete) {
+        assertEquals(
+                expectDelete,
+                OrphanEntityCleanupPolicy.shouldDeleteOrphan(hasRemainingMentions, hasUserAlias));
+    }
+
+    @Test
+    void orphanPolicyKeepsUserNamedEntityWithoutMentions() {
+        assertFalse(OrphanEntityCleanupPolicy.shouldDeleteOrphan(false, true));
+    }
+
+    @Test
+    void orphanPolicyDeletesEmptyEntityWithoutUserAlias() {
+        assertTrue(OrphanEntityCleanupPolicy.shouldDeleteOrphan(false, false));
     }
 }

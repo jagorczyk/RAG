@@ -30,9 +30,11 @@ import com.rag.rag.folder.entity.IngestionStatus;
 import com.rag.rag.ingestion.cache.ImageAnalysisAnalyzer;
 import com.rag.rag.ingestion.cache.ImageAnalysisCacheService;
 import com.rag.rag.ingestion.cache.ImageAnalysisStatus;
+import com.rag.rag.knowledge.entity.AliasSource;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.LivingEntityTypes;
 import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.entity.OrphanEntityCleanupPolicy;
 import com.rag.rag.knowledge.extraction.ExtractedEntityDto;
 import com.rag.rag.knowledge.extraction.StructuredVisionExtractor;
 import com.rag.rag.knowledge.extraction.StructuredVisionExtractor.ExtractionResult;
@@ -708,14 +710,19 @@ public class IngestionService {
     }
 
     /**
-     * Removes a knowledge entity when it has no remaining mentions (and cleans face embeddings / aliases).
+     * Removes a knowledge entity when it has no remaining mentions and no USER alias
+     * (cleans entity-level face embeddings / aliases). Kept when the user assigned an alias.
      */
     void cleanupOrphanKnowledgeEntity(UUID entityId) {
         if (entityId == null) {
             return;
         }
-        List<EntityMention> remaining = mentionRepo.findByEntityId(entityId);
-        if (!remaining.isEmpty()) {
+        boolean hasRemainingMentions = !mentionRepo.findByEntityId(entityId).isEmpty();
+        boolean hasUserAlias = aliasRepo.existsByEntityIdAndSource(entityId, AliasSource.USER);
+        if (!OrphanEntityCleanupPolicy.shouldDeleteOrphan(hasRemainingMentions, hasUserAlias)) {
+            if (!hasRemainingMentions && hasUserAlias) {
+                log.debug("Kept knowledge entity {} — no mentions but has USER alias", entityId);
+            }
             return;
         }
         faceEmbeddingRepository.deleteByEntityId(entityId);

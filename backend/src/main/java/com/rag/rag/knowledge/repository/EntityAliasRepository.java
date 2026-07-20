@@ -1,5 +1,6 @@
 package com.rag.rag.knowledge.repository;
 
+import com.rag.rag.knowledge.entity.AliasSource;
 import com.rag.rag.knowledge.entity.EntityAlias;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
@@ -17,6 +18,10 @@ public interface EntityAliasRepository extends JpaRepository<EntityAlias, UUID> 
 
     Optional<EntityAlias> findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(
             String alias, String type, UUID ownerId);
+
+    List<EntityAlias> findByEntityId(UUID entityId);
+
+    boolean existsByEntityIdAndSource(UUID entityId, AliasSource source);
 
     void deleteByEntityId(UUID entityId);
 }
