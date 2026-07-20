@@ -3,6 +3,7 @@ package com.rag.rag.knowledge.identity;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.core.cache.IdentityMatchCacheService;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.*;
 import com.rag.rag.knowledge.fact.Fact;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,6 +47,7 @@ public class IdentityResolutionService {
     private final FileRepository fileRepository;
     private final CurrentUserService currentUserService;
     private final ChatLanguageModel chatModel;
+    private final IdentityMatchCacheService identityMatchCacheService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${identity.llm-matcher.enabled:false}")
@@ -52,6 +55,16 @@ public class IdentityResolutionService {
 
     @Value("${identity.llm-matcher.max-candidates:2}")
     private int llmMatcherMaxCandidates;
+
+    @Value("${identity.description-auto-confirm-threshold:0.85}")
+    private double autoConfirmThreshold = 0.85;
+
+    @Value("${identity.description-suggest-threshold:0.60}")
+    private double suggestThreshold = 0.60;
+
+    /** Max mentions scored after type/folder/token pre-filter (heuristic path). */
+    @Value("${identity.heuristic.max-candidates:40}")
+    private int heuristicMaxCandidates = 40;
 
     public IdentityResolutionService(
             KnowledgeEntityRepository entityRepository,
@@ -62,7 +75,8 @@ public class IdentityResolutionService {
             FactRepository factRepository,
             FileRepository fileRepository,
             CurrentUserService currentUserService,
-            @Qualifier("chatLanguageModel") ChatLanguageModel chatModel
+            @Qualifier("chatLanguageModel") ChatLanguageModel chatModel,
+            IdentityMatchCacheService identityMatchCacheService
     ) {
         this.entityRepository = entityRepository;
         this.aliasRepository = aliasRepository;
@@ -73,10 +87,28 @@ public class IdentityResolutionService {
         this.fileRepository = fileRepository;
         this.currentUserService = currentUserService;
         this.chatModel = chatModel;
+        this.identityMatchCacheService = identityMatchCacheService;
     }
 
     @Transactional
     public void resolve(EntityMention mention, String fileEntityTag, String entityType) {
+        long started = System.nanoTime();
+        try {
+            resolveInternal(mention, fileEntityTag, entityType);
+        } finally {
+            long ms = (System.nanoTime() - started) / 1_000_000L;
+            if (ms >= 50) {
+                log.info("Identity resolve took {} ms for mention label='{}' path='{}'",
+                        ms, mention != null ? mention.getLabel() : null,
+                        mention != null ? mention.getFilePath() : null);
+            } else {
+                log.debug("Identity resolve took {} ms for mention label='{}'",
+                        ms, mention != null ? mention.getLabel() : null);
+            }
+        }
+    }
+
+    private void resolveInternal(EntityMention mention, String fileEntityTag, String entityType) {
         String type = LivingEntityTypes.normalize(entityType);
         if (type == null) {
             log.debug("Ignoring unsupported entity type '{}' for mention '{}'", entityType, mention.getLabel());
@@ -121,26 +153,16 @@ public class IdentityResolutionService {
         double bestConfirmScore = 0.0;
         List<CandidateScore> heuristicCandidates = new ArrayList<>();
 
-        for (EntityMention candidate : mentionRepository.findAll()) {
-            if (candidate.getId().equals(mention.getId())) {
-                continue;
-            }
-            if (candidate.getEntity() == null
-                    || !type.equals(LivingEntityTypes.normalize(candidate.getEntity().getType()))) {
-                continue;
-            }
-            if (!sameOwner(candidate.getEntity(), ownerId)) {
-                continue;
-            }
-
+        List<EntityMention> prefiltered = loadAndPrefilterCandidates(mention, type, ownerId);
+        for (EntityMention candidate : prefiltered) {
             double score = computeHeuristicSimilarity(mention, candidate);
             heuristicCandidates.add(new CandidateScore(candidate, score));
-            if (score >= 0.85 && candidate.getEntity() != null && score > bestConfirmScore) {
+            if (score >= autoConfirmThreshold && candidate.getEntity() != null && score > bestConfirmScore) {
                 bestConfirmCandidate = candidate;
                 bestConfirmScore = score;
                 continue;
             }
-            if (score >= 0.60 && score > bestSuggestionScore) {
+            if (score >= suggestThreshold && score > bestSuggestionScore) {
                 bestSuggestionCandidate = candidate;
                 bestSuggestionScore = score;
             }
@@ -153,12 +175,13 @@ public class IdentityResolutionService {
                     .toList();
             for (CandidateScore candidateScore : llmCandidates) {
                 double score = computeLlmSimilarity(mention, candidateScore.candidate());
-                if (score >= 0.85 && candidateScore.candidate().getEntity() != null && score > bestConfirmScore) {
+                if (score >= autoConfirmThreshold && candidateScore.candidate().getEntity() != null
+                        && score > bestConfirmScore) {
                     bestConfirmCandidate = candidateScore.candidate();
                     bestConfirmScore = score;
                     continue;
                 }
-                if (score >= 0.60 && score > bestSuggestionScore) {
+                if (score >= suggestThreshold && score > bestSuggestionScore) {
                     bestSuggestionCandidate = candidateScore.candidate();
                     bestSuggestionScore = score;
                 }
@@ -190,6 +213,80 @@ public class IdentityResolutionService {
         linkMention(mention, entity, named ? MentionStatus.CONFIRMED : MentionStatus.SUGGESTED,
                 named ? IdentityEvidenceSource.DESCRIPTION_MATCH : null,
                 named ? 1.0 : null, null);
+    }
+
+    /**
+     * Loads type/owner-scoped mentions, applies folder/token pre-filter, caps count.
+     * Package-visible for unit tests.
+     */
+    List<EntityMention> loadAndPrefilterCandidates(EntityMention mention, String type, UUID ownerId) {
+        List<EntityMention> scoped = ownerId != null
+                ? mentionRepository.findLinkedByEntityTypeAndOwner(type, ownerId)
+                : mentionRepository.findLinkedByEntityTypeWithoutOwner(type);
+
+        return scoped.stream()
+                .filter(candidate -> candidate.getId() != null && mention.getId() != null
+                        && !candidate.getId().equals(mention.getId()))
+                .filter(candidate -> candidate.getEntity() != null)
+                .filter(candidate -> type.equals(LivingEntityTypes.normalize(candidate.getEntity().getType())))
+                .filter(candidate -> sameOwner(candidate.getEntity(), ownerId))
+                .filter(candidate -> passesIdentityPreFilter(mention, candidate))
+                .sorted(Comparator
+                        .comparing((EntityMention c) -> sameFolder(mention, c) ? 0 : 1)
+                        .thenComparing(c -> c.getLabel() == null ? "" : c.getLabel(), String.CASE_INSENSITIVE_ORDER))
+                .limit(Math.max(1, heuristicMaxCandidates))
+                .toList();
+    }
+
+    /**
+     * Keep candidates that share folder path prefix, exact label, or label/visual-cue tokens.
+     * Package-visible for unit tests.
+     */
+    boolean passesIdentityPreFilter(EntityMention mention, EntityMention candidate) {
+        if (mention == null || candidate == null) {
+            return false;
+        }
+        if (sameFolder(mention, candidate)) {
+            return true;
+        }
+        String labelA = normalizeLabel(mention.getLabel());
+        String labelB = normalizeLabel(candidate.getLabel());
+        if (labelA != null && labelA.equalsIgnoreCase(labelB)) {
+            return true;
+        }
+        Set<String> tokensA = tokenize(labelA);
+        Set<String> tokensB = tokenize(labelB);
+        if (!tokensA.isEmpty() && !tokensB.isEmpty()) {
+            for (String t : tokensA) {
+                if (tokensB.contains(t)) {
+                    return true;
+                }
+            }
+        }
+        Set<String> cuesA = tokenizeVisualCues(mention.getVisualCues());
+        Set<String> cuesB = tokenizeVisualCues(candidate.getVisualCues());
+        if (!cuesA.isEmpty() && !cuesB.isEmpty()) {
+            for (String t : cuesA) {
+                if (cuesB.contains(t)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    boolean sameFolder(EntityMention a, EntityMention b) {
+        String fa = folderPrefix(a != null ? a.getFilePath() : null);
+        String fb = folderPrefix(b != null ? b.getFilePath() : null);
+        return !fa.isEmpty() && fa.equals(fb);
+    }
+
+    static String folderPrefix(String path) {
+        if (path == null || path.isBlank()) {
+            return "";
+        }
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(0, slash + 1) : path;
     }
 
     @Transactional
@@ -696,6 +793,17 @@ public class IdentityResolutionService {
     }
 
     private double computeLlmSimilarity(EntityMention a, EntityMention b) {
+        String cacheKey = descriptionPairCacheKey(a, b);
+        if (identityMatchCacheService != null && cacheKey != null) {
+            Optional<IdentityMatchCacheService.CachedIdentityMatch> cached = identityMatchCacheService.get(cacheKey);
+            if (cached.isPresent()) {
+                if (cached.get().isNegative()) {
+                    return 0.0;
+                }
+                return cached.get().score();
+            }
+        }
+
         String prompt = String.format(
                 "Are these two descriptions about the same person? " +
                         "Person A: %s, cues: %s. Person B: %s, cues: %s. " +
@@ -703,17 +811,42 @@ public class IdentityResolutionService {
                 a.getLabel(), a.getVisualCues(), b.getLabel(), b.getVisualCues()
         );
 
+        double score = 0.0;
         try {
             String response = chatModel.generate(prompt);
             String jsonContent = extractJson(response);
             JsonNode node = objectMapper.readTree(jsonContent);
             if (node.has("same") && node.get("same").asBoolean()) {
-                return node.has("confidence") ? node.get("confidence").asDouble() : 0.80;
+                score = node.has("confidence") ? node.get("confidence").asDouble() : 0.80;
             }
         } catch (Exception e) {
             log.warn("LLM matching failed", e);
         }
-        return 0.0;
+
+        if (identityMatchCacheService != null && cacheKey != null) {
+            if (score <= 0.0) {
+                identityMatchCacheService.putMiss(cacheKey);
+            } else {
+                UUID entityId = b.getEntity() != null ? b.getEntity().getId() : null;
+                identityMatchCacheService.putHit(cacheKey, entityId, score, score, 0.0);
+            }
+        }
+        return score;
+    }
+
+    private String descriptionPairCacheKey(EntityMention a, EntityMention b) {
+        if (a == null || b == null) {
+            return null;
+        }
+        String left = normalizeLabel(a.getLabel()) + "|" + nullToEmpty(a.getVisualCues());
+        String right = normalizeLabel(b.getLabel()) + "|" + nullToEmpty(b.getVisualCues());
+        // Order-independent pair key for A↔B description match
+        String pair = left.compareToIgnoreCase(right) <= 0 ? left + "||" + right : right + "||" + left;
+        return identityMatchCacheService.buildKey(null, "desc:" + pair, autoConfirmThreshold);
+    }
+
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value;
     }
 
     private Set<String> tokenizeVisualCues(String value) {

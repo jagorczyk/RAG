@@ -1,6 +1,7 @@
 package com.rag.rag.knowledge.identity;
 
 import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.core.cache.IdentityMatchCacheService;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.AliasSource;
 import com.rag.rag.knowledge.entity.EntityAlias;
@@ -23,6 +24,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -61,6 +63,8 @@ class IdentityResolutionServiceTest {
     private CurrentUserService currentUserService;
     @Mock
     private ChatLanguageModel chatModel;
+    @Mock
+    private IdentityMatchCacheService identityMatchCacheService;
 
     private IdentityResolutionService service;
     private final UUID ownerId = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -68,6 +72,8 @@ class IdentityResolutionServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(currentUserService.findUserId()).thenReturn(Optional.of(ownerId));
+        lenient().when(identityMatchCacheService.buildKey(any(), any(), org.mockito.ArgumentMatchers.anyDouble()))
+                .thenAnswer(inv -> "key:" + inv.getArgument(1));
         service = new IdentityResolutionService(
                 entityRepository,
                 aliasRepository,
@@ -77,8 +83,14 @@ class IdentityResolutionServiceTest {
                 factRepository,
                 fileRepository,
                 currentUserService,
-                chatModel
+                chatModel,
+                identityMatchCacheService
         );
+        ReflectionTestUtils.setField(service, "autoConfirmThreshold", 0.85);
+        ReflectionTestUtils.setField(service, "suggestThreshold", 0.60);
+        ReflectionTestUtils.setField(service, "heuristicMaxCandidates", 40);
+        ReflectionTestUtils.setField(service, "llmMatcherEnabled", false);
+        ReflectionTestUtils.setField(service, "llmMatcherMaxCandidates", 2);
     }
 
     @ParameterizedTest
@@ -258,15 +270,18 @@ class IdentityResolutionServiceTest {
         KnowledgeEntity known = KnowledgeEntity.builder()
                 .id(UUID.randomUUID()).displayName("Szymon").type("PERSON").ownerId(ownerId).build();
         EntityMention candidate = EntityMention.builder()
-                .id(UUID.randomUUID()).label("Szymon").entity(known).entityType("PERSON").build();
+                .id(UUID.randomUUID()).label("Szymon").entity(known).entityType("PERSON")
+                .filePath("dir://photos/a.jpg").build();
         EntityMention mention = EntityMention.builder()
-                .id(UUID.randomUUID()).label("Szymon").entityType("PERSON").build();
+                .id(UUID.randomUUID()).label("Szymon").entityType("PERSON")
+                .filePath("dir://photos/b.jpg").build();
 
         when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Szymon", "PERSON", ownerId))
                 .thenReturn(Optional.empty());
         when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(
                 "Szymon", "PERSON", ownerId)).thenReturn(Optional.empty());
-        when(mentionRepository.findAll()).thenReturn(List.of(mention, candidate));
+        when(mentionRepository.findLinkedByEntityTypeAndOwner("PERSON", ownerId))
+                .thenReturn(List.of(candidate));
 
         service.resolve(mention, null, "PERSON");
 
@@ -289,12 +304,14 @@ class IdentityResolutionServiceTest {
                 .label("Jan Nowak")
                 .entity(known)
                 .entityType("PERSON")
+                .filePath("dir://photos/a.jpg")
                 .visualCues(cues)
                 .build();
         EntityMention mention = EntityMention.builder()
                 .id(UUID.randomUUID())
                 .label("Nowak")
                 .entityType("PERSON")
+                .filePath("dir://photos/b.jpg")
                 .visualCues(cues)
                 .build();
 
@@ -302,7 +319,8 @@ class IdentityResolutionServiceTest {
                 .thenReturn(Optional.empty());
         when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(
                 "Nowak", "PERSON", ownerId)).thenReturn(Optional.empty());
-        when(mentionRepository.findAll()).thenReturn(List.of(mention, candidate));
+        when(mentionRepository.findLinkedByEntityTypeAndOwner("PERSON", ownerId))
+                .thenReturn(List.of(candidate));
         when(suggestionRepository.existsBetweenMentions(mention.getId(), candidate.getId())).thenReturn(false);
         when(entityRepository.save(any(KnowledgeEntity.class))).thenAnswer(inv -> {
             KnowledgeEntity e = inv.getArgument(0);
@@ -320,6 +338,49 @@ class IdentityResolutionServiceTest {
         assertEquals(SuggestionStatus.PENDING, suggestionCaptor.getValue().getStatus());
         assertTrue(suggestionCaptor.getValue().getSimilarityScore().doubleValue() >= 0.60);
         assertTrue(suggestionCaptor.getValue().getSimilarityScore().doubleValue() < 0.85);
+    }
+
+    @Test
+    void preFilterKeepsSameFolderOrSharedLabelTokens() {
+        EntityMention mention = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Anna").filePath("dir://wakacje/1.jpg").build();
+        EntityMention sameFolder = EntityMention.builder()
+                .id(UUID.randomUUID()).label("other name").filePath("dir://wakacje/2.jpg").build();
+        EntityMention sharedToken = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Anna Kowalska").filePath("dir://inne/x.jpg").build();
+        EntityMention unrelated = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Piotr").filePath("dir://inne/y.jpg").build();
+
+        assertTrue(service.passesIdentityPreFilter(mention, sameFolder));
+        assertTrue(service.passesIdentityPreFilter(mention, sharedToken));
+        assertFalse(service.passesIdentityPreFilter(mention, unrelated));
+        assertEquals("dir://wakacje/", IdentityResolutionService.folderPrefix("dir://wakacje/1.jpg"));
+    }
+
+    @Test
+    void loadAndPrefilterCandidatesCapsAndSkipsUnrelated() {
+        ReflectionTestUtils.setField(service, "heuristicMaxCandidates", 2);
+        KnowledgeEntity entity = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("X").type("PERSON").ownerId(ownerId).build();
+        EntityMention mention = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Anna").filePath("dir://f/a.jpg").build();
+        EntityMention c1 = EntityMention.builder().id(UUID.randomUUID()).label("Anna A")
+                .entity(entity).filePath("dir://f/b.jpg").build();
+        EntityMention c2 = EntityMention.builder().id(UUID.randomUUID()).label("Anna B")
+                .entity(entity).filePath("dir://f/c.jpg").build();
+        EntityMention c3 = EntityMention.builder().id(UUID.randomUUID()).label("Anna C")
+                .entity(entity).filePath("dir://f/d.jpg").build();
+        EntityMention far = EntityMention.builder().id(UUID.randomUUID()).label("Zygmunt")
+                .entity(entity).filePath("dir://other/z.jpg").build();
+
+        when(mentionRepository.findLinkedByEntityTypeAndOwner("PERSON", ownerId))
+                .thenReturn(List.of(c1, c2, c3, far));
+
+        List<EntityMention> result = service.loadAndPrefilterCandidates(mention, "PERSON", ownerId);
+
+        assertEquals(2, result.size());
+        assertFalse(result.contains(far));
+        verify(mentionRepository, never()).findAll();
     }
 
     @Test

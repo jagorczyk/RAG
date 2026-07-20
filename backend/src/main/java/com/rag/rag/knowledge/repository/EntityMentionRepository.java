@@ -3,6 +3,8 @@ package com.rag.rag.knowledge.repository;
 import com.rag.rag.knowledge.entity.EntityMention;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -16,6 +18,28 @@ public interface EntityMentionRepository extends JpaRepository<EntityMention, UU
 
     @EntityGraph(attributePaths = "entity")
     List<EntityMention> findByEntityId(UUID entityId);
+
+    /**
+     * Mentions already linked to a living entity of the given type for one owner.
+     * Used by identity resolution to avoid full-table {@code findAll()}.
+     */
+    @EntityGraph(attributePaths = "entity")
+    @Query("""
+            SELECT m FROM EntityMention m
+            JOIN m.entity e
+            WHERE UPPER(e.type) = UPPER(:type)
+              AND e.ownerId = :ownerId
+            """)
+    List<EntityMention> findLinkedByEntityTypeAndOwner(@Param("type") String type, @Param("ownerId") UUID ownerId);
+
+    @EntityGraph(attributePaths = "entity")
+    @Query("""
+            SELECT m FROM EntityMention m
+            JOIN m.entity e
+            WHERE UPPER(e.type) = UPPER(:type)
+              AND e.ownerId IS NULL
+            """)
+    List<EntityMention> findLinkedByEntityTypeWithoutOwner(@Param("type") String type);
 
     void deleteByFilePath(String filePath);
 
