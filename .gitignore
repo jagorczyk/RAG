@@ -73,9 +73,12 @@ revert_listings.py
 .impeccable/
 
 # =========================
-# Test data binaries
+# Local-only docs / samples (not on GitHub)
 # =========================
-test-data/img.b64
+*.md
+docs/
+scripts/
+test-data/
 
 # =========================
 # Environment Variables
