@@ -94,15 +94,42 @@ class ChatInteractionServiceTest {
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
 
         // Graph-empty GRAPH plans must still invoke hybrid/document answer path (not hard graph denial).
+        // Named entities without certain graph paths: hybrid text may answer, but sources stay empty
+        // so another person's document is not promoted as a certain source for Igor.
         verify(chatAiService).answer(eq(chatId), anyString());
         verify(ingestionService).getSources(result);
         verify(ingestionService, never()).createGraphFactSourceDto(anyString(), any(), anyDouble());
         assertEquals("Igor je zupę według dokumentu.", response.response());
         assertFalse(response.response().contains("Nie znaleziono pewnych informacji w grafie wiedzy"));
         assertEquals(QueryPlan.RetrievalMode.HYBRID.name(), response.answerKind());
-        assertEquals(1, response.sources().size());
-        assertEquals("dir://doc.txt", response.sources().get(0).path());
+        assertTrue(response.sources().isEmpty());
         assertTrue(response.uncertain());
+    }
+
+    @Test
+    void namedEntityHybridDropsSourcesWithoutCertainEvidenceForThatPerson() {
+        QueryPlan plan = new QueryPlan("Gdzie jest Igor?", List.of("Igor"), List.of(),
+                "Gdzie jest Igor?", "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z dowodów.");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "- entity=Igor; file=dir://igor-only.jpg",
+                        List.of("dir://igor-only.jpg")));
+        Result<String> result = Result.<String>builder().content("Igor jest na zdjęciu.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of(
+                new SourceDto("dir://igor-only.jpg", "igor-only.jpg", 0.9, null, "IMAGE"),
+                new SourceDto("dir://other-person.jpg", "other-person.jpg", 0.88, null, "IMAGE")
+        ));
+        when(ingestionService.createGraphFactSourceDto(eq("dir://igor-only.jpg"), any(), anyDouble()))
+                .thenReturn(new SourceDto("dir://igor-only.jpg", "igor-only.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals(1, response.sources().size());
+        assertEquals("dir://igor-only.jpg", response.sources().get(0).path());
+        assertTrue(response.sources().stream().noneMatch(s -> "dir://other-person.jpg".equals(s.path())));
     }
 
     @Test

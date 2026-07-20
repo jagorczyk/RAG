@@ -51,4 +51,25 @@ class ChatRetrievalPolicyTest {
                 QueryPlan.RetrievalMode.HYBRID, "instr");
         assertFalse(ChatRetrievalPolicy.shouldFallbackFromGraph(plan, new GraphEvidenceResult("", List.of())));
     }
+
+    @Test
+    void namedEntitiesAllowOnlyCertainGraphPathsAsHybridSources() {
+        QueryPlan plan = new QueryPlan("q", List.of("Igor"), List.of(), "q", "", false, false,
+                QueryPlan.RetrievalMode.HYBRID, "instr");
+        GraphEvidenceResult evidence = new GraphEvidenceResult("ctx", List.of("dir://igor.jpg"));
+
+        assertTrue(ChatRetrievalPolicy.allowsHybridSourceForNamedEntities(plan, evidence, "dir://igor.jpg"));
+        assertFalse(ChatRetrievalPolicy.allowsHybridSourceForNamedEntities(plan, evidence, "dir://other-person.jpg"));
+        assertFalse(ChatRetrievalPolicy.allowsHybridSourceForNamedEntities(plan, evidence, null));
+    }
+
+    @Test
+    void withoutNamedEntitiesHybridSourcesPassThrough() {
+        QueryPlan plan = new QueryPlan("q", List.of(), List.of(), "q", "", false, false,
+                QueryPlan.RetrievalMode.HYBRID, "instr");
+        GraphEvidenceResult evidence = new GraphEvidenceResult("", List.of());
+
+        assertTrue(ChatRetrievalPolicy.allowsHybridSourceForNamedEntities(plan, evidence, "dir://any.jpg"));
+        assertFalse(ChatRetrievalPolicy.hasNamedEntities(plan));
+    }
 }

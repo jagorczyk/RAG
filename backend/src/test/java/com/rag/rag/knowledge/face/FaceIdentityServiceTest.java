@@ -1,5 +1,7 @@
 package com.rag.rag.knowledge.face;
 
+import com.rag.rag.folder.entity.FileEntity;
+import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.MentionStatus;
@@ -17,6 +19,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -24,7 +27,11 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -165,5 +172,77 @@ class FaceIdentityServiceTest {
 
         assertEquals(Propagation.REQUIRES_NEW, transaction.propagation());
         assertFalse(deleteOperation.clearAutomatically());
+    }
+
+    @Test
+    void galleryMatchExcludesOtherOwnersPeople() {
+        UUID ownerA = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        UUID ownerB = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        FaceEmbeddingRepository embeddings = mock(FaceEmbeddingRepository.class);
+        FileRepository files = mock(FileRepository.class);
+        IdentityResolutionService identity = mock(IdentityResolutionService.class);
+        when(identity.isGenericPersonLabel(anyString())).thenReturn(false);
+
+        FileEntity file = new FileEntity();
+        file.setPath("dir://owner-a/photo.jpg");
+        file.setOwnerId(ownerA);
+        when(files.findByPath("dir://owner-a/photo.jpg")).thenReturn(Optional.of(file));
+
+        KnowledgeEntity foreign = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Obcy").type("PERSON").ownerId(ownerB).build();
+        KnowledgeEntity own = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Wlasny").type("PERSON").ownerId(ownerA).build();
+        EntityMention foreignMention = EntityMention.builder().id(UUID.randomUUID())
+                .status(MentionStatus.CONFIRMED).entity(foreign).confidence(BigDecimal.ONE).build();
+        EntityMention ownMention = EntityMention.builder().id(UUID.randomUUID())
+                .status(MentionStatus.CONFIRMED).entity(own).confidence(BigDecimal.ONE).build();
+
+        // Even if a buggy global gallery returned foreign+own, post-filter + owner query must keep own only.
+        when(embeddings.findAllExceptFilePathForOwner("dir://owner-a/photo.jpg", ownerA))
+                .thenReturn(List.of(
+                        FaceEmbedding.builder().entity(own).mention(ownMention)
+                                .embedding(new float[] {0.9f, 0.1f, 0f})
+                                .detScore(BigDecimal.valueOf(0.9)).build()
+                ));
+
+        FaceIdentityService scoped = new FaceIdentityService(
+                null, embeddings, null, null, identity,
+                new MentionEvidencePolicy(), null, null, null, null, files, null);
+        ReflectionTestUtils.setField(scoped, "vectorSearchEnabled", false);
+        ReflectionTestUtils.setField(scoped, "suggestionThreshold", 0.50);
+        ReflectionTestUtils.setField(scoped, "minMargin", 0.08);
+        ReflectionTestUtils.setField(scoped, "minDetScore", 0.50);
+
+        float[] query = FaceIdentityService.normalizeEmbedding(new float[] {1f, 0f, 0f});
+        Optional<FaceIdentityService.EntityMatch> match =
+                scoped.findBestEntityMatch(query, "dir://owner-a/photo.jpg", 0.50);
+
+        assertTrue(match.isPresent());
+        assertEquals(own.getId(), match.get().entity().getId());
+        verify(embeddings).findAllExceptFilePathForOwner("dir://owner-a/photo.jpg", ownerA);
+        verify(embeddings, never()).findAllExceptFilePath(anyString());
+        verify(embeddings, never()).findAllConfirmedGallery();
+        assertFalse(scoped.belongsToOwner(
+                FaceEmbedding.builder().entity(foreign).mention(foreignMention).build(), ownerA));
+        assertTrue(scoped.belongsToOwner(
+                FaceEmbedding.builder().entity(own).mention(ownMention).build(), ownerA));
+    }
+
+    @Test
+    void galleryMatchWithoutOwnerDoesNotSearchGlobalGallery() {
+        FaceEmbeddingRepository embeddings = mock(FaceEmbeddingRepository.class);
+        FaceIdentityService scoped = new FaceIdentityService(
+                null, embeddings, null, null, mock(IdentityResolutionService.class),
+                new MentionEvidencePolicy(), null, null, null, null, null, null);
+        ReflectionTestUtils.setField(scoped, "vectorSearchEnabled", false);
+
+        float[] query = FaceIdentityService.normalizeEmbedding(new float[] {1f, 0f, 0f});
+        Optional<FaceIdentityService.EntityMatch> match =
+                scoped.findBestEntityMatch(query, "dir://orphan.jpg", 0.50);
+
+        assertTrue(match.isEmpty());
+        verify(embeddings, never()).findAllConfirmedGallery();
+        verify(embeddings, never()).findAllExceptFilePath(anyString());
+        verify(embeddings, never()).findAllExceptFilePathForOwner(anyString(), any());
     }
 }

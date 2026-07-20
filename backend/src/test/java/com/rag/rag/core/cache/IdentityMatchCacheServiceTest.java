@@ -56,6 +56,20 @@ class IdentityMatchCacheServiceTest {
     }
 
     @Test
+    void buildKeyDiffersByOwner() {
+        float[] embedding = new float[] {0.1f, 0.2f, 0.3f};
+        UUID ownerA = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        UUID ownerB = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        String a = service.buildKey(embedding, "dir://a.jpg", 0.5, ownerA);
+        String same = service.buildKey(embedding, "dir://a.jpg", 0.5, ownerA);
+        String b = service.buildKey(embedding, "dir://a.jpg", 0.5, ownerB);
+        String noOwner = service.buildKey(embedding, "dir://a.jpg", 0.5, null);
+        assertEquals(a, same);
+        assertNotEquals(a, b);
+        assertNotEquals(a, noOwner);
+    }
+
+    @Test
     void putAndGetHit() {
         UUID entityId = UUID.randomUUID();
         String key = "abc123";

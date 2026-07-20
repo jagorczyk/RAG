@@ -46,4 +46,25 @@ public final class ChatRetrievalPolicy {
                 ? QueryPlan.RetrievalMode.HYBRID
                 : plan.retrievalMode();
     }
+
+    /** True when the planner named at least one entity (person/animal scope for sources). */
+    public static boolean hasNamedEntities(QueryPlan plan) {
+        return plan != null && plan.entities() != null && !plan.entities().isEmpty();
+    }
+
+    /**
+     * When entities are named, hybrid/document sources are allowed only if the path already has
+     * certain graph evidence for those people (prevents sources tied solely to other people).
+     * With no named entities, hybrid sources pass through (still subject to file scope).
+     */
+    public static boolean allowsHybridSourceForNamedEntities(
+            QueryPlan plan, GraphEvidenceResult evidence, String path) {
+        if (!hasNamedEntities(plan)) {
+            return true;
+        }
+        if (path == null || path.isBlank() || evidence == null) {
+            return false;
+        }
+        return evidence.certainPaths() != null && evidence.certainPaths().contains(path);
+    }
 }

@@ -2,6 +2,8 @@ package com.rag.rag.knowledge.face;
 
 import com.rag.rag.core.cache.IdentityMatchCacheService;
 import com.rag.rag.core.cache.IdentityMatchCacheService.CachedIdentityMatch;
+import com.rag.rag.folder.entity.FileEntity;
+import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
@@ -23,6 +25,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -40,12 +43,15 @@ class IdentityMatchCacheIntegrationInServiceTest {
     private KnowledgeEntityRepository entityRepository;
     private FaceEmbeddingRepository faceEmbeddingRepository;
     private IdentityResolutionService identityResolutionService;
+    private FileRepository fileRepository;
 
+    private final UUID ownerId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private final UUID entityId = UUID.randomUUID();
     private final KnowledgeEntity entity = KnowledgeEntity.builder()
             .id(entityId)
             .displayName("Anna")
             .type("PERSON")
+            .ownerId(ownerId)
             .build();
 
     @BeforeEach
@@ -54,7 +60,13 @@ class IdentityMatchCacheIntegrationInServiceTest {
         entityRepository = mock(KnowledgeEntityRepository.class);
         faceEmbeddingRepository = mock(FaceEmbeddingRepository.class);
         identityResolutionService = mock(IdentityResolutionService.class);
+        fileRepository = mock(FileRepository.class);
         when(identityResolutionService.isGenericPersonLabel(anyString())).thenReturn(false);
+
+        FileEntity file = new FileEntity();
+        file.setPath("dir://x.jpg");
+        file.setOwnerId(ownerId);
+        when(fileRepository.findByPath("dir://x.jpg")).thenReturn(Optional.of(file));
 
         service = new FaceIdentityService(
                 null,
@@ -66,14 +78,16 @@ class IdentityMatchCacheIntegrationInServiceTest {
                 null,
                 null,
                 cache,
-                entityRepository
+                entityRepository,
+                fileRepository,
+                null
         );
         ReflectionTestUtils.setField(service, "vectorSearchEnabled", false);
         ReflectionTestUtils.setField(service, "suggestionThreshold", 0.50);
         ReflectionTestUtils.setField(service, "minMargin", 0.08);
         ReflectionTestUtils.setField(service, "minDetScore", 0.50);
 
-        when(cache.buildKey(any(), any(), anyDouble())).thenReturn("stable-key");
+        when(cache.buildKey(any(), any(), anyDouble(), eq(ownerId))).thenReturn("stable-key");
     }
 
     @Test
@@ -89,8 +103,8 @@ class IdentityMatchCacheIntegrationInServiceTest {
         assertTrue(match.isPresent());
         assertEquals(entityId, match.get().entity().getId());
         assertEquals(0.95, match.get().score(), 0.0001);
-        verify(faceEmbeddingRepository, never()).findAllExceptFilePath(anyString());
-        verify(faceEmbeddingRepository, never()).findAllConfirmedGallery();
+        verify(faceEmbeddingRepository, never()).findAllExceptFilePathForOwner(anyString(), any());
+        verify(faceEmbeddingRepository, never()).findAllConfirmedGalleryForOwner(any());
         verify(cache, never()).putHit(anyString(), any(), anyDouble(), anyDouble(), anyDouble());
     }
 
@@ -106,7 +120,8 @@ class IdentityMatchCacheIntegrationInServiceTest {
                 .entity(entity)
                 .confidence(BigDecimal.ONE)
                 .build();
-        when(faceEmbeddingRepository.findAllExceptFilePath("dir://x.jpg")).thenReturn(java.util.List.of(
+        when(faceEmbeddingRepository.findAllExceptFilePathForOwner("dir://x.jpg", ownerId))
+                .thenReturn(java.util.List.of(
                 FaceEmbedding.builder()
                         .entity(entity)
                         .mention(certainMention)
@@ -133,6 +148,6 @@ class IdentityMatchCacheIntegrationInServiceTest {
                 service.findBestEntityMatch(query, "dir://x.jpg", 0.50);
 
         assertTrue(match.isEmpty());
-        verify(faceEmbeddingRepository, never()).findAllExceptFilePath(anyString());
+        verify(faceEmbeddingRepository, never()).findAllExceptFilePathForOwner(anyString(), any());
     }
 }

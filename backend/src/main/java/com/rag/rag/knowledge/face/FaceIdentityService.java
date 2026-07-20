@@ -1,8 +1,10 @@
 package com.rag.rag.knowledge.face;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.core.cache.IdentityMatchCacheService;
 import com.rag.rag.core.cache.IdentityMatchCacheService.CachedIdentityMatch;
+import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
@@ -28,6 +30,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -52,6 +55,8 @@ public class FaceIdentityService {
     private final FactRepository factRepository;
     private final IdentityMatchCacheService identityMatchCacheService;
     private final KnowledgeEntityRepository knowledgeEntityRepository;
+    private final FileRepository fileRepository;
+    private final CurrentUserService currentUserService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
@@ -64,7 +69,9 @@ public class FaceIdentityService {
                                IdentitySuggestionRepository suggestionRepository,
                                FactRepository factRepository,
                                IdentityMatchCacheService identityMatchCacheService,
-                               KnowledgeEntityRepository knowledgeEntityRepository) {
+                               KnowledgeEntityRepository knowledgeEntityRepository,
+                               FileRepository fileRepository,
+                               CurrentUserService currentUserService) {
         this.faceClient = faceClient;
         this.faceEmbeddingRepository = faceEmbeddingRepository;
         this.faceObservationRepository = faceObservationRepository;
@@ -75,6 +82,8 @@ public class FaceIdentityService {
         this.factRepository = factRepository;
         this.identityMatchCacheService = identityMatchCacheService;
         this.knowledgeEntityRepository = knowledgeEntityRepository;
+        this.fileRepository = fileRepository;
+        this.currentUserService = currentUserService;
     }
 
     FaceIdentityService(FaceRecognitionClient faceClient,
@@ -83,7 +92,22 @@ public class FaceIdentityService {
                         EntityMentionRepository mentionRepository,
                         IdentityResolutionService identityResolutionService) {
         this(faceClient, faceEmbeddingRepository, faceObservationRepository, mentionRepository,
-                identityResolutionService, new MentionEvidencePolicy(), null, null, null, null);
+                identityResolutionService, new MentionEvidencePolicy(), null, null, null, null, null, null);
+    }
+
+    FaceIdentityService(FaceRecognitionClient faceClient,
+                        FaceEmbeddingRepository faceEmbeddingRepository,
+                        FaceObservationRepository faceObservationRepository,
+                        EntityMentionRepository mentionRepository,
+                        IdentityResolutionService identityResolutionService,
+                        MentionEvidencePolicy mentionEvidencePolicy,
+                        IdentitySuggestionRepository suggestionRepository,
+                        FactRepository factRepository,
+                        IdentityMatchCacheService identityMatchCacheService,
+                        KnowledgeEntityRepository knowledgeEntityRepository) {
+        this(faceClient, faceEmbeddingRepository, faceObservationRepository, mentionRepository,
+                identityResolutionService, mentionEvidencePolicy, suggestionRepository, factRepository,
+                identityMatchCacheService, knowledgeEntityRepository, null, null);
     }
 
     // Defaults must match application.properties (single source of truth when env unset)
@@ -332,8 +356,9 @@ public class FaceIdentityService {
 
     public Optional<EntityMatch> findBestEntityMatch(float[] queryEmbedding, String excludeFilePath, double threshold) {
         float[] normalizedQuery = normalizeEmbedding(queryEmbedding);
+        UUID ownerId = resolveGalleryOwnerId(excludeFilePath);
         String cacheKey = identityMatchCacheService != null
-                ? identityMatchCacheService.buildKey(normalizedQuery, excludeFilePath, threshold)
+                ? identityMatchCacheService.buildKey(normalizedQuery, excludeFilePath, threshold, ownerId)
                 : null;
         if (cacheKey != null && identityMatchCacheService != null) {
             Optional<CachedIdentityMatch> cached = identityMatchCacheService.get(cacheKey);
@@ -344,7 +369,7 @@ public class FaceIdentityService {
                 }
                 if (knowledgeEntityRepository != null) {
                     Optional<KnowledgeEntity> entity = knowledgeEntityRepository.findById(hit.entityId());
-                    if (entity.isPresent()) {
+                    if (entity.isPresent() && sameOwner(entity.get(), ownerId)) {
                         return Optional.of(new EntityMatch(
                                 entity.get(), hit.score(), hit.rankingScore(), hit.margin()));
                     }
@@ -352,7 +377,8 @@ public class FaceIdentityService {
             }
         }
 
-        Optional<EntityMatch> match = findBestEntityMatchUncached(normalizedQuery, excludeFilePath, threshold);
+        Optional<EntityMatch> match = findBestEntityMatchUncached(
+                normalizedQuery, excludeFilePath, threshold, ownerId);
 
         if (cacheKey != null && identityMatchCacheService != null) {
             if (match.isPresent()) {
@@ -370,20 +396,37 @@ public class FaceIdentityService {
      * Full gallery / vector search path without Redis. Used by cache miss and tests.
      */
     Optional<EntityMatch> findBestEntityMatchUncached(float[] queryEmbedding, String excludeFilePath, double threshold) {
+        return findBestEntityMatchUncached(
+                queryEmbedding, excludeFilePath, threshold, resolveGalleryOwnerId(excludeFilePath));
+    }
+
+    /**
+     * Gallery match restricted to the owner of the file being resolved (or current user).
+     * Package-visible for unit tests.
+     */
+    Optional<EntityMatch> findBestEntityMatchUncached(
+            float[] queryEmbedding, String excludeFilePath, double threshold, UUID ownerId) {
         List<FaceEmbedding> storedEmbeddings = List.of();
         if (vectorSearchEnabled && faceEmbeddingRepository != null) {
             try {
-                storedEmbeddings = faceEmbeddingRepository.findTopKByVectorDistance(
-                        toVectorLiteral(normalizeEmbedding(queryEmbedding)),
-                        excludeFilePath,
-                        BigDecimal.valueOf(minDetScore),
-                        vectorSearchTopK
-                );
+                if (ownerId != null) {
+                    storedEmbeddings = faceEmbeddingRepository.findTopKByVectorDistanceForOwner(
+                            toVectorLiteral(normalizeEmbedding(queryEmbedding)),
+                            excludeFilePath,
+                            ownerId,
+                            BigDecimal.valueOf(minDetScore),
+                            vectorSearchTopK
+                    );
+                } else {
+                    // No owner context: never search the full multi-user gallery.
+                    storedEmbeddings = List.of();
+                }
                 // Native query does not JOIN FETCH associations — force-load while session is open.
                 for (FaceEmbedding embedding : storedEmbeddings) {
                     if (embedding.getEntity() != null) {
                         embedding.getEntity().getId();
                         embedding.getEntity().getDisplayName();
+                        embedding.getEntity().getOwnerId();
                     }
                     if (embedding.getMention() != null) {
                         embedding.getMention().getStatus();
@@ -397,15 +440,54 @@ public class FaceIdentityService {
                 storedEmbeddings = List.of();
             }
         }
-        if (storedEmbeddings.isEmpty() && faceEmbeddingRepository != null) {
+        if (storedEmbeddings.isEmpty() && faceEmbeddingRepository != null && ownerId != null) {
             storedEmbeddings = excludeFilePath == null || excludeFilePath.isBlank()
-                    ? faceEmbeddingRepository.findAllConfirmedGallery()
-                    : faceEmbeddingRepository.findAllExceptFilePath(excludeFilePath);
+                    ? faceEmbeddingRepository.findAllConfirmedGalleryForOwner(ownerId)
+                    : faceEmbeddingRepository.findAllExceptFilePathForOwner(excludeFilePath, ownerId);
         }
 
+        final UUID galleryOwner = ownerId;
         return rankEntityMatches(storedEmbeddings.stream()
                 .filter(this::isGalleryCandidate)
+                .filter(embedding -> belongsToOwner(embedding, galleryOwner))
                 .toList(), queryEmbedding, threshold);
+    }
+
+    /**
+     * Owner of the gallery to search: file owner when path is known, else current user.
+     * Package-visible for tests.
+     */
+    UUID resolveGalleryOwnerId(String filePath) {
+        if (filePath != null && !filePath.isBlank() && fileRepository != null) {
+            Optional<UUID> fromFile = fileRepository.findByPath(filePath)
+                    .map(file -> file.getOwnerId())
+                    .filter(Objects::nonNull);
+            if (fromFile.isPresent()) {
+                return fromFile.get();
+            }
+        }
+        if (currentUserService != null) {
+            return currentUserService.findUserId().orElse(null);
+        }
+        return null;
+    }
+
+    /** True when the gallery embedding's person entity belongs to the given owner. */
+    boolean belongsToOwner(FaceEmbedding embedding, UUID ownerId) {
+        if (embedding == null || embedding.getEntity() == null) {
+            return false;
+        }
+        return sameOwner(embedding.getEntity(), ownerId);
+    }
+
+    private boolean sameOwner(KnowledgeEntity entity, UUID ownerId) {
+        if (entity == null) {
+            return false;
+        }
+        if (ownerId == null) {
+            return entity.getOwnerId() == null;
+        }
+        return ownerId.equals(entity.getOwnerId());
     }
 
     Optional<EntityMatch> rankEntityMatches(List<FaceEmbedding> storedEmbeddings, float[] queryEmbedding, double threshold) {

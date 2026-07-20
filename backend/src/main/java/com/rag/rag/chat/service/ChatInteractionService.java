@@ -183,9 +183,15 @@ public class ChatInteractionService {
 
         if (mode != QueryPlan.RetrievalMode.GRAPH && result != null) {
             for (SourceDto source : ingestionService.getSources(result)) {
-                if (source != null && RetrievalPathScope.pathInScope(source.path(), fileScope)) {
-                    addSource(unique, source);
+                if (source == null || !RetrievalPathScope.pathInScope(source.path(), fileScope)) {
+                    continue;
                 }
+                // Named people: hybrid hits must already have certain graph evidence for them
+                // (never promote another person's RAG path as a source).
+                if (!ChatRetrievalPolicy.allowsHybridSourceForNamedEntities(plan, graphEvidence, source.path())) {
+                    continue;
+                }
+                addSource(unique, source);
             }
         }
 

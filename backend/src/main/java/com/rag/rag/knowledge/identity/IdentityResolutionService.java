@@ -64,6 +64,13 @@ public class IdentityResolutionService {
     @Value("${identity.description-suggest-threshold:0.60}")
     private double suggestThreshold = 0.60;
 
+    /**
+     * Minimum ranking gap between best and second-best peers for description auto-confirm.
+     * Ambiguous near-ties stay suggested/pending (never CONFIRMED wrong person).
+     */
+    @Value("${identity.description-auto-confirm-min-margin:0.05}")
+    private double autoConfirmMinMargin = 0.05;
+
     /** Max mentions scored after type/folder/token pre-filter (heuristic path). */
     @Value("${identity.heuristic.max-candidates:40}")
     private int heuristicMaxCandidates = 40;
@@ -155,15 +162,22 @@ public class IdentityResolutionService {
         double bestSuggestionScore = 0.0;
         EntityMention bestConfirmCandidate = null;
         double bestConfirmScore = 0.0;
+        double secondConfirmScore = 0.0;
         List<CandidateScore> heuristicCandidates = new ArrayList<>();
 
         List<EntityMention> prefiltered = loadAndPrefilterCandidates(mention, type, ownerId);
         for (EntityMention candidate : prefiltered) {
             double score = computeHeuristicSimilarity(mention, candidate);
             heuristicCandidates.add(new CandidateScore(candidate, score));
-            if (score >= autoConfirmThreshold && candidate.getEntity() != null && score > bestConfirmScore) {
-                bestConfirmCandidate = candidate;
-                bestConfirmScore = score;
+            if (score >= autoConfirmThreshold && candidate.getEntity() != null) {
+                if (score > bestConfirmScore) {
+                    secondConfirmScore = bestConfirmScore;
+                    bestConfirmCandidate = candidate;
+                    bestConfirmScore = score;
+                } else if (score > secondConfirmScore
+                        && isDifferentEntity(candidate, bestConfirmCandidate)) {
+                    secondConfirmScore = score;
+                }
                 continue;
             }
             if (score >= suggestThreshold && score > bestSuggestionScore) {
@@ -179,10 +193,15 @@ public class IdentityResolutionService {
                     .toList();
             for (CandidateScore candidateScore : llmCandidates) {
                 double score = computeLlmSimilarity(mention, candidateScore.candidate());
-                if (score >= autoConfirmThreshold && candidateScore.candidate().getEntity() != null
-                        && score > bestConfirmScore) {
-                    bestConfirmCandidate = candidateScore.candidate();
-                    bestConfirmScore = score;
+                if (score >= autoConfirmThreshold && candidateScore.candidate().getEntity() != null) {
+                    if (score > bestConfirmScore) {
+                        secondConfirmScore = bestConfirmScore;
+                        bestConfirmCandidate = candidateScore.candidate();
+                        bestConfirmScore = score;
+                    } else if (score > secondConfirmScore
+                            && isDifferentEntity(candidateScore.candidate(), bestConfirmCandidate)) {
+                        secondConfirmScore = score;
+                    }
                     continue;
                 }
                 if (score >= suggestThreshold && score > bestSuggestionScore) {
@@ -192,10 +211,22 @@ public class IdentityResolutionService {
             }
         }
 
-        if (bestConfirmCandidate != null && bestConfirmCandidate.getEntity() != null) {
+        if (bestConfirmCandidate != null && bestConfirmCandidate.getEntity() != null
+                && isUnambiguousAutoConfirm(bestConfirmScore, secondConfirmScore)) {
             linkMention(mention, bestConfirmCandidate.getEntity(), MentionStatus.CONFIRMED,
                     IdentityEvidenceSource.DESCRIPTION_MATCH, bestConfirmScore, null);
             return;
+        }
+        // Near-tie above threshold: demote to suggestion instead of CONFIRMED wrong peer.
+        if (bestConfirmCandidate != null && bestConfirmCandidate.getEntity() != null
+                && !isUnambiguousAutoConfirm(bestConfirmScore, secondConfirmScore)) {
+            if (bestSuggestionScore < bestConfirmScore) {
+                bestSuggestionCandidate = bestConfirmCandidate;
+                bestSuggestionScore = bestConfirmScore;
+            }
+            log.debug(
+                    "Skipping ambiguous description auto-confirm: best={} second={} margin={}",
+                    bestConfirmScore, secondConfirmScore, bestConfirmScore - secondConfirmScore);
         }
         if (bestSuggestionCandidate != null) {
             saveSuggestion(mention, bestSuggestionCandidate, bestSuggestionScore);
@@ -450,6 +481,30 @@ public class IdentityResolutionService {
             return entity.getOwnerId() == null;
         }
         return ownerId.equals(entity.getOwnerId());
+    }
+
+    private boolean isDifferentEntity(EntityMention candidate, EntityMention best) {
+        if (candidate == null || candidate.getEntity() == null) {
+            return false;
+        }
+        if (best == null || best.getEntity() == null || best.getEntity().getId() == null) {
+            return true;
+        }
+        return !best.getEntity().getId().equals(candidate.getEntity().getId());
+    }
+
+    /**
+     * Auto-confirm only when the best score is strong enough alone, or clearly ahead of the next peer.
+     * Package-visible for unit tests.
+     */
+    boolean isUnambiguousAutoConfirm(double bestScore, double secondScore) {
+        if (bestScore < autoConfirmThreshold) {
+            return false;
+        }
+        if (secondScore <= 0.0) {
+            return true;
+        }
+        return (bestScore - secondScore) >= autoConfirmMinMargin;
     }
 
     private void linkMention(EntityMention mention, KnowledgeEntity entity, MentionStatus status,

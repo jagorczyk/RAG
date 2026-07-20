@@ -95,6 +95,7 @@ class IdentityResolutionServiceTest {
         );
         ReflectionTestUtils.setField(service, "autoConfirmThreshold", 0.85);
         ReflectionTestUtils.setField(service, "suggestThreshold", 0.60);
+        ReflectionTestUtils.setField(service, "autoConfirmMinMargin", 0.05);
         ReflectionTestUtils.setField(service, "heuristicMaxCandidates", 40);
         ReflectionTestUtils.setField(service, "llmMatcherEnabled", false);
         ReflectionTestUtils.setField(service, "llmMatcherMaxCandidates", 2);
@@ -527,6 +528,41 @@ class IdentityResolutionServiceTest {
         verify(faceEmbeddingRepository).deleteByEntityId(previousId);
         verify(aliasRepository).deleteByEntityId(previousId);
         verify(entityRepository).delete(previous);
+    }
+
+    @Test
+    void ambiguousNearTieDoesNotAutoConfirmWrongPeer() {
+        // Best and second both clear the auto-confirm floor but are too close — keep uncertain.
+        assertTrue(service.isUnambiguousAutoConfirm(0.92, 0.0));
+        assertTrue(service.isUnambiguousAutoConfirm(0.92, 0.80));
+        assertFalse(service.isUnambiguousAutoConfirm(0.90, 0.88));
+        assertFalse(service.isUnambiguousAutoConfirm(0.86, 0.85));
+        assertFalse(service.isUnambiguousAutoConfirm(0.80, 0.0));
+    }
+
+    @Test
+    void loadAndPrefilterCandidatesNeverReturnsOtherOwnersPeople() {
+        UUID otherOwner = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        KnowledgeEntity ownEntity = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Igor").type("PERSON").ownerId(ownerId).build();
+        KnowledgeEntity foreignEntity = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("Igor").type("PERSON").ownerId(otherOwner).build();
+        EntityMention mention = EntityMention.builder()
+                .id(UUID.randomUUID()).label("Igor").filePath("dir://f/a.jpg").build();
+        EntityMention ownCandidate = EntityMention.builder().id(UUID.randomUUID()).label("Igor")
+                .entity(ownEntity).filePath("dir://f/b.jpg").build();
+        EntityMention foreignCandidate = EntityMention.builder().id(UUID.randomUUID()).label("Igor")
+                .entity(foreignEntity).filePath("dir://f/c.jpg").build();
+
+        // Repository already owner-scoped; sameOwner is a second guard if a foreign row leaked in.
+        when(mentionRepository.findLinkedByEntityTypeAndOwner("PERSON", ownerId))
+                .thenReturn(List.of(ownCandidate, foreignCandidate));
+
+        List<EntityMention> result = service.loadAndPrefilterCandidates(mention, "PERSON", ownerId);
+
+        assertEquals(1, result.size());
+        assertEquals(ownEntity.getId(), result.get(0).getEntity().getId());
+        assertFalse(result.stream().anyMatch(c -> otherOwner.equals(c.getEntity().getOwnerId())));
     }
 }
 

@@ -55,6 +55,21 @@ public interface FaceEmbeddingRepository extends JpaRepository<FaceEmbedding, UU
             """)
     List<FaceEmbedding> findAllExceptFilePath(@Param("filePath") String filePath);
 
+    /** Confirmed PERSON gallery for one owner only (never cross-user face match). */
+    @Query("""
+            SELECT fe FROM FaceEmbedding fe
+            JOIN FETCH fe.entity e
+            JOIN FETCH fe.mention m
+            WHERE fe.filePath <> :filePath
+              AND UPPER(e.type) = 'PERSON'
+              AND m.status = com.rag.rag.knowledge.entity.MentionStatus.CONFIRMED
+              AND e.ownerId = :ownerId
+            """)
+    List<FaceEmbedding> findAllExceptFilePathForOwner(
+            @Param("filePath") String filePath,
+            @Param("ownerId") UUID ownerId
+    );
+
     @Query("""
             SELECT fe FROM FaceEmbedding fe
             JOIN FETCH fe.entity e
@@ -63,6 +78,17 @@ public interface FaceEmbeddingRepository extends JpaRepository<FaceEmbedding, UU
               AND m.status = com.rag.rag.knowledge.entity.MentionStatus.CONFIRMED
             """)
     List<FaceEmbedding> findAllConfirmedGallery();
+
+    /** Full confirmed PERSON gallery limited to one owner. */
+    @Query("""
+            SELECT fe FROM FaceEmbedding fe
+            JOIN FETCH fe.entity e
+            JOIN FETCH fe.mention m
+            WHERE UPPER(e.type) = 'PERSON'
+              AND m.status = com.rag.rag.knowledge.entity.MentionStatus.CONFIRMED
+              AND e.ownerId = :ownerId
+            """)
+    List<FaceEmbedding> findAllConfirmedGalleryForOwner(@Param("ownerId") UUID ownerId);
 
     @Query(value = """
             SELECT fe.* FROM face_embeddings fe
@@ -79,6 +105,28 @@ public interface FaceEmbeddingRepository extends JpaRepository<FaceEmbedding, UU
     List<FaceEmbedding> findTopKByVectorDistance(
             @Param("embeddingLiteral") String embeddingLiteral,
             @Param("excludeFilePath") String excludeFilePath,
+            @Param("minDetScore") BigDecimal minDetScore,
+            @Param("topK") int topK
+    );
+
+    /** Vector top-K gallery restricted to one owner (cross-user exclusion). */
+    @Query(value = """
+            SELECT fe.* FROM face_embeddings fe
+            JOIN entities e ON e.id = fe.entity_id
+            JOIN entity_mentions em ON em.id = fe.mention_id
+            WHERE (:excludeFilePath IS NULL OR fe.file_path <> :excludeFilePath)
+              AND fe.embedding_vector IS NOT NULL
+              AND UPPER(e.type) = 'PERSON'
+              AND em.status = 'CONFIRMED'
+              AND e.owner_id = :ownerId
+              AND fe.det_score >= :minDetScore
+            ORDER BY fe.embedding_vector <=> CAST(:embeddingLiteral AS vector)
+            LIMIT :topK
+            """, nativeQuery = true)
+    List<FaceEmbedding> findTopKByVectorDistanceForOwner(
+            @Param("embeddingLiteral") String embeddingLiteral,
+            @Param("excludeFilePath") String excludeFilePath,
+            @Param("ownerId") UUID ownerId,
             @Param("minDetScore") BigDecimal minDetScore,
             @Param("topK") int topK
     );

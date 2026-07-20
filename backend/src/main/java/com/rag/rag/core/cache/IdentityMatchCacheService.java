@@ -102,6 +102,13 @@ public class IdentityMatchCacheService {
      * Stable cache key from match inputs (embedding bytes + exclude path + threshold).
      */
     public String buildKey(float[] queryEmbedding, String excludeFilePath, double threshold) {
+        return buildKey(queryEmbedding, excludeFilePath, threshold, null);
+    }
+
+    /**
+     * Stable cache key including gallery owner so cross-user results never share a cache entry.
+     */
+    public String buildKey(float[] queryEmbedding, String excludeFilePath, double threshold, UUID ownerId) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             if (queryEmbedding != null) {
@@ -114,12 +121,15 @@ public class IdentityMatchCacheService {
             String pathPart = excludeFilePath == null ? "" : excludeFilePath;
             digest.update(pathPart.getBytes(StandardCharsets.UTF_8));
             digest.update(Double.toString(threshold).getBytes(StandardCharsets.UTF_8));
+            String ownerPart = ownerId == null ? "null" : ownerId.toString();
+            digest.update(ownerPart.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             // SHA-256 is always present on the JVM
             return Integer.toHexString(java.util.Arrays.hashCode(queryEmbedding))
                     + ":" + (excludeFilePath == null ? "" : excludeFilePath)
-                    + ":" + threshold;
+                    + ":" + threshold
+                    + ":" + (ownerId == null ? "null" : ownerId);
         }
     }
 
