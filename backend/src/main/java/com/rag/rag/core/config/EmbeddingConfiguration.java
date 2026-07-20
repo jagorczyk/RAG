@@ -47,9 +47,19 @@ public class EmbeddingConfiguration {
     @Value("${llm.deepinfra.embedding-model:Qwen/Qwen3-Embedding-4B}")
     private String deepInfraEmbeddingModel;
 
-    /** Qwen3-Embedding-4B default max dim (MRL). Must match pgvector column typmod. */
-    @Value("${llm.deepinfra.embedding-dimensions:2560}")
+    /**
+     * Output size via Matryoshka (Qwen3-4B max 2560). Keep ≤2000 so pgvector IVFFlat/HNSW
+     * can index the column (extension limit). Must match embeddings.embedding typmod.
+     */
+    @Value("${llm.deepinfra.embedding-dimensions:1024}")
     private int deepInfraEmbeddingDimensions;
+
+    /** IVFFlat needs enough rows and dims ≤2000; off by default after empty rebuilds. */
+    @Value("${rag.embeddings.use-index:false}")
+    private boolean embeddingsUseIndex;
+
+    @Value("${rag.embeddings.index-list-size:100}")
+    private int embeddingsIndexListSize;
 
     @Value("${spring.datasource.username}")
     private String dbUser;
@@ -121,8 +131,8 @@ public class EmbeddingConfiguration {
                 .password(dbPassword)
                 .table(EMBEDDINGS_TABLE)
                 .dimension(dimension)
-                .useIndex(true)
-                .indexListSize(100)
+                .useIndex(embeddingsUseIndex)
+                .indexListSize(embeddingsIndexListSize)
                 .createTable(true)
                 .build();
     }
