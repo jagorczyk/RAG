@@ -41,7 +41,8 @@ public class RetrievalConfiguration {
     @Value("${rag.max-segment-chars:1500}")
     private int maxSegmentChars;
 
-    @Value("${rag.retrieval.max-results:20}")
+    // Default matches application.properties rag.retrieval.max-results
+    @Value("${rag.retrieval.max-results:5}")
     private int maxResults;
 
     @Value("${rag.retrieval.min-score:0.5}")

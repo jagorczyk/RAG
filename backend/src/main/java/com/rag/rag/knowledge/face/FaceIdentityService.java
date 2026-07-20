@@ -86,10 +86,11 @@ public class FaceIdentityService {
                 identityResolutionService, new MentionEvidencePolicy(), null, null, null, null);
     }
 
-    @Value("${face.match.threshold:0.55}")
+    // Defaults must match application.properties (single source of truth when env unset)
+    @Value("${face.match.threshold:0.50}")
     private double matchThreshold;
 
-    @Value("${face.match.suggestion-threshold:0.50}")
+    @Value("${face.match.suggestion-threshold:0.45}")
     private double suggestionThreshold;
 
     @Value("${face.match.min-margin:0.08}")
