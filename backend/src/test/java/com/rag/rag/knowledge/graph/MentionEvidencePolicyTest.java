@@ -47,10 +47,42 @@ class MentionEvidencePolicyTest {
         assertFalse(policy.isCertain(mention("0.736", IdentityEvidenceSource.FACE_MATCH, "0.620", "0.040")));
     }
 
+    @Test
+    void visionAnimalPlaceholderIsNeverCertainEvenIfConfirmedDescriptionMatch() {
+        KnowledgeEntity animal = KnowledgeEntity.builder().displayName("animal 1").type("ANIMAL").build();
+        EntityMention mention = EntityMention.builder()
+                .entity(animal)
+                .label("animal 1")
+                .entityType("ANIMAL")
+                .status(MentionStatus.CONFIRMED)
+                .confidence(new BigDecimal("0.900"))
+                .identitySource(IdentityEvidenceSource.DESCRIPTION_MATCH)
+                .identityConfidence(new BigDecimal("1.000"))
+                .build();
+        assertFalse(policy.isCertain(mention));
+        assertEquals(BigDecimal.ZERO, policy.evidenceConfidence(mention));
+    }
+
+    @Test
+    void realNamedAnimalCanBeCertainViaDescriptionMatch() {
+        KnowledgeEntity animal = KnowledgeEntity.builder().displayName("Figa").type("ANIMAL").build();
+        EntityMention mention = EntityMention.builder()
+                .entity(animal)
+                .label("Figa")
+                .entityType("ANIMAL")
+                .status(MentionStatus.CONFIRMED)
+                .confidence(new BigDecimal("0.900"))
+                .identitySource(IdentityEvidenceSource.DESCRIPTION_MATCH)
+                .identityConfidence(new BigDecimal("1.000"))
+                .build();
+        assertTrue(policy.isCertain(mention));
+    }
+
     private EntityMention mention(String observation, IdentityEvidenceSource source,
                                   String identity, String margin) {
         return EntityMention.builder()
                 .entity(person)
+                .label("Bartek")
                 .status(MentionStatus.CONFIRMED)
                 .confidence(new BigDecimal(observation))
                 .identitySource(source)

@@ -16,12 +16,27 @@ class ChatAnswerGroundingTest {
                 "Nie mam dostępu do konkretnych plików, zdjęć ani obrazów."));
         assertTrue(ChatAnswerGrounding.isCapabilityDenial(
                 "I cannot see the image you mentioned."));
+        assertTrue(ChatAnswerGrounding.isCapabilityDenial(
+                "Nie jestem w stanie odpowiedzieć na to pytanie, ponieważ nie mam informacji, o kogo konkretnie pytasz."));
+        assertTrue(ChatAnswerGrounding.isCapabilityDenial(
+                "Nie wiem, o kogo pytasz — podaj więcej szczegółów."));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(
                 "Na zdjęciu są Igor i Anna."));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(
                 "Nie znaleziono informacji w dokumentach."));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(""));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(null));
+    }
+
+    @Test
+    void resolveAgainstIdentityIgnoranceUsesRosterWhenNamesExist() {
+        String denial = "Nie jestem w stanie odpowiedzieć na to pytanie, ponieważ nie mam informacji, o kogo konkretnie pytasz. Jeśli podasz więcej szczegółów lub kontekst, postaram się pomóc!";
+        String resolved = ChatAnswerGrounding.resolveAgainstDenial(
+                denial, List.of("Olek", "Piotrek", "Bargiel", "Dawid", "Igor"), true);
+        assertTrue(resolved.contains("Olek"));
+        assertTrue(resolved.contains("Igor"));
+        assertFalse(resolved.contains("animal"));
+        assertFalse(ChatAnswerGrounding.isCapabilityDenial(resolved));
     }
 
     @Test

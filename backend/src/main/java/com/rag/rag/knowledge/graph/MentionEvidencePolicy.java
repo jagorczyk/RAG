@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.Locale;
 
 /**
  * Single source of truth for deciding whether an identity mention is certain.
@@ -34,6 +35,11 @@ public class MentionEvidencePolicy {
         if (mention == null || mention.getStatus() != MentionStatus.CONFIRMED || mention.getEntity() == null) {
             return false;
         }
+        // Vision placeholders (person 1 / animal 1) are never certain identity sources.
+        if (isVisionPlaceholderLabel(mention.getLabel())
+                || isVisionPlaceholderLabel(mention.getEntity().getDisplayName())) {
+            return false;
+        }
 
         IdentityEvidenceSource source = mention.getIdentitySource();
         if (source == null) {
@@ -46,10 +52,53 @@ public class MentionEvidencePolicy {
             case FACE_MATCH -> atLeast(mention.getConfidence(), faceMinDetectionScore)
                     && atLeast(mention.getIdentityConfidence(), faceMatchThreshold)
                     && atLeast(mention.getIdentityMargin(), faceMatchMinMargin);
-            case DESCRIPTION_MATCH -> atLeast(mention.getConfidence(), minMentionConfidence)
+            case DESCRIPTION_MATCH -> !"PERSON".equalsIgnoreCase(mention.getEntityType())
+                    && atLeast(mention.getConfidence(), minMentionConfidence)
                     && atLeast(mention.getIdentityConfidence(), descriptionAutoConfirmThreshold);
             case FACE_CLUSTER -> false;
         };
+    }
+
+    /**
+     * Mirrors identity placeholder rules without depending on IdentityResolutionService
+     * (avoids a graph↔identity cycle). Keep in sync with {@code isGenericLabel}.
+     */
+    static boolean isVisionPlaceholderLabel(String label) {
+        if (label == null || label.isBlank()) {
+            return true;
+        }
+        String lower = label.toLowerCase(Locale.ROOT).trim();
+        return lower.startsWith("nieznana")
+                || lower.startsWith("nieznany")
+                || lower.startsWith("unknown")
+                || lower.matches("osoba\\s*\\d*")
+                || lower.matches("person\\s*\\d*")
+                || lower.matches("people\\s*\\d*")
+                || lower.matches("man\\s*\\d*")
+                || lower.matches("woman\\s*\\d*")
+                || lower.matches("animal\\s*\\d*")
+                || lower.matches("zwierzę\\s*\\d*")
+                || lower.matches("zwierze\\s*\\d*")
+                || lower.matches("pet\\s*\\d*")
+                || lower.matches("dog\\s*\\d*")
+                || lower.matches("cat\\s*\\d*")
+                || lower.equals("osoba")
+                || lower.equals("person")
+                || lower.equals("people")
+                || lower.equals("man")
+                || lower.equals("woman")
+                || lower.equals("boy")
+                || lower.equals("girl")
+                || lower.equals("animal")
+                || lower.equals("zwierzę")
+                || lower.equals("zwierze")
+                || lower.equals("pet")
+                || lower.equals("dog")
+                || lower.equals("cat")
+                || lower.equals("postać")
+                || lower.equals("postac")
+                || lower.equals("figure")
+                || lower.equals("individual");
     }
 
     public BigDecimal evidenceConfidence(EntityMention mention) {

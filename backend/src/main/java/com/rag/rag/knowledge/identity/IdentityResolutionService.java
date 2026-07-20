@@ -140,6 +140,17 @@ public class IdentityResolutionService {
             return;
         }
 
+        // A vision-produced person label is an observation, never identity evidence.
+        // Person identity may only be promoted by a user/tag or by the face pipeline.
+        if (LivingEntityTypes.PERSON.equals(type)) {
+            mention.setStatus(MentionStatus.PENDING);
+            mention.setIdentitySource(null);
+            mention.setIdentityConfidence(null);
+            mention.setIdentityMargin(null);
+            mentionRepository.save(mention);
+            return;
+        }
+
         if (!isGenericLabel(label)) {
             Optional<KnowledgeEntity> exactMatch = findEntityByNameOrAlias(label, type, ownerId);
             if (exactMatch.isPresent()) {
@@ -151,13 +162,6 @@ public class IdentityResolutionService {
 
         // Vision produces neutral descriptions ("person 1", clothing, pose),
         // which must remain observations until a user names or confirms them.
-        if (LivingEntityTypes.PERSON.equals(type)
-                && (isGenericLabel(label) || !looksLikePersonName(label))) {
-            mention.setStatus(MentionStatus.PENDING);
-            mentionRepository.save(mention);
-            return;
-        }
-
         EntityMention bestSuggestionCandidate = null;
         double bestSuggestionScore = 0.0;
         EntityMention bestConfirmCandidate = null;
@@ -983,7 +987,7 @@ public class IdentityResolutionService {
             return true;
         }
         String lower = label.toLowerCase(Locale.ROOT).trim();
-        // Vision uses stable placeholders (person 1 / osoba 2) — never treat as identity names.
+        // Vision uses stable placeholders (person 1 / animal 2) — never treat as identity names.
         return lower.startsWith("nieznana")
                 || lower.startsWith("nieznany")
                 || lower.startsWith("unknown")
@@ -992,6 +996,12 @@ public class IdentityResolutionService {
                 || lower.matches("people\\s*\\d*")
                 || lower.matches("man\\s*\\d*")
                 || lower.matches("woman\\s*\\d*")
+                || lower.matches("animal\\s*\\d*")
+                || lower.matches("zwierzę\\s*\\d*")
+                || lower.matches("zwierze\\s*\\d*")
+                || lower.matches("pet\\s*\\d*")
+                || lower.matches("dog\\s*\\d*")
+                || lower.matches("cat\\s*\\d*")
                 || lower.equals("osoba")
                 || lower.equals("person")
                 || lower.equals("people")
@@ -999,6 +1009,12 @@ public class IdentityResolutionService {
                 || lower.equals("woman")
                 || lower.equals("boy")
                 || lower.equals("girl")
+                || lower.equals("animal")
+                || lower.equals("zwierzę")
+                || lower.equals("zwierze")
+                || lower.equals("pet")
+                || lower.equals("dog")
+                || lower.equals("cat")
                 || lower.equals("postać")
                 || lower.equals("postac")
                 || lower.equals("figure")

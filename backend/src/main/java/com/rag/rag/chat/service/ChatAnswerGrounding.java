@@ -28,8 +28,8 @@ public final class ChatAnswerGrounding {
     }
 
     /**
-     * True when the model prose refuses image/file capability instead of using provided evidence.
-     * Detects answer shape only — not user question wording.
+     * True when the model prose refuses image/file capability or claims missing identity context
+     * instead of using provided evidence. Detects answer shape only — not user question wording.
      */
     public static boolean isCapabilityDenial(String answer) {
         if (answer == null || answer.isBlank()) {
@@ -51,6 +51,17 @@ public final class ChatAnswerGrounding {
                 "nie jestem w stanie zobaczyc",
                 "nie jestem w stanie określić, kto jest na zdjęciu",
                 "nie jestem w stanie okreslic, kto jest na zdjeciu",
+                "nie jestem w stanie określić kto jest na zdjęciu",
+                "nie jestem w stanie okreslic kto jest na zdjeciu",
+                "nie jestem w stanie odpowiedzieć na to pytanie",
+                "nie jestem w stanie odpowiedziec na to pytanie",
+                "nie mam informacji, o kogo",
+                "nie mam informacji o kogo",
+                "o kogo konkretnie pytasz",
+                "nie wiem, o kogo",
+                "nie wiem o kogo",
+                "brakuje mi kontekstu",
+                "brakuje mi informacji, o kogo",
                 "cannot see image",
                 "can't see image",
                 "i cannot see",
@@ -61,7 +72,10 @@ public final class ChatAnswerGrounding {
                 "no access to images",
                 "unable to view",
                 "unable to see the photo",
-                "unable to see the image");
+                "unable to see the image",
+                "i don't know who you're asking",
+                "i do not know who you're asking",
+                "more details or context");
     }
 
     /**

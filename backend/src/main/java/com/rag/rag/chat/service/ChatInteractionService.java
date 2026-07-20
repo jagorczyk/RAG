@@ -225,17 +225,21 @@ public class ChatInteractionService {
         // Answer prose stays short; detailed reasons stay only in evidence/sources UI.
         // MATCH evidence is already grounding (criterion 1) — never drop sources or force
         // NO_EVIDENCE because the answer model returned blank / non-JSON prose.
-        String answer = verifiedVisualAnswerService.answer(plan.question(), matches);
+        List<String> matchPaths = visualSources.stream()
+                .map(SourceDto::path)
+                .filter(path -> path != null && !path.isBlank())
+                .toList();
+        List<String> certainNames = matchPaths.isEmpty()
+                ? List.of()
+                : graphQueryService.certainParticipantNamesForPaths(matchPaths);
+        String answer = verifiedVisualAnswerService.answer(plan.question(), matches, certainNames);
         if (answer == null || answer.isBlank()) {
-            answer = VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER;
+            answer = !certainNames.isEmpty()
+                    ? ChatAnswerGrounding.formatParticipantRoster(certainNames)
+                    : VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER;
             uncertain = true;
         }
         if (!visualSources.isEmpty()) {
-            List<String> matchPaths = visualSources.stream()
-                    .map(SourceDto::path)
-                    .filter(path -> path != null && !path.isBlank())
-                    .toList();
-            List<String> certainNames = graphQueryService.certainParticipantNamesForPaths(matchPaths);
             answer = ChatAnswerGrounding.resolveAgainstDenial(answer, certainNames, true);
         }
         String cleaned = removeTechnicalReferences(answer, visualSources);

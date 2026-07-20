@@ -45,7 +45,14 @@ public class QueryPlanner {
                     Do not classify by a closed list of phrases, people, colours, clothes, actions or relations.
                     Preserve the user's meaning verbatim in condition. Choose only technical retrievalMode values:
                     DOCUMENT, GRAPH, HYBRID, VISUAL_VALIDATION.
-                    Set visualCondition true only when answering requires validating image content.
+                    Set visualCondition true only when answering requires validating appearance, clothing,
+                    pose, action, scene layout or other image content not already stored as identity.
+                    Prefer GRAPH or HYBRID with visualCondition=false when the user asks who is in a photo,
+                    what people/animals are named, or for identities already confirmed in the knowledge graph.
+                    When the recent conversation lists SOURCES: paths, copy those exact paths into fileScope
+                    for follow-up questions about the same photo unless the user clearly switches topic or
+                    names a different @file. Empty entities + non-empty fileScope is valid: the graph will
+                    load all confirmed participants for those files.
                     Use ambiguous true when the available references do not identify one interpretation.
                     Known entities from this workspace: %s
                     Recent conversation and previously returned source paths: %s
@@ -54,7 +61,7 @@ public class QueryPlanner {
                     "retrievalQuery":"standalone semantic query resolved from the conversation",
                     "condition":"full semantic constraint", "visualCondition":false,
                     "ambiguous":false,"retrievalMode":"HYBRID","entityMatchMode":"ANY",
-                    "answerInstruction":"one short Polish sentence only; never retell appearance or list files"}
+                    "answerInstruction":"answer requested details briefly in Polish; never list files"}
                     Use entityMatchMode ALL_SAME_FILE when the answer depends on co-presence of all selected
                     entities in one file (e.g. whether there is a photo with every named person together);
                     otherwise use ANY. This is a technical set operation, not a phrase classification.

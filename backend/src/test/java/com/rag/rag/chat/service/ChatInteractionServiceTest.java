@@ -247,7 +247,7 @@ class ChatInteractionServiceTest {
         when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
         SourceDto source = new SourceDto("dir://michal.jpg", "michal.jpg", 0.8, null, "IMAGE");
         when(ingestionService.createSourceDto(anyString(), any(), anyDouble())).thenReturn(source);
-        when(verifiedVisualAnswerService.answer(eq(plan.question()), eq(List.of(match))))
+        when(verifiedVisualAnswerService.answer(eq(plan.question()), eq(List.of(match)), anyList()))
                 .thenReturn("Tak, Michał ma blond włosy.");
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
@@ -255,7 +255,7 @@ class ChatInteractionServiceTest {
         assertEquals("Tak, Michał ma blond włosy.", response.response());
         assertEquals(1, response.evidence().size());
         assertFalse(response.uncertain());
-        verify(verifiedVisualAnswerService).answer(eq(plan.question()), eq(List.of(match)));
+        verify(verifiedVisualAnswerService).answer(eq(plan.question()), eq(List.of(match)), anyList());
     }
 
     @Test
@@ -493,7 +493,7 @@ class ChatInteractionServiceTest {
         when(ingestionService.createSourceDto(eq("dir://michal.jpg"), any(), anyDouble()))
                 .thenReturn(new SourceDto("dir://michal.jpg", "michal.jpg", 0.8, null, "IMAGE"));
         // Simulate JSON/free-form parse failure on the real answer service path.
-        when(verifiedVisualAnswerService.answer(eq(question), eq(List.of(match)))).thenReturn("");
+        when(verifiedVisualAnswerService.answer(eq(question), eq(List.of(match)), anyList())).thenReturn("");
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
 
@@ -522,7 +522,7 @@ class ChatInteractionServiceTest {
         when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
         when(ingestionService.createSourceDto(eq("dir://action.jpg"), any(), anyDouble()))
                 .thenReturn(new SourceDto("dir://action.jpg", "action.jpg", 0.7, null, "IMAGE"));
-        when(verifiedVisualAnswerService.answer(eq(question), eq(List.of(match))))
+        when(verifiedVisualAnswerService.answer(eq(question), eq(List.of(match)), anyList()))
                 .thenReturn("Osoba biegnie po plaży.");
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
@@ -637,10 +637,10 @@ class ChatInteractionServiceTest {
         when(dynamicVisualMatcher.findEvidence(any(QueryPlan.class))).thenReturn(List.of(match));
         when(ingestionService.createSourceDto(eq(path), any(), anyDouble()))
                 .thenReturn(new SourceDto(path, "4C Matura-342.jpg", 1.0, null, "IMAGE"));
-        when(verifiedVisualAnswerService.answer(eq(plan.question()), eq(List.of(match))))
-                .thenReturn("Nie mam dostępu do konkretnych plików, zdjęć ani obrazów.");
         when(graphQueryService.certainParticipantNamesForPaths(anyList()))
                 .thenReturn(List.of("Igor", "Dawid"));
+        when(verifiedVisualAnswerService.answer(eq(plan.question()), eq(List.of(match)), anyList()))
+                .thenReturn("Nie mam dostępu do konkretnych plików, zdjęć ani obrazów.");
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
 

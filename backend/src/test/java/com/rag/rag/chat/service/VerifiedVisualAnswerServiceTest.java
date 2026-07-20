@@ -10,6 +10,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -58,6 +59,35 @@ class VerifiedVisualAnswerServiceTest {
         String answer = service.answer("Co widać?", List.of(match()));
         assertEquals(VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER, answer);
         assertFalse(answer.isBlank());
+    }
+
+    @Test
+    void blankModelWithCertainNamesUsesParticipantRoster() {
+        ChatLanguageModel model = mock(ChatLanguageModel.class);
+        when(model.generate(anyString())).thenReturn("   ");
+        VerifiedVisualAnswerService service = new VerifiedVisualAnswerService(model);
+
+        String answer = service.answer("Kto jest na zdjęciu?", List.of(match()),
+                List.of("Olek", "Piotrek", "Igor"));
+        assertEquals("Na zdjęciu są Olek, Piotrek i Igor.", answer);
+    }
+
+    @Test
+    void injectsCertainNamesIntoEvidencePrompt() {
+        ChatLanguageModel model = mock(ChatLanguageModel.class);
+        when(model.generate(anyString())).thenAnswer(invocation -> {
+            String prompt = invocation.getArgument(0);
+            assertTrue(prompt.contains("potwierdzone tożsamości uczestników"));
+            assertTrue(prompt.contains("Olek"));
+            assertTrue(prompt.contains("Igor"));
+            return """
+                    {"answer":"Na zdjęciu są Olek i Igor.","usedEvidenceIds":["D1","D2"]}
+                    """;
+        });
+        VerifiedVisualAnswerService service = new VerifiedVisualAnswerService(model);
+
+        assertEquals("Na zdjęciu są Olek i Igor.",
+                service.answer("jak mają na imię?", List.of(match()), List.of("Olek", "Igor")));
     }
 
     @Test

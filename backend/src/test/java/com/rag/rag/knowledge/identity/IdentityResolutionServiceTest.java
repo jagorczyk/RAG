@@ -34,6 +34,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -120,7 +121,12 @@ class IdentityResolutionServiceTest {
             "person 1, true",
             "Person 2, true",
             "osoba 3, true",
-            "Bartek, false"
+            "animal 1, true",
+            "Animal 2, true",
+            "zwierzę 1, true",
+            "pet 3, true",
+            "Bartek, false",
+            "Figa, false"
     })
     void shouldTreatVisionPlaceholdersAsGeneric(String label, boolean expected) {
         assertEquals(expected, service.isGenericPersonLabel(label));
@@ -176,27 +182,19 @@ class IdentityResolutionServiceTest {
     }
 
     @Test
-    void shouldLinkKnownPersonNameToExistingEntity() {
+    void visionPersonNameNeverConfirmsIdentity() {
         EntityMention mention = EntityMention.builder()
                 .id(UUID.randomUUID())
                 .label("Bartek")
                 .build();
 
-        KnowledgeEntity existing = KnowledgeEntity.builder()
-                .id(UUID.randomUUID())
-                .displayName("Bartek")
-                .type("PERSON")
-                .build();
-
-        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Bartek", "PERSON", ownerId))
-                .thenReturn(Optional.of(existing));
-
         service.resolve(mention, null, "PERSON");
 
         ArgumentCaptor<EntityMention> captor = ArgumentCaptor.forClass(EntityMention.class);
         verify(mentionRepository).save(captor.capture());
-        assertEquals(existing, captor.getValue().getEntity());
-        assertEquals(MentionStatus.CONFIRMED, captor.getValue().getStatus());
+        assertNull(captor.getValue().getEntity());
+        assertEquals(MentionStatus.PENDING, captor.getValue().getStatus());
+        assertNull(captor.getValue().getIdentitySource());
         assertTrue(service.looksLikePersonName("Bartek"));
     }
 
@@ -273,48 +271,24 @@ class IdentityResolutionServiceTest {
     }
 
     @Test
-    void resolveConfirmsWhenHeuristicScoreAtLeast085() {
-        // Equal non-generic labels → heuristic 0.99 ≥ 0.85 → auto-confirm to candidate entity
-        KnowledgeEntity known = KnowledgeEntity.builder()
-                .id(UUID.randomUUID()).displayName("Szymon").type("PERSON").ownerId(ownerId).build();
-        EntityMention candidate = EntityMention.builder()
-                .id(UUID.randomUUID()).label("Szymon").entity(known).entityType("PERSON")
-                .filePath("dir://photos/a.jpg").build();
+    void resolveDoesNotConfirmPersonFromDescriptionEvenAtHighSimilarity() {
         EntityMention mention = EntityMention.builder()
                 .id(UUID.randomUUID()).label("Szymon").entityType("PERSON")
                 .filePath("dir://photos/b.jpg").build();
-
-        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Szymon", "PERSON", ownerId))
-                .thenReturn(Optional.empty());
-        when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(
-                "Szymon", "PERSON", ownerId)).thenReturn(Optional.empty());
-        when(mentionRepository.findLinkedByEntityTypeAndOwner("PERSON", ownerId))
-                .thenReturn(List.of(candidate));
 
         service.resolve(mention, null, "PERSON");
 
         ArgumentCaptor<EntityMention> captor = ArgumentCaptor.forClass(EntityMention.class);
         verify(mentionRepository).save(captor.capture());
-        assertEquals(MentionStatus.CONFIRMED, captor.getValue().getStatus());
-        assertEquals(known, captor.getValue().getEntity());
-        assertEquals(IdentityEvidenceSource.DESCRIPTION_MATCH, captor.getValue().getIdentitySource());
+        assertEquals(MentionStatus.PENDING, captor.getValue().getStatus());
+        assertNull(captor.getValue().getEntity());
+        assertNull(captor.getValue().getIdentitySource());
         verify(suggestionRepository, never()).save(any());
     }
 
     @Test
-    void resolveCreatesPendingSuggestionInBand060To085() {
-        // Partial label overlap + shared visual cues → score in suggestion band, not auto-confirm
-        KnowledgeEntity known = KnowledgeEntity.builder()
-                .id(UUID.randomUUID()).displayName("Jan Nowak").type("PERSON").ownerId(ownerId).build();
+    void resolveDoesNotCreatePersonSuggestionFromVisionDescription() {
         String cues = "[\"czerwona koszulka\",\"krótkie włosy\"]";
-        EntityMention candidate = EntityMention.builder()
-                .id(UUID.randomUUID())
-                .label("Jan Nowak")
-                .entity(known)
-                .entityType("PERSON")
-                .filePath("dir://photos/a.jpg")
-                .visualCues(cues)
-                .build();
         EntityMention mention = EntityMention.builder()
                 .id(UUID.randomUUID())
                 .label("Nowak")
@@ -323,29 +297,12 @@ class IdentityResolutionServiceTest {
                 .visualCues(cues)
                 .build();
 
-        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Nowak", "PERSON", ownerId))
-                .thenReturn(Optional.empty());
-        when(aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(
-                "Nowak", "PERSON", ownerId)).thenReturn(Optional.empty());
-        when(mentionRepository.findLinkedByEntityTypeAndOwner("PERSON", ownerId))
-                .thenReturn(List.of(candidate));
-        when(suggestionRepository.existsBetweenMentions(mention.getId(), candidate.getId())).thenReturn(false);
-        when(entityRepository.save(any(KnowledgeEntity.class))).thenAnswer(inv -> {
-            KnowledgeEntity e = inv.getArgument(0);
-            if (e.getId() == null) {
-                e.setId(UUID.randomUUID());
-            }
-            return e;
-        });
-        when(aliasRepository.save(any())).thenReturn(null);
-
         service.resolve(mention, null, "PERSON");
 
-        ArgumentCaptor<IdentitySuggestion> suggestionCaptor = ArgumentCaptor.forClass(IdentitySuggestion.class);
-        verify(suggestionRepository).save(suggestionCaptor.capture());
-        assertEquals(SuggestionStatus.PENDING, suggestionCaptor.getValue().getStatus());
-        assertTrue(suggestionCaptor.getValue().getSimilarityScore().doubleValue() >= 0.60);
-        assertTrue(suggestionCaptor.getValue().getSimilarityScore().doubleValue() < 0.85);
+        ArgumentCaptor<EntityMention> captor = ArgumentCaptor.forClass(EntityMention.class);
+        verify(mentionRepository).save(captor.capture());
+        assertEquals(MentionStatus.PENDING, captor.getValue().getStatus());
+        verify(suggestionRepository, never()).save(any());
     }
 
     @Test

@@ -24,8 +24,10 @@ public interface ChatService {
             mają pierwszeństwo przed fragmentami dokumentów.
             Gdy w kontekście są imiona lub etykiety uczestników zdjęcia, wymień je w odpowiedzi.
             Kontekst tekstowy o obrazach z bazy i grafu jest pełnoprawnym dowodem — nie mów,
-            że nie widzisz zdjęć, nie masz dostępu do plików ani nie możesz określić, kto
-            jest na zdjęciu, gdy takie informacje są w dostarczonym kontekście.
+            że nie widzisz zdjęć, nie masz dostępu do plików, nie możesz określić kto jest
+            na zdjęciu ani że nie wiesz o kogo pyta użytkownik, gdy w kontekście są
+            potwierdzone imiona lub encje. Nie używaj placeholderów vision (person 1, animal 1)
+            jako imion — pomiń je i podaj tylko prawdziwe nazwy z grafu.
             Gdy brakuje istotnych informacji, odpowiedz dokładnie:
             "Nie znaleziono informacji w dokumentach."
             Odpowiedź ma być krótka i zwięzła: zwykle jedno zdanie, najwyżej dwa.

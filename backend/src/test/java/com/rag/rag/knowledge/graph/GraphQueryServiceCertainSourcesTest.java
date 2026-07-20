@@ -77,12 +77,14 @@ class GraphQueryServiceCertainSourcesTest {
         when(mentionEvidencePolicy.isCertain(pendingPerson)).thenReturn(false);
         when(mentionEvidencePolicy.isCertain(confirmedAnimal)).thenReturn(true);
         when(identityResolutionService.isGenericPersonLabel("Igor")).thenReturn(false);
-        when(identityResolutionService.isGenericPersonLabel("animal 1")).thenReturn(false);
+        // Vision placeholder animal N must never appear as a certain participant name.
+        when(identityResolutionService.isGenericPersonLabel("animal 1")).thenReturn(true);
 
         List<String> names = service.certainParticipantNamesForPaths(List.of("dir://photo.jpg"));
 
-        assertEquals(List.of("Igor", "animal 1"), names);
+        assertEquals(List.of("Igor"), names);
         assertFalse(names.contains("person 1"));
+        assertFalse(names.contains("animal 1"));
     }
 
     @Test
