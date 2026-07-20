@@ -106,6 +106,70 @@ class ChatMemoryServiceTest {
     }
 
     @Test
+    void shouldStripCurrentAnswerPromptToBareUserQuestion() {
+        String answerPromptBlob = ChatService.ANSWER_INSTRUCTIONS + """
+
+                [Styl odpowiedzi]
+                Jedno lub dwa krótkie zdania po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+
+                [Instrukcja odpowiedzi]
+                Odpowiedz z dokumentów.
+                Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+                Używaj wyłącznie fragmentów dokumentów z retrieval — nie zgaduj.
+
+                Pytanie użytkownika: Jakie jest saldo na fakturze?
+                """;
+        List<ChatMessage> messages = List.of(
+                UserMessage.from(answerPromptBlob),
+                AiMessage.from("Saldo wynosi 1200 zł.")
+        );
+        when(repository.findById(chatId)).thenReturn(Optional.empty());
+
+        chatMemoryService.updateMessages(chatId, messages);
+
+        ArgumentCaptor<ChatMemoryEntity> captor = ArgumentCaptor.forClass(ChatMemoryEntity.class);
+        verify(repository).save(captor.capture());
+        String savedJson = captor.getValue().getMessages();
+        assertTrue(savedJson.contains("Jakie jest saldo na fakturze?"));
+        assertTrue(savedJson.contains("Saldo wynosi 1200 zł."));
+        assertFalse(savedJson.contains("Jesteś asystentem dokumentów"));
+        assertFalse(savedJson.contains("[Styl odpowiedzi]"));
+        assertFalse(savedJson.contains("[Instrukcja odpowiedzi]"));
+        assertFalse(savedJson.contains("Nie znaleziono informacji w dokumentach."));
+    }
+
+    @Test
+    void roundTripMemoryKeepsCleanQaForNextTurn() {
+        String firstTurnBlob = """
+                [Instrukcja odpowiedzi]
+                Krótko.
+
+                Pytanie użytkownika: Kto jest na pierwszym zdjęciu?
+                """;
+        List<ChatMessage> written = List.of(
+                UserMessage.from(firstTurnBlob),
+                AiMessage.from("Na zdjęciu jest Anna.")
+        );
+        when(repository.findById(chatId)).thenReturn(Optional.empty());
+
+        chatMemoryService.updateMessages(chatId, written);
+
+        ArgumentCaptor<ChatMemoryEntity> captor = ArgumentCaptor.forClass(ChatMemoryEntity.class);
+        verify(repository).save(captor.capture());
+        ChatMemoryEntity stored = captor.getValue();
+        // Simulate next turn reading the same store JSON.
+        when(repository.findById(chatId)).thenReturn(Optional.of(stored));
+
+        List<ChatMessage> read = chatMemoryService.getMessages(chatId);
+
+        assertEquals(2, read.size());
+        assertTrue(read.get(0) instanceof UserMessage);
+        assertEquals("Kto jest na pierwszym zdjęciu?", ((UserMessage) read.get(0)).singleText());
+        assertTrue(read.get(1) instanceof AiMessage);
+        assertEquals("Na zdjęciu jest Anna.", ((AiMessage) read.get(1)).text());
+    }
+
+    @Test
     void shouldDeleteMessages() {
         // Act
         chatMemoryService.deleteMessages(chatId);

@@ -84,6 +84,26 @@ public final class ChatRetrievalPolicy {
     }
 
     /**
+     * Empty visual MATCH list: fall through to graph/hybrid on the same plan when there is still a
+     * technical path (fileScope, named entities, or non-pure-visual mode). Pure open visual search
+     * with no scope keeps the hard visual denial. No phrase routing — plan fields only.
+     */
+    public static boolean shouldFallbackFromEmptyVisual(QueryPlan plan) {
+        if (plan == null) {
+            return false;
+        }
+        if (plan.retrievalMode() == QueryPlan.RetrievalMode.HYBRID
+                || plan.retrievalMode() == QueryPlan.RetrievalMode.DOCUMENT
+                || plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH) {
+            return true;
+        }
+        if (plan.fileScope() != null && !plan.fileScope().isEmpty()) {
+            return true;
+        }
+        return plan.entities() != null && !plan.entities().isEmpty();
+    }
+
+    /**
      * Path scope for hybrid retrieval this turn:
      * <ul>
      *   <li>planner {@code fileScope} when present</li>

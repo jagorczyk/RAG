@@ -1,9 +1,11 @@
 package com.rag.rag.core.config;
 
+import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.core.rerank.LlmDocumentReranker;
 import com.rag.rag.core.retrieval.HybridRetrievalMerger;
 import com.rag.rag.core.retrieval.LexicalEmbeddingSearch;
 import com.rag.rag.core.retrieval.RetrievalPathScope;
+import com.rag.rag.core.retrieval.RetrievalQueryContext;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
@@ -64,23 +66,31 @@ public class RetrievalConfiguration {
     @Value("${rag.retrieval.lexical-max-results:40}")
     private int lexicalMaxResults;
 
+    @Value("${rag.retrieval.final-min-score:0.25}")
+    private double finalMinScore;
+
     @Bean
     ContentRetriever contentRetriever(
             EmbeddingStore<TextSegment> embeddingStore,
             EmbeddingModel embeddingModel,
             LlmDocumentReranker reranker,
-            LexicalEmbeddingSearch lexicalEmbeddingSearch
+            LexicalEmbeddingSearch lexicalEmbeddingSearch,
+            CurrentUserService currentUserService
     ) {
 
         return query -> {
             String queryText = query.text();
             logger.info("RAG QUERY: {}", queryText);
 
-            if (queryText == null || queryText.trim().isEmpty()) {
+            if (RetrievalQueryContext.isDisabled()
+                    || queryText == null || queryText.trim().isEmpty()) {
                 return Collections.emptyList();
             }
 
-            String cleanQuery = extractRetrievalQuery(queryText);
+            String cleanQuery = RetrievalQueryContext.get();
+            if (cleanQuery.isBlank()) {
+                cleanQuery = extractRetrievalQuery(queryText);
+            }
             if (cleanQuery.isEmpty()) {
                 cleanQuery = queryText;
             }
@@ -91,6 +101,9 @@ public class RetrievalConfiguration {
                     .queryEmbedding(queryEmbedding)
                     .maxResults(recallMaxResults)
                     .minScore(minScore);
+            String ownerId = currentUserService.findUserId().map(Object::toString).orElse(null);
+            Filter ownerFilter = ownerId == null ? null : metadataKey("owner_id").isEqualTo(ownerId);
+            if (ownerFilter != null) searchRequestBuilder.filter(ownerFilter);
 
             // Technical @path / @filename tokens only — not phrase routing over people/actions.
             List<String> mentions = new ArrayList<>();
@@ -108,7 +121,8 @@ public class RetrievalConfiguration {
                 Filter filenameFilter = metadataKey("filename").isIn(mentions);
                 Filter folderFilter = metadataKey("document_id").isIn(mentions);
 
-                searchRequestBuilder.filter(pathMetaFilter.or(filenameFilter).or(folderFilter));
+                Filter mentionFilter = pathMetaFilter.or(filenameFilter).or(folderFilter);
+                searchRequestBuilder.filter(ownerFilter == null ? mentionFilter : ownerFilter.and(mentionFilter));
                 searchRequestBuilder.minScore(0.01);
                 searchRequestBuilder.maxResults(recallMaxResults);
                 pathFilter.addAll(mentions);
@@ -126,7 +140,8 @@ public class RetrievalConfiguration {
                         .toList();
                 if (!exactPaths.isEmpty() && exactPaths.size() == planScope.size()) {
                     // All exact files — push filter into vector search when possible.
-                    searchRequestBuilder.filter(metadataKey("path").isIn(exactPaths));
+                    Filter exactFilter = metadataKey("path").isIn(exactPaths);
+                    searchRequestBuilder.filter(ownerFilter == null ? exactFilter : ownerFilter.and(exactFilter));
                     searchRequestBuilder.minScore(0.01);
                     // Named-entity / joint-file scopes are usually small — prefer graph-sized recall.
                     searchRequestBuilder.maxResults(Math.min(recallMaxResults, Math.max(graphMaxResults, exactPaths.size())));
@@ -197,6 +212,8 @@ public class RetrievalConfiguration {
             return rerankedContents.stream()
                     .filter(content -> RetrievalPathScope.pathInScope(
                             content.textSegment().metadata().getString("path"), planScope))
+                    .filter(content -> !planScope.isEmpty()
+                            || score(content.textSegment().metadata().getString("score")) >= finalMinScore)
                     .limit(finalLimit)
                     .collect(Collectors.toList());
         };
@@ -276,9 +293,33 @@ public class RetrievalConfiguration {
         if (queryText == null) {
             return "";
         }
-        int marker = queryText.indexOf("Pytanie użytkownika:");
+        // Prefer the last marker so nested instruction blocks cannot hide the real question.
+        int marker = queryText.lastIndexOf("Pytanie użytkownika:");
         if (marker >= 0) {
-            return queryText.substring(marker + "Pytanie użytkownika:".length()).trim();
+            String after = queryText.substring(marker + "Pytanie użytkownika:".length()).trim();
+            int docs = after.indexOf("\nDokumenty:");
+            if (docs >= 0) {
+                after = after.substring(0, docs).trim();
+            }
+            if (!after.isBlank()) {
+                return after;
+            }
+        }
+        int shortMarker = queryText.lastIndexOf("Pytanie:");
+        if (shortMarker >= 0) {
+            String after = queryText.substring(shortMarker + "Pytanie:".length()).trim();
+            int docs = after.indexOf("\nDokumenty:");
+            if (docs < 0) {
+                docs = after.indexOf("\n\nDokumenty:");
+            }
+            if (docs >= 0) {
+                after = after.substring(0, docs).trim();
+            }
+            if (!after.isBlank()
+                    && !after.contains("Jesteś asystentem dokumentów")
+                    && !after.contains("[Styl odpowiedzi]")) {
+                return after;
+            }
         }
         return queryText.trim();
     }
@@ -287,12 +328,20 @@ public class RetrievalConfiguration {
         if (queryText == null || !queryText.contains("Pytanie użytkownika:")) {
             return "";
         }
-        int marker = queryText.indexOf("Pytanie użytkownika:");
+        int marker = queryText.lastIndexOf("Pytanie użytkownika:");
         return queryText.substring(0, marker).trim();
     }
 
     private static String extractRetrievalQuery(String queryText) {
         String question = extractUserQuestion(queryText);
         return question.replaceAll("@[^\\s,\\]]+", "").trim();
+    }
+
+    private static double score(String value) {
+        try {
+            return value == null ? 0.0 : Double.parseDouble(value);
+        } catch (NumberFormatException ignored) {
+            return 0.0;
+        }
     }
 }

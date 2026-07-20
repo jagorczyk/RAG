@@ -47,18 +47,14 @@ public class ChatMemoryService implements ChatMemoryStore {
             List<ChatMessage> cleanMessages = messages.stream().map(msg -> {
                 if (msg instanceof UserMessage userMsg) {
                     String text = userMsg.singleText();
-                    if (text != null && text.contains("DANE Z BAZY DANYCH:\n") && text.contains("PYTANIE UŻYTKOWNIKA: ")) {
-                        int start = text.indexOf("PYTANIE UŻYTKOWNIKA: ") + "PYTANIE UŻYTKOWNIKA: ".length();
-                        int end = text.indexOf("\n\nDANE Z BAZY DANYCH:\n");
-                        if (start != -1 && end != -1 && end > start) {
-                            String originalQuestion = text.substring(start, end);
-                            return UserMessage.from(originalQuestion);
-                        }
+                    String cleaned = ChatUserMessageNormalizer.extractOriginalQuestion(text);
+                    if (text == null || !cleaned.equals(text)) {
+                        return UserMessage.from(cleaned);
                     }
                 }
                 return msg;
             }).toList();
-            
+
             String json = ChatMessageSerializer.messagesToJson(cleanMessages);
             ChatMemoryEntity entity = repository.findById(chatId)
                     .orElseGet(() -> {

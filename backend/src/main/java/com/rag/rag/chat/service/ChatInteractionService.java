@@ -7,6 +7,7 @@ import com.rag.rag.chat.entity.ChatMessageEntity;
 import com.rag.rag.chat.repository.ChatMemoryRepository;
 import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.core.retrieval.RetrievalPathScope;
+import com.rag.rag.core.retrieval.RetrievalQueryContext;
 import com.rag.rag.ingestion.dto.SourceDto;
 import com.rag.rag.ingestion.service.IngestionService;
 import com.rag.rag.knowledge.graph.GraphQueryService;
@@ -63,18 +64,39 @@ public class ChatInteractionService {
         QueryPlan plan = queryPlanner == null
                 ? QueryPlan.fallback(question, List.of())
                 : queryPlanner.plan(question, conversationContext);
+        List<String> explicitFileScope = graphQueryService.resolveExplicitFileScope(question);
+        if (!explicitFileScope.isEmpty()) {
+            plan = plan.withFileScope(explicitFileScope);
+        } else if (graphQueryService.hasExplicitFileReference(question)) {
+            String denial = "Nie znaleziono wskazanego pliku w Twojej bibliotece.";
+            saveAiMessage(chatId, denial, List.of(), List.of(), "NO_EVIDENCE", true);
+            return new MessageResponse(denial, List.of(), true, List.of(), "NO_EVIDENCE");
+        }
         log.info("Dynamic query plan: mode={}, visual={}, entities={}, ambiguous={}",
                 plan.retrievalMode(), plan.visualCondition(), plan.entities(), plan.ambiguous());
 
         if (plan.visualCondition() && dynamicVisualMatcher != null) {
-            return processVisualPlan(chatId, plan);
+            // Persist hard visual denial only when text/graph fallback is not allowed.
+            boolean allowTextFallback = ChatRetrievalPolicy.shouldFallbackFromEmptyVisual(plan);
+            MessageResponse visual = processVisualPlan(chatId, plan, !allowTextFallback);
+            if (!"NO_EVIDENCE".equals(visual.answerKind())) {
+                return visual;
+            }
+            if (!allowTextFallback) {
+                return visual;
+            }
+            log.info("Visual path empty; falling back to text/graph for mode={}, fileScope={}, entities={}",
+                    plan.retrievalMode(), plan.fileScope(), plan.entities());
         }
         return processTextOrGraphPlan(chatId, plan);
     }
 
     private MessageResponse processTextOrGraphPlan(UUID chatId, QueryPlan plan) {
-        GraphEvidenceResult graphEvidence = graphQueryService.buildEvidence(
-                plan.entities(), plan.fileScope(), plan.entityMatchMode());
+        boolean needsGraph = plan.retrievalMode() != QueryPlan.RetrievalMode.DOCUMENT
+                || ChatRetrievalPolicy.requiresJointFileEvidence(plan);
+        GraphEvidenceResult graphEvidence = needsGraph
+                ? graphQueryService.buildEvidence(plan.entities(), plan.fileScope(), plan.entityMatchMode())
+                : new GraphEvidenceResult("", List.of());
         // Co-presence is a set operation on planner output: when ALL_SAME_FILE has no
         // intersection evidence, never let the LLM or hybrid retrieval affirm a joint photo.
         if (ChatRetrievalPolicy.mustDenyJointFile(plan, graphEvidence)) {
@@ -87,6 +109,8 @@ public class ChatInteractionService {
         QueryPlan.RetrievalMode effectiveMode = ChatRetrievalPolicy.effectiveRetrievalMode(plan, graphEvidence);
 
         String graphContext = graphEvidence.context();
+        // Always end with "Pytanie użytkownika:" so retrieval injection and chat-memory
+        // normalization can recover the bare question (not the instruction blob).
         String prompt;
         if (graphMissFallback) {
             // No certain graph rows — answer from hybrid document retrieval on the question.
@@ -95,12 +119,19 @@ public class ChatInteractionService {
                     %s
                     Graf wiedzy nie ma pewnych dowodów dla tego pytania; użyj wyłącznie kontekstu dokumentów z retrieval.
                     Gdy brak fragmentów dokumentów, odpowiedz dokładnie: Nie znaleziono informacji w dokumentach.
-                    Odpowiedź: jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
+                    Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
 
                     Pytanie użytkownika: %s
                     """.formatted(plan.answerInstruction(), plan.question());
         } else if (graphContext.isBlank()) {
-            prompt = plan.question();
+            prompt = """
+                    [Instrukcja odpowiedzi]
+                    %s
+                    Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+                    Używaj wyłącznie fragmentów dokumentów z retrieval — nie zgaduj.
+
+                    Pytanie użytkownika: %s
+                    """.formatted(plan.answerInstruction(), plan.question());
         } else {
             prompt = """
                     [Kontekst zweryfikowany]
@@ -108,7 +139,7 @@ public class ChatInteractionService {
 
                     [Instrukcja odpowiedzi]
                     %s
-                    Odpowiedź: jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
+                    Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
                     Używaj wyłącznie powyższego kontekstu i fragmentów dokumentów z retrieval — nie zgaduj.
 
                     Pytanie użytkownika: %s
@@ -119,11 +150,14 @@ public class ChatInteractionService {
         // (plus planner fileScope). Prevents off-person corpus chunks from polluting the prompt.
         List<String> retrievalScope = ChatRetrievalPolicy.retrievalScope(plan, graphEvidence);
         RetrievalPathScope.set(retrievalScope);
+        RetrievalQueryContext.set(plan.retrievalQuery());
+        RetrievalQueryContext.setDisabled(effectiveMode == QueryPlan.RetrievalMode.GRAPH);
         Result<String> result;
         try {
             result = chatAiService.answer(chatId, answerPrompt(prompt));
         } finally {
             RetrievalPathScope.clear();
+            RetrievalQueryContext.clear();
         }
 
         String answer = result == null ? "" : result.content();
@@ -140,16 +174,28 @@ public class ChatInteractionService {
             sources = List.of();
         }
         String cleaned = removeTechnicalReferences(answer, sources);
+        List<QueryEvidenceDto> sourceEvidence = sources.stream()
+                .map(source -> new QueryEvidenceDto(source.path(),
+                        java.math.BigDecimal.valueOf(source.score() == null ? 0.0 : source.score()),
+                        List.of("GRAPH_FACT".equals(source.type())
+                                ? "Potwierdzony fakt z grafu wiedzy."
+                                : "Fragment wybrany przez wyszukiwanie hybrydowe."),
+                        "GRAPH_FACT".equals(source.type()) ? "CONFIRMED" : "RETRIEVED"))
+                .toList();
         boolean uncertain = plan.ambiguous()
                 || graphMissFallback
                 || noGrounding
                 || sources.isEmpty();
         String answerKind = noGrounding ? "NO_EVIDENCE" : effectiveMode.name();
-        saveAiMessage(chatId, cleaned, sources, List.of(), answerKind, uncertain);
-        return new MessageResponse(cleaned, sources, uncertain, List.of(), answerKind);
+        saveAiMessage(chatId, cleaned, sources, sourceEvidence, answerKind, uncertain);
+        return new MessageResponse(cleaned, sources, uncertain, sourceEvidence, answerKind);
     }
 
-    private MessageResponse processVisualPlan(UUID chatId, QueryPlan plan) {
+    /**
+     * @param persistDenial when false and matches are empty, returns NO_EVIDENCE without writing
+     *                      an AI turn so the caller can fall back to text/graph on the same plan.
+     */
+    private MessageResponse processVisualPlan(UUID chatId, QueryPlan plan, boolean persistDenial) {
         List<VisualQueryMatch> matches = dynamicVisualMatcher.findEvidence(plan);
         // Principle 2: only MATCH evidence becomes a source (matcher already filters).
         List<QueryEvidenceDto> evidence = matches.stream()
@@ -163,15 +209,22 @@ public class ChatInteractionService {
                 .toList();
         if (matches.isEmpty()) {
             String answer = "Nie znaleziono potwierdzonych dowodów wizualnych.";
-            saveAiMessage(chatId, answer, List.of(), List.of(), "NO_EVIDENCE", true);
+            if (persistDenial) {
+                saveAiMessage(chatId, answer, List.of(), List.of(), "NO_EVIDENCE", true);
+            }
             return new MessageResponse(answer, List.of(), true, List.of(), "NO_EVIDENCE");
         }
         boolean uncertain = plan.ambiguous() || matches.stream()
                 .anyMatch(match -> match.decision() == VisualMatchDecision.Decision.UNCERTAIN);
         // Answer prose stays short; detailed reasons stay only in evidence/sources UI.
-        String answer = verifiedVisualAnswerService.answer(plan.question(), matches.size());
+        String answer = verifiedVisualAnswerService.answer(plan.question(), matches);
         if (answer == null || answer.isBlank()) {
-            answer = "Oto potwierdzone zdjęcia.";
+            String denial = "Nie udało się przygotować odpowiedzi wyłącznie z potwierdzonych dowodów.";
+            if (persistDenial) {
+                saveAiMessage(chatId, denial, List.of(), List.of(), "NO_EVIDENCE", true);
+            }
+            // Blank answer with !persistDenial lets the caller try text/graph fallback.
+            return new MessageResponse(denial, List.of(), true, List.of(), "NO_EVIDENCE");
         }
         String cleaned = removeTechnicalReferences(answer, visualSources);
         saveAiMessage(chatId, cleaned, visualSources, evidence, QueryPlan.RetrievalMode.VISUAL_VALIDATION.name(), uncertain);
@@ -230,7 +283,7 @@ public class ChatInteractionService {
         return ChatService.ANSWER_INSTRUCTIONS + """
 
                 [Styl odpowiedzi]
-                Jedno krótkie zdanie po polsku. Bez opisu wyglądu, sceny, pewności i bez listy plików.
+                Jedno lub dwa krótkie zdania po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
 
                 """ + context;
     }

@@ -2,6 +2,7 @@ package com.rag.rag.chat.service;
 
 import com.rag.rag.chat.dto.MessageRequest;
 import com.rag.rag.chat.dto.MessageResponse;
+import com.rag.rag.chat.entity.ChatMessageEntity;
 import com.rag.rag.chat.repository.ChatMemoryRepository;
 import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.ingestion.dto.SourceDto;
@@ -17,10 +18,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -242,7 +245,7 @@ class ChatInteractionServiceTest {
         when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
         SourceDto source = new SourceDto("dir://michal.jpg", "michal.jpg", 0.8, null, "IMAGE");
         when(ingestionService.createSourceDto(anyString(), any(), anyDouble())).thenReturn(source);
-        when(verifiedVisualAnswerService.answer(eq(plan.question()), eq(1)))
+        when(verifiedVisualAnswerService.answer(eq(plan.question()), eq(List.of(match))))
                 .thenReturn("Tak, Michał ma blond włosy.");
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
@@ -250,7 +253,7 @@ class ChatInteractionServiceTest {
         assertEquals("Tak, Michał ma blond włosy.", response.response());
         assertEquals(1, response.evidence().size());
         assertFalse(response.uncertain());
-        verify(verifiedVisualAnswerService).answer(eq(plan.question()), eq(1));
+        verify(verifiedVisualAnswerService).answer(eq(plan.question()), eq(List.of(match)));
     }
 
     @Test
@@ -265,6 +268,38 @@ class ChatInteractionServiceTest {
 
         assertTrue(response.sources().isEmpty());
         assertFalse(response.response().contains(retrieved.fileName()));
+    }
+
+    @Test
+    void explicitAtFileOverridesPlannerAndConversationScope() {
+        String question = "Co przedstawia @selected.jpg?";
+        QueryPlan plannerPlan = new QueryPlan(question, List.of(), List.of("dir://old.jpg"),
+                question, question, true, false, QueryPlan.RetrievalMode.VISUAL_VALIDATION,
+                EntityMatchMode.ANY, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plannerPlan);
+        when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of("dir://selected.jpg"));
+        when(dynamicVisualMatcher.findEvidence(any(QueryPlan.class))).thenReturn(List.of());
+
+        service.processChatMessage(chatId, new MessageRequest(question));
+
+        ArgumentCaptor<QueryPlan> captor = ArgumentCaptor.forClass(QueryPlan.class);
+        verify(dynamicVisualMatcher).findEvidence(captor.capture());
+        assertEquals(List.of("dir://selected.jpg"), captor.getValue().fileScope());
+    }
+
+    @Test
+    void unknownExplicitAtFileStopsWithoutRetrieval() {
+        String question = "Co przedstawia @missing.jpg?";
+        QueryPlan plan = QueryPlan.fallback(question, List.of());
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of());
+        when(graphQueryService.hasExplicitFileReference(question)).thenReturn(true);
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals("NO_EVIDENCE", response.answerKind());
+        assertTrue(response.sources().isEmpty());
+        verifyNoInteractions(chatAiService, dynamicVisualMatcher);
     }
 
     @ParameterizedTest
@@ -327,6 +362,117 @@ class ChatInteractionServiceTest {
         assertFalse(response.uncertain());
         // Hybrid RAG sources are never consulted under ALL_SAME_FILE — only joint graph paths.
         verify(ingestionService, never()).getSources(any());
+    }
+
+    @Test
+    void simpleHybridQuestionWithDocumentSourcesIsNotOverwrittenByNoEvidence() {
+        // Criterion 1: useful hybrid evidence → short PL answer, not template denial.
+        QueryPlan plan = new QueryPlan("Jakie jest saldo na fakturze?", List.of(), List.of(),
+                "Jakie jest saldo na fakturze?", "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z dokumentów.");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        Result<String> result = Result.<String>builder().content("Saldo wynosi 1200 zł.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        SourceDto docSource = new SourceDto("dir://invoice.pdf", "invoice.pdf", 0.91, null, "PDF");
+        when(ingestionService.getSources(result)).thenReturn(List.of(docSource));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals("Saldo wynosi 1200 zł.", response.response());
+        assertNotEquals("NO_EVIDENCE", response.answerKind());
+        assertFalse(response.response().contains("Nie znaleziono informacji w dokumentach."));
+        assertFalse(response.response().contains("Nie znaleziono potwierdzonych dowodów wizualnych."));
+        assertFalse(response.response().isBlank());
+        assertEquals(1, response.sources().size());
+        assertEquals("dir://invoice.pdf", response.sources().get(0).path());
+        // Answer prompt must expose the bare question for memory/injector extraction.
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
+        assertTrue(promptCaptor.getValue().contains("Pytanie użytkownika: Jakie jest saldo na fakturze?"));
+    }
+
+    @Test
+    void followUpPassesConversationHistoryWithSourcesToPlanner() {
+        // Criterion 2: prior AI turn with SOURCES is in conversationContext for the planner.
+        String followUp = "A co jest na tym zdjęciu?";
+        ChatMessageEntity priorUser = ChatMessageEntity.builder()
+                .chatId(chatId).role("USER").textContext("Pokaż Igora")
+                .imagePaths(List.of()).scores(List.of())
+                .createdAt(LocalDateTime.now().minusMinutes(2)).build();
+        ChatMessageEntity priorAi = ChatMessageEntity.builder()
+                .chatId(chatId).role("AI").textContext("Igor jest na plaży.")
+                .imagePaths(List.of("dir://photos/igor.jpg")).scores(List.of(0.95))
+                .createdAt(LocalDateTime.now().minusMinutes(1)).build();
+        // After saveUserMessage, repository returns prior turns + current (order desc in real repo).
+        when(chatMessageRepository.findTop6ByChatIdOrderByCreatedAtDesc(chatId))
+                .thenReturn(List.of(
+                        ChatMessageEntity.builder().chatId(chatId).role("USER").textContext(followUp)
+                                .imagePaths(List.of()).scores(List.of())
+                                .createdAt(LocalDateTime.now()).build(),
+                        priorAi,
+                        priorUser
+                ));
+        QueryPlan plan = new QueryPlan(followUp, List.of("Igor"), List.of("dir://photos/igor.jpg"),
+                "co jest na zdjęciu igor dir://photos/igor.jpg", followUp, false, false,
+                QueryPlan.RetrievalMode.HYBRID, EntityMatchMode.ANY, "Odpowiedz krótko.");
+        when(queryPlanner.plan(eq(followUp), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("- entity=Igor", List.of("dir://photos/igor.jpg")));
+        Result<String> result = Result.<String>builder().content("Igor stoi na plaży.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq("dir://photos/igor.jpg"), any(), anyDouble()))
+                .thenReturn(new SourceDto("dir://photos/igor.jpg", "igor.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(followUp));
+
+        ArgumentCaptor<String> contextCaptor = ArgumentCaptor.forClass(String.class);
+        verify(queryPlanner).plan(eq(followUp), contextCaptor.capture());
+        String context = contextCaptor.getValue();
+        assertTrue(context.contains("USER:"));
+        assertTrue(context.contains("AI:"));
+        assertTrue(context.contains("SOURCES:"));
+        assertTrue(context.contains("dir://photos/igor.jpg"));
+        assertTrue(context.contains("Igor jest na plaży.") || context.contains("Pokaż Igora"));
+        assertEquals("Igor stoi na plaży.", response.response());
+        assertNotEquals("NO_EVIDENCE", response.answerKind());
+    }
+
+    @Test
+    void emptyVisualWithFileScopeFallsBackToHybridAnswer() {
+        // Criterion 1+5: visual miss with history fileScope must not hard-stop when docs/graph can answer.
+        String question = "Opisz to zdjęcie";
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of("dir://photos/a.jpg"),
+                question, question, true, false, QueryPlan.RetrievalMode.VISUAL_VALIDATION,
+                EntityMatchMode.ANY, "Odpowiedz z obrazu lub dokumentów.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(dynamicVisualMatcher.findEvidence(any(QueryPlan.class))).thenReturn(List.of());
+        Result<String> result = Result.<String>builder().content("Na zdjęciu widać morze.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of(
+                new SourceDto("dir://photos/a.jpg", "a.jpg", 0.9, null, "IMAGE")));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals("Na zdjęciu widać morze.", response.response());
+        assertNotEquals("NO_EVIDENCE", response.answerKind());
+        assertFalse(response.response().contains("Nie znaleziono potwierdzonych dowodów wizualnych."));
+        verify(chatAiService).answer(eq(chatId), anyString());
+        verify(dynamicVisualMatcher).findEvidence(any(QueryPlan.class));
+    }
+
+    @Test
+    void pureVisualMissWithoutScopeKeepsVisualDenial() {
+        QueryPlan plan = new QueryPlan("Czy ktoś ma czerwoną czapkę?", List.of(), List.of(),
+                "czerwona czapka", "czerwona czapka", true, false,
+                QueryPlan.RetrievalMode.VISUAL_VALIDATION, "");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of());
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals("Nie znaleziono potwierdzonych dowodów wizualnych.", response.response());
+        assertEquals("NO_EVIDENCE", response.answerKind());
+        verify(chatAiService, never()).answer(any(), anyString());
     }
 
     private static QueryPlan coPresencePlan(String question, List<String> entities,

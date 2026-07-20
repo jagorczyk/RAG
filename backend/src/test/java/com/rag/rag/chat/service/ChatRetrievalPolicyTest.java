@@ -104,4 +104,23 @@ class ChatRetrievalPolicyTest {
                 false, false, QueryPlan.RetrievalMode.HYBRID, "instr");
         assertTrue(ChatRetrievalPolicy.retrievalScope(open, evidence).isEmpty());
     }
+
+    @Test
+    void emptyVisualFallbackWhenFileScopeEntitiesOrNonVisualMode() {
+        QueryPlan pureVisual = new QueryPlan("q", List.of(), List.of(), "q", "c", true, false,
+                QueryPlan.RetrievalMode.VISUAL_VALIDATION, "instr");
+        assertFalse(ChatRetrievalPolicy.shouldFallbackFromEmptyVisual(pureVisual));
+
+        QueryPlan withScope = new QueryPlan("q", List.of(), List.of("dir://a.jpg"), "q", "c", true, false,
+                QueryPlan.RetrievalMode.VISUAL_VALIDATION, "instr");
+        assertTrue(ChatRetrievalPolicy.shouldFallbackFromEmptyVisual(withScope));
+
+        QueryPlan withEntity = new QueryPlan("q", List.of("Igor"), List.of(), "q", "c", true, false,
+                QueryPlan.RetrievalMode.VISUAL_VALIDATION, "instr");
+        assertTrue(ChatRetrievalPolicy.shouldFallbackFromEmptyVisual(withEntity));
+
+        QueryPlan hybridVisual = new QueryPlan("q", List.of(), List.of(), "q", "c", true, false,
+                QueryPlan.RetrievalMode.HYBRID, "instr");
+        assertTrue(ChatRetrievalPolicy.shouldFallbackFromEmptyVisual(hybridVisual));
+    }
 }

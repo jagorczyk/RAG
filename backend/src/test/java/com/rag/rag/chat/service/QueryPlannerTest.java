@@ -12,7 +12,9 @@ import com.rag.rag.knowledge.graph.EntityMatchMode;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 @ExtendWith(MockitoExtension.class)
 class QueryPlannerTest {
@@ -66,5 +68,44 @@ class QueryPlannerTest {
 
         assertEquals(EntityMatchMode.ALL_SAME_FILE, plan.entityMatchMode());
         assertEquals(List.of("Igor", "Anna"), plan.entities());
+    }
+
+    @Test
+    void plannerPromptIncludesConversationContextWithRolesAndSourcePaths() {
+        String conversationContext = """
+                USER: Pokaż Igora
+                SOURCES: []
+                AI: Igor jest na plaży.
+                SOURCES: [dir://photos/igor.jpg]
+                USER: A co jest na tym zdjęciu?
+                SOURCES: []
+                """;
+        when(graphQueryService.availableEntityNames()).thenReturn(List.of("Igor"));
+        when(graphQueryService.validateEntityNames(List.of("Igor"))).thenReturn(List.of("Igor"));
+        when(graphQueryService.validateFilePaths(List.of("dir://photos/igor.jpg")))
+                .thenReturn(List.of("dir://photos/igor.jpg"));
+        when(chatModel.generate(anyString())).thenReturn("""
+                {"entities":["Igor"],"fileScope":["dir://photos/igor.jpg"],
+                "retrievalQuery":"co widać na zdjęciu Igora dir://photos/igor.jpg",
+                "condition":"opis treści wcześniej zwróconego zdjęcia",
+                "visualCondition":false,"ambiguous":false,"retrievalMode":"HYBRID",
+                "answerInstruction":"Odpowiedz krótko po polsku."}
+                """);
+
+        QueryPlan plan = new QueryPlanner(graphQueryService, chatModel)
+                .plan("A co jest na tym zdjęciu?", conversationContext);
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatModel).generate(promptCaptor.capture());
+        String prompt = promptCaptor.getValue();
+        assertTrue(prompt.contains("Recent conversation and previously returned source paths:"));
+        assertTrue(prompt.contains("USER:"));
+        assertTrue(prompt.contains("AI:"));
+        assertTrue(prompt.contains("dir://photos/igor.jpg"));
+        assertTrue(prompt.contains("A co jest na tym zdjęciu?"));
+        assertEquals(List.of("Igor"), plan.entities());
+        assertEquals(List.of("dir://photos/igor.jpg"), plan.fileScope());
+        assertTrue(plan.retrievalQuery().contains("igor") || plan.retrievalQuery().contains("zdję"));
+        assertEquals(QueryPlan.RetrievalMode.HYBRID, plan.retrievalMode());
     }
 }
