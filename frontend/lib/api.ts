@@ -1,6 +1,8 @@
 // When both applications run locally, call Spring directly. This avoids a
 // stale reverse-proxy socket after the backend is restarted. Deployed and
 // mobile clients retain the configured backend URL or same-origin proxy.
+import { apiFetch, getToken } from "./auth";
+
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL
   ?? (typeof window !== "undefined" && window.location.hostname === "localhost"
     ? "http://localhost:8080"
@@ -16,13 +18,13 @@ export interface ReanalysisStatus {
 }
 
 export async function startContextReanalysis(): Promise<ReanalysisStatus> {
-  const response = await fetch(`${BASE_URL}/api/data/images/reanalyze-context`, { method: "POST" });
+  const response = await apiFetch(`${BASE_URL}/api/data/images/reanalyze-context`, { method: "POST" });
   if (!response.ok) throw new Error("Failed to start context reanalysis");
   return response.json();
 }
 
 export async function getContextReanalysisStatus(jobId: string): Promise<ReanalysisStatus> {
-  const response = await fetch(`${BASE_URL}/api/data/images/reanalyze-context/${jobId}`);
+  const response = await apiFetch(`${BASE_URL}/api/data/images/reanalyze-context/${jobId}`);
   if (!response.ok) throw new Error("Failed to read context reanalysis status");
   return response.json();
 }
@@ -118,7 +120,7 @@ interface ApiMessage {
 }
 
 export async function getChats(): Promise<Chat[]> {
-  const response = await fetch(`${BASE_URL}/api/chat/all`);
+  const response = await apiFetch(`${BASE_URL}/api/chat/all`);
   if (!response.ok) throw new Error("Failed to fetch chats");
   const chatIds: string[] = await response.json();
   
@@ -130,7 +132,7 @@ export async function getChats(): Promise<Chat[]> {
 }
 
 export async function createChat(): Promise<Chat> {
-  const response = await fetch(`${BASE_URL}/api/chat/create`, {
+  const response = await apiFetch(`${BASE_URL}/api/chat/create`, {
     method: "POST"
   });
   if (!response.ok) throw new Error("Failed to create chat");
@@ -145,7 +147,7 @@ export async function createChat(): Promise<Chat> {
 }
 
 export async function getFolders(): Promise<Folder[]> {
-  const response = await fetch(`${BASE_URL}/api/folders`);
+  const response = await apiFetch(`${BASE_URL}/api/folders`);
   if (!response.ok) throw new Error("Failed to fetch folders");
   const folders: ApiFolder[] = await response.json();
   
@@ -153,7 +155,7 @@ export async function getFolders(): Promise<Folder[]> {
 }
 
 export async function createFolder(name: string): Promise<Folder> {
-  const response = await fetch(`${BASE_URL}/api/folders/create`, {
+  const response = await apiFetch(`${BASE_URL}/api/folders/create`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -167,14 +169,14 @@ export async function createFolder(name: string): Promise<Folder> {
 }
 
 export async function deleteFolder(id: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/folders/${id}`, {
+  const response = await apiFetch(`${BASE_URL}/api/folders/${id}`, {
     method: "DELETE"
   });
   if (!response.ok) throw new Error("Failed to delete folder");
 }
 
 export async function getAllFiles(): Promise<FileItem[]> {
-  const response = await fetch(`${BASE_URL}/api/data/files`);
+  const response = await apiFetch(`${BASE_URL}/api/data/files`);
   if (!response.ok) throw new Error("Failed to fetch files");
   const allFiles: ApiFile[] = await response.json();
   
@@ -188,7 +190,7 @@ export async function getAllFiles(): Promise<FileItem[]> {
 }
 
 export async function getFilesInFolder(folderName: string): Promise<FileItem[]> {
-  const response = await fetch(`${BASE_URL}/api/data/files`);
+  const response = await apiFetch(`${BASE_URL}/api/data/files`);
   if (!response.ok) throw new Error("Failed to fetch files");
   const allFiles: ApiFile[] = await response.json();
   
@@ -291,6 +293,10 @@ export function uploadFileToFolderWithProgress(
       url += `?entityTag=${encodeURIComponent(entityTag)}`;
     }
     xhr.open("POST", url);
+    const token = getToken();
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
     xhr.send(formData);
 
     report(0, "uploading");
@@ -298,7 +304,7 @@ export function uploadFileToFolderWithProgress(
 }
 
 export async function renameFile(oldPath: string, newName: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/data/files/rename`, {
+  const response = await apiFetch(`${BASE_URL}/api/data/files/rename`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -310,7 +316,7 @@ export async function renameFile(oldPath: string, newName: string): Promise<void
 }
 
 export async function moveFiles(filePaths: string[], targetFolderId: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/data/files/move`, {
+  const response = await apiFetch(`${BASE_URL}/api/data/files/move`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -322,7 +328,7 @@ export async function moveFiles(filePaths: string[], targetFolderId: string): Pr
 }
 
 export async function deleteFiles(filePaths: string[]): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/data/files/delete`, {
+  const response = await apiFetch(`${BASE_URL}/api/data/files/delete`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -334,7 +340,7 @@ export async function deleteFiles(filePaths: string[]): Promise<void> {
 }
 
 export async function clearAllData(): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/data/clear-all`, {
+  const response = await apiFetch(`${BASE_URL}/api/data/clear-all`, {
     method: "DELETE"
   });
 
@@ -342,7 +348,7 @@ export async function clearAllData(): Promise<void> {
 }
 
 export async function getMessagesForChat(chatId: string): Promise<Message[]> {
-  const response = await fetch(`${BASE_URL}/api/chat/${chatId}/messages`);
+  const response = await apiFetch(`${BASE_URL}/api/chat/${chatId}/messages`);
   if (!response.ok) throw new Error("Failed to fetch messages");
   const messages: ApiMessage[] = await response.json();
   
@@ -358,7 +364,7 @@ export async function getMessagesForChat(chatId: string): Promise<Message[]> {
 }
 
 export async function sendMessage(chatId: string, content: string): Promise<Message> {
-  const response = await fetch(`${BASE_URL}/api/chat/${chatId}/send`, {
+  const response = await apiFetch(`${BASE_URL}/api/chat/${chatId}/send`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -384,7 +390,7 @@ export async function sendMessage(chatId: string, content: string): Promise<Mess
 }
 
 export async function renameChat(chatId: string, newName: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/chat/${chatId}/rename`, {
+  const response = await apiFetch(`${BASE_URL}/api/chat/${chatId}/rename`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -401,7 +407,7 @@ export async function getFileEmbeddings(path: string): Promise<{
   chunkCount: number;
 }> {
   const params = new URLSearchParams({ path });
-  const response = await fetch(
+  const response = await apiFetch(
     `${BASE_URL}/api/data/files/embeddings?${params.toString()}`
   );
   if (!response.ok) throw new Error("Failed to fetch file embeddings");
@@ -415,14 +421,14 @@ export async function getFileEmbeddings(path: string): Promise<{
 
 export async function getFilePreview(path: string): Promise<FilePreview> {
   const params = new URLSearchParams({ path });
-  const response = await fetch(`${BASE_URL}/api/data/files/preview?${params.toString()}`);
+  const response = await apiFetch(`${BASE_URL}/api/data/files/preview?${params.toString()}`);
   if (!response.ok) throw new Error("Failed to fetch file preview");
   const data = await response.json();
   return { ...data, path: data.path ?? path };
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/chat/${chatId}`, {
+  const response = await apiFetch(`${BASE_URL}/api/chat/${chatId}`, {
     method: "DELETE"
   });
   

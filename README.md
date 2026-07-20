@@ -1,187 +1,108 @@
-# RAG (Retrieval-Augmented Generation) - Document Management System
+# RAG — multi-user GraphRAG
 
-This project is a RAG (Retrieval-Augmented Generation) application designed for document management, analysis, and interaction through a chat interface powered by language models. The system supports text documents, PDF files, and images.
+Spring Boot backend + Next.js frontend: dokumenty i zdjęcia, hybrid retrieval (vector + lexical), knowledge graph, face identity.
 
-## Architecture and Technology Stack
+## Stack
 
-The project consists of two main parts: the backend (Spring Boot) and the frontend (Next.js).
+- **Backend:** Java 17, Spring Boot 4, JPA, PostgreSQL + PGVector, Spring Security JWT, Flyway, springdoc OpenAPI
+- **Frontend:** Next.js, token Bearer w `localStorage`
+- **Infra:** Docker Compose (`pgvector`, `face-service`)
 
-### Backend
-*   **Language:** Java 17
-*   **Framework:** Spring Boot 4.0.2
-*   **Database:** PostgreSQL with PGVector extension (for vector storage)
-*   **AI/LLM:** LangChain4j with the OpenAI-compatible DeepInfra API; Ollama remains available as an optional local provider.
-*   **Models:** 
-    *   Llama 3.1 (chat)
-    *   MiniCPM-V (vision)
-    *   bge-m3 (embeddings)
-*   **Document Processing:** Apache PDFBox, Apache Tika
+## Szybki start
 
-### Frontend
-*   **Framework:** Next.js 16.2.2, React 19
-*   **Styling:** TailwindCSS 4
-*   **Main Features:**
-    *   A sliding side panel (dashboard) containing a list of conversations and navigation.
-    *   A chat interface for conversing with the assistant about uploaded documents.
-    *   Folder management and file preview (with support for image thumbnails and icons for text/PDF files).
+### 1. Baza i face-service
 
----
-
-## Configuration and Setup
-
-### Prerequisites
-*   Docker and Docker Compose
-*   Java 17 (for the backend)
-*   Maven
-*   Node.js 20+ (for the frontend)
-*   DeepInfra API token (or Ollama when using the optional local configuration)
-
-### Step 1: Database Setup
-The main project directory contains a `docker-compose.yml` file which defines a PostgreSQL database container with the PGVector extension.
-Start the database using the following command:
 ```bash
-docker-compose up -d pgvector
+docker compose up -d
 ```
 
-### Step 2: Ollama Models Setup (If using local LLM)
-If you choose to run the language models locally via Ollama, you must pull the required models before starting the application. Open your terminal and run the following commands:
+### 2. Backend
+
 ```bash
-ollama pull llama3.1
-ollama pull minicpm-v
-ollama pull bge-m3
+cd backend
+# opcjonalnie: plik .env z DEEPINFRA_API_KEY, JWT_SECRET, DB_*
+./mvnw spring-boot:run
 ```
 
-### Step 3: Backend Configuration
-The server source code is located in the `backend/` directory.
+API: `http://localhost:8080`  
+Swagger UI: `http://localhost:8080/swagger-ui.html`  
+OpenAPI JSON: `http://localhost:8080/v3/api-docs`
 
-1.  **Environment Variables:**
-    The backend can be configured using a `backend/.env` file (optional) or directly within `backend/src/main/resources/application.properties`. 
+### 3. Frontend
 
-    **For DeepInfra (default):**
-    ```properties
-    DEEPINFRA_API_KEY=your_deepinfra_token
-    ```
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-    The default configuration sends chat, vision and embeddings through
-    `https://api.deepinfra.com/v1/openai`. It uses `deepseek-ai/DeepSeek-V3`
-    for language tasks and `Qwen/Qwen3-VL-30B-A3B-Instruct` for image analysis.
-    The vision request contains the image as an OpenAI-format Base64 data URL.
+UI: `http://localhost:3000` — najpierw **rejestracja / logowanie**.
 
-    **For Ollama (Local):**
-    ```properties
-    llm.provider=ollama
-    ollama.base.url=http://localhost:11434
-    ```
+## Auth (JWT)
 
-    **Database Settings** (Adjust if changed in the docker-compose setup):
-    ```properties
-    DB_URL=jdbc:postgresql://localhost:5433/vector_db
-    DB_USERNAME=user
-    DB_PASSWORD=password
-    ```
-3.  **Running the Server:**
-    ```bash
-    cd backend
-    ./mvnw spring-boot:run
-    ```
+Publiczne:
 
-### Step 4: Frontend Configuration
-The client application code is located in the `frontend/` directory.
+| Method | Path | Opis |
+|--------|------|------|
+| POST | `/api/auth/register` | email, password (min 8), displayName? |
+| POST | `/api/auth/login` | → `accessToken` + `user` |
+| GET | `/api/auth/me` | wymaga `Authorization: Bearer …` |
 
-1.  **Installing Dependencies:**
-    ```bash
-    cd frontend
-    npm install
-    ```
-2.  **Running the Application:**
-    ```bash
-    npm run dev
-    ```
-    The application will run on port 3000 by default.
+Pozostałe `/api/**` wymagają Bearer JWT. Zasoby (foldery, czaty, pliki) są izolowane po `ownerId`.
 
----
+### curl
 
-## API Endpoints (Backend)
+```bash
+# rejestracja
+curl -s -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"demo@example.com\",\"password\":\"password123\",\"displayName\":\"Demo\"}"
 
-The backend exposes the following REST API endpoints:
+# logowanie
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"email\":\"demo@example.com\",\"password\":\"password123\"}" \
+  | jq -r .accessToken)
 
-### Chat Module (`/api/chat`)
+# przykładowe API
+curl -s http://localhost:8080/api/folders -H "Authorization: Bearer $TOKEN"
+```
 
-*   **`GET /api/chat/all`**
-    *   **Description:** Retrieves a list of all conversation IDs (sorted from newest to oldest).
+W Swagger UI: **Authorize** → `Bearer <token>` (bez słowa „Bearer” w polu, jeśli UI je dokłada samo — wklej sam token).
 
-*   **`POST /api/chat/create`**
-    *   **Description:** Creates a new, empty conversation and returns its identifier.
+## Zmienne środowiskowe
 
-*   **`GET /api/chat/{chatId}/messages`**
-    *   **Description:** Retrieves the message history for a specific conversation (including associated sources/images).
+| Zmienna | Domyślnie | Opis |
+|---------|-----------|------|
+| `JWT_SECRET` | placeholder (min 32 znaki) | Sekret HMAC JWT — **ustaw w prod** |
+| `JWT_EXPIRATION_MINUTES` | `10080` (7 dni) | Ważność access tokenu |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,...` | Origin frontendu |
+| `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` | localhost:5433 / user / password | PostgreSQL |
+| `DEEPINFRA_API_KEY` | — | LLM / vision |
+| `FACE_SERVICE_URL` | `http://localhost:8001` | Serwis twarzy |
+| `NEXT_PUBLIC_BACKEND_URL` | `http://localhost:8080` | URL API dla frontu |
 
-*   **`POST /api/chat/{chatId}/send`**
-    *   **Description:** Sends a new message to the chat and triggers the LLM process.
-    *   **Request Body (JSON):**
-        ```json
-        {
-          "message": "Hello, what's in this document?"
-        }
-        ```
+**Nie commituj** `.env`, kluczy API ani haseł produkcyjnych.
 
-*   **`POST /api/chat/{chatId}/rename`**
-    *   **Description:** Renames the conversation.
-    *   **Request Body (JSON):**
-        ```json
-        {
-          "newName": "New Conversation Name"
-        }
-        ```
+## Flyway
 
-### Folder Module (`/api/folders`)
+- Migracja `V2__auth_and_ownership.sql`: tabela `users`, kolumny `owner_id` na folders / conversations / files
+- `spring.flyway.baseline-on-migrate=true` — bezpieczne na istniejących bazach (baseline v1 → V2 się doda)
+- Tabele AI/embedding nadal mogą powstawać przez `ddl-auto=update` (przejście)
 
-*   **`GET /api/folders`**
-    *   **Description:** Retrieves a list of all folders.
+## Testy
 
-*   **`POST /api/folders/create`**
-    *   **Description:** Creates a new folder.
-    *   **Request Body (JSON):**
-        ```json
-        {
-          "name": "Documents"
-        }
-        ```
+```bash
+cd backend
+./mvnw test
+```
 
-*   **`DELETE /api/folders/{id}`**
-    *   **Description:** Deletes the folder with the specified identifier.
+M.in.: JWT generate/parse, rejestracja (conflict email), izolacja folderów user A vs B.
 
-*   **`POST /api/folders/{id}/upload`**
-    *   **Description:** Uploads and processes (ingestion) a new file, assigning it to the selected folder. Supports text extraction, vectorization, and image analysis.
-    *   **Request Body:** `multipart/form-data` containing a `file` field.
+## Plan rozwoju
 
-### Data and Ingestion Module (`/api/data`)
+Szczegóły: [`docs/changes.md`](docs/changes.md) (Sprint 1–4: auth → async ingest → Redis → CI/demo).
 
-*   **`GET /api/data/files`**
-    *   **Description:** Retrieves a list of all files in the system (returns paths, filenames, and image data in Base64 format among other things).
+## Produkt GraphRAG
 
-*   **`POST /api/data/files/move`**
-    *   **Description:** Moves files to a different folder. Also updates metadata in the vector database.
-    *   **Request Body (JSON):**
-        ```json
-        {
-          "targetFolderId": "uuid-of-the-target-folder",
-          "filePaths": [
-            "dir://old-folder/file1.png",
-            "dir://old-folder/file2.txt"
-          ]
-        }
-        ```
-
-*   **`POST /api/data/files/rename`**
-    *   **Description:** Renames a file. Updates the file path in the system and the metadata in the vector database.
-    *   **Request Body (JSON):**
-        ```json
-        {
-          "oldPath": "dir://folder/old-name.txt",
-          "newName": "new-name.txt"
-        }
-        ```
-
-*   **`DELETE /api/data/clear`**
-    *   **Description:** Clears all data from the embeddings table. **Warning:** This operation is irreversible.
+Zasady decyzyjne: [`AGENTS.md`](AGENTS.md). Roadmapa: [`docs/roadmap.md`](docs/roadmap.md).

@@ -23,6 +23,9 @@ public class ChatMemoryEntity {
     @Column(name = "name")
     private String name;
 
+    @Column(name = "owner_id")
+    private UUID ownerId;
+
     @Column(name = "last_message_at")
     private LocalDateTime lastMessageAt;
 
@@ -32,6 +35,14 @@ public class ChatMemoryEntity {
         this.chatId = chatId;
         this.messages = messages;
         this.name = name;
+        this.lastMessageAt = lastMessageAt;
+    }
+
+    public ChatMemoryEntity(UUID chatId, String messages, String name, UUID ownerId, LocalDateTime lastMessageAt) {
+        this.chatId = chatId;
+        this.messages = messages;
+        this.name = name;
+        this.ownerId = ownerId;
         this.lastMessageAt = lastMessageAt;
     }
 

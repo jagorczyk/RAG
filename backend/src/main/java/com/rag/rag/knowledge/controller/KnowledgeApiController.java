@@ -60,7 +60,6 @@ import java.io.ByteArrayInputStream;
 @RestController
 @RequestMapping("/api/knowledge")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class KnowledgeApiController {
 
     private final IdentitySuggestionRepository suggestionRepository;

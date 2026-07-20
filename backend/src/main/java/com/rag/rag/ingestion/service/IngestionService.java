@@ -1,5 +1,6 @@
 package com.rag.rag.ingestion.service;
 
+import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.folder.entity.FolderEntity;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
@@ -96,6 +97,7 @@ public class IngestionService {
     private final IdentityResolutionService identityResolutionService;
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate transactionTemplate;
+    private final CurrentUserService currentUserService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionService(
@@ -114,7 +116,8 @@ public class IngestionService {
             KnowledgeEntityRepository knowledgeEntityRepo,
             IdentityResolutionService identityResolutionService,
             JdbcTemplate jdbcTemplate,
-            PlatformTransactionManager transactionManager
+            PlatformTransactionManager transactionManager,
+            CurrentUserService currentUserService
     ) {
         this.ingestor = ingestor;
         this.fileRepository = fileRepository;
@@ -132,6 +135,7 @@ public class IngestionService {
         this.identityResolutionService = identityResolutionService;
         this.jdbcTemplate = jdbcTemplate;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.currentUserService = currentUserService;
     }
 
     private Document chooseParser(byte[] fileData, String path, String fileName, String extension) {
@@ -169,6 +173,9 @@ public class IngestionService {
         }
         if (contentHash != null) {
             entity.setContentHash(contentHash);
+        }
+        if (entity.getOwnerId() == null) {
+            currentUserService.findUserId().ifPresent(entity::setOwnerId);
         }
         return fileRepository.save(entity);
     }
@@ -667,16 +674,24 @@ public class IngestionService {
 
     @Transactional
     public void clearAllData() {
-        suggestionRepo.deleteAllInBatch();
-        factRepo.deleteAllInBatch();
-        faceEmbeddingRepository.deleteAllInBatch();
-        mentionRepo.deleteAllInBatch();
-        aliasRepo.deleteAllInBatch();
-        knowledgeEntityRepo.deleteAllInBatch();
-        jdbcTemplate.execute("TRUNCATE TABLE embeddings");
-        fileRepository.deleteAllInBatch();
-        folderRepository.deleteAllInBatch();
-        log.info("Cleared all folders, files, embeddings and knowledge graph data");
+        UUID ownerId = currentUserService.requireUserId();
+        clearAllDataForOwner(ownerId);
+    }
+
+    /**
+     * Deletes only the current owner's folders/files and related graph/embedding rows.
+     * Does not truncate global knowledge tables belonging to other users.
+     */
+    @Transactional
+    public void clearAllDataForOwner(UUID ownerId) {
+        List<String> paths = fileRepository.findAllByOwnerId(ownerId).stream()
+                .map(FileEntity::getPath)
+                .filter(path -> path != null && !path.isBlank())
+                .toList();
+        deleteFiles(paths);
+        folderRepository.findAllByOwnerIdOrderByUpdatedAtDesc(ownerId)
+                .forEach(folderRepository::delete);
+        log.info("Cleared folders/files/related data for owner {}", ownerId);
     }
 
     /**
@@ -684,6 +699,18 @@ public class IngestionService {
      * cannot force UnexpectedRollbackException on the whole upload.
      */
     public String ingestMultipartFile(MultipartFile file, FolderEntity folder, String entityTag) throws IOException {
+        UUID ownerId = folder.getOwnerId() != null
+                ? folder.getOwnerId()
+                : currentUserService.requireUserId();
+        return ingestMultipartFile(file, folder, entityTag, ownerId);
+    }
+
+    public String ingestMultipartFile(
+            MultipartFile file,
+            FolderEntity folder,
+            String entityTag,
+            UUID ownerId
+    ) throws IOException {
         String fileName = file.getOriginalFilename();
         String extension = StringUtils.getFilenameExtension(fileName);
         String group = folder.getName();
@@ -694,7 +721,7 @@ public class IngestionService {
 
         transactionTemplate.executeWithoutResult(status -> {
             if (entityTag != null && !entityTag.isBlank()) {
-                storeEntityTag(path, fileName, entityTag.trim());
+                storeEntityTag(path, fileName, entityTag.trim(), ownerId);
             }
             Document parsedDocument = chooseParser(data, path, fileName, extension);
             if (parsedDocument != null) {
@@ -706,6 +733,12 @@ public class IngestionService {
                 ingestor.ingest(parsedDocument);
                 log.info("Successfully ingested file: {}", path);
             }
+            fileRepository.findByPath(path).ifPresent(entity -> {
+                if (entity.getOwnerId() == null) {
+                    entity.setOwnerId(ownerId);
+                    fileRepository.save(entity);
+                }
+            });
         });
 
         if (image) {
@@ -735,16 +768,20 @@ public class IngestionService {
         };
     }
 
-    private void storeEntityTag(String path, String fileName, String entityTag) {
+    private void storeEntityTag(String path, String fileName, String entityTag, UUID ownerId) {
         fileRepository.findByPath(path).ifPresentOrElse(
                 existing -> {
                     existing.setEntityTag(entityTag);
+                    if (existing.getOwnerId() == null) {
+                        existing.setOwnerId(ownerId);
+                    }
                     fileRepository.save(existing);
                 },
                 () -> fileRepository.save(FileEntity.builder()
                         .path(path)
                         .fileName(fileName)
                         .entityTag(entityTag)
+                        .ownerId(ownerId)
                         .build())
         );
     }

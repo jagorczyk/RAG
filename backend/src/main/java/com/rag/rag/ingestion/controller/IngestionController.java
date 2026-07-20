@@ -1,5 +1,7 @@
 package com.rag.rag.ingestion.controller;
 
+import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.core.exception.ApiException;
 import com.rag.rag.folder.dto.FileDeleteDto;
 import com.rag.rag.folder.dto.FileDto;
 import com.rag.rag.folder.dto.FileMoveDto;
@@ -24,33 +26,39 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @RestController
 @RequestMapping("/api/data")
-@CrossOrigin(origins = "*")
 public class IngestionController {
     private final IngestionService ingestionService;
     private final JdbcTemplate jdbcTemplate;
     private final FileRepository fileRepository;
     private final FolderRepository folderRepository;
+    private final CurrentUserService currentUserService;
     private final Map<UUID, ReanalysisJob> reanalysisJobs = new ConcurrentHashMap<>();
 
     private static final class ReanalysisJob {
         final int total;
+        final UUID ownerId;
         final AtomicInteger completed = new AtomicInteger();
         final AtomicInteger failed = new AtomicInteger();
         volatile String status = "RUNNING";
 
-        ReanalysisJob(int total) { this.total = total; }
+        ReanalysisJob(int total, UUID ownerId) {
+            this.total = total;
+            this.ownerId = ownerId;
+        }
     }
 
     public IngestionController(
             IngestionService ingestionService,
             JdbcTemplate jdbcTemplate,
             FileRepository fileRepository,
-            FolderRepository folderRepository
+            FolderRepository folderRepository,
+            CurrentUserService currentUserService
     ) {
         this.ingestionService = ingestionService;
         this.jdbcTemplate = jdbcTemplate;
         this.fileRepository = fileRepository;
         this.folderRepository = folderRepository;
+        this.currentUserService = currentUserService;
     }
 
     @Transactional
@@ -60,18 +68,23 @@ public class IngestionController {
             return ResponseEntity.badRequest().body("No file paths provided.");
         }
 
-        ingestionService.deleteFiles(deleteDto.filePaths());
+        UUID ownerId = currentUserService.requireUserId();
+        List<String> ownedPaths = deleteDto.filePaths().stream()
+                .filter(path -> fileRepository.findByPathAndOwnerId(path, ownerId).isPresent())
+                .toList();
+        if (ownedPaths.isEmpty()) {
+            throw ApiException.notFound("FILE_NOT_FOUND", "Nie znaleziono plików do usunięcia.");
+        }
+        ingestionService.deleteFiles(ownedPaths);
         return ResponseEntity.ok().build();
     }
 
     @PostMapping("/images/reanalyze-context")
     public ResponseEntity<Map<String, Object>> reanalyzeImageContext() {
-        List<FileEntity> images = fileRepository.findAll().stream()
-                .filter(file -> file.getImageData() != null && file.getImageData().length > 0)
-                .filter(file -> file.getFileType() != null && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
-                .toList();
+        UUID ownerId = currentUserService.requireUserId();
+        List<FileEntity> images = ownerImages(ownerId);
         UUID jobId = UUID.randomUUID();
-        ReanalysisJob job = new ReanalysisJob(images.size());
+        ReanalysisJob job = new ReanalysisJob(images.size(), ownerId);
         reanalysisJobs.put(jobId, job);
         CompletableFuture.runAsync(() -> {
             for (FileEntity image : images) {
@@ -89,19 +102,16 @@ public class IngestionController {
 
     @GetMapping("/images/reanalyze-context/{jobId}")
     public ResponseEntity<Map<String, Object>> reanalysisStatus(@PathVariable UUID jobId) {
-        ReanalysisJob job = reanalysisJobs.get(jobId);
-        if (job == null) return ResponseEntity.notFound().build();
+        ReanalysisJob job = requireOwnedJob(jobId);
         return ResponseEntity.ok(reanalysisStatus(jobId, job));
     }
 
     @PostMapping("/images/reanalyze-faces")
     public ResponseEntity<Map<String, Object>> reanalyzeFaces() {
-        List<FileEntity> images = fileRepository.findAll().stream()
-                .filter(file -> file.getImageData() != null && file.getImageData().length > 0)
-                .filter(file -> file.getFileType() != null && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
-                .toList();
+        UUID ownerId = currentUserService.requireUserId();
+        List<FileEntity> images = ownerImages(ownerId);
         UUID jobId = UUID.randomUUID();
-        ReanalysisJob job = new ReanalysisJob(images.size());
+        ReanalysisJob job = new ReanalysisJob(images.size(), ownerId);
         reanalysisJobs.put(jobId, job);
         CompletableFuture.runAsync(() -> {
             for (FileEntity image : images) {
@@ -131,30 +141,25 @@ public class IngestionController {
     @Transactional
     @PostMapping("/files/move")
     public ResponseEntity<?> moveFiles(@RequestBody FileMoveDto moveDto) {
-        Optional<FolderEntity> targetFolderOpt = folderRepository.findById(moveDto.targetFolderId());
-        if (targetFolderOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
+        UUID ownerId = currentUserService.requireUserId();
+        FolderEntity targetFolder = folderRepository.findByIdAndOwnerId(moveDto.targetFolderId(), ownerId)
+                .orElseThrow(() -> ApiException.notFound("FOLDER_NOT_FOUND", "Folder nie istnieje."));
 
-        FolderEntity targetFolder = targetFolderOpt.get();
         String targetFolderName = targetFolder.getName();
 
         for (String oldPath : moveDto.filePaths()) {
-            Optional<FileEntity> fileOpt = fileRepository.findByPath(oldPath);
+            Optional<FileEntity> fileOpt = fileRepository.findByPathAndOwnerId(oldPath, ownerId);
             if (fileOpt.isPresent()) {
                 FileEntity file = fileOpt.get();
                 String newPath = "dir://" + targetFolderName + "/" + file.getFileName();
 
-                
                 file.setPath(newPath);
                 fileRepository.save(file);
 
-                
-                
                 String sql = "UPDATE embeddings SET metadata = metadata::jsonb || " +
                              "jsonb_build_object('path', ?, 'document_id', ?) " +
                              "WHERE metadata->>'path' = ?";
-                
+
                 jdbcTemplate.update(sql, newPath, targetFolderName, oldPath);
             }
         }
@@ -165,28 +170,23 @@ public class IngestionController {
     @Transactional
     @PostMapping("/files/rename")
     public ResponseEntity<?> renameFile(@RequestBody FileRenameDto renameDto) {
-        Optional<FileEntity> fileOpt = fileRepository.findByPath(renameDto.oldPath());
-        if (fileOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
+        UUID ownerId = currentUserService.requireUserId();
+        FileEntity file = fileRepository.findByPathAndOwnerId(renameDto.oldPath(), ownerId)
+                .orElseThrow(() -> ApiException.notFound("FILE_NOT_FOUND", "Plik nie istnieje."));
 
-        FileEntity file = fileOpt.get();
         String oldPath = file.getPath();
-        
-        
+
         String folderPart = oldPath.substring(0, oldPath.lastIndexOf("/") + 1);
         String newPath = folderPart + renameDto.newName();
 
-        
         file.setFileName(renameDto.newName());
         file.setPath(newPath);
         fileRepository.save(file);
 
-        
         String sql = "UPDATE embeddings SET metadata = metadata::jsonb || " +
                      "jsonb_build_object('filename', ?, 'path', ?) " +
                      "WHERE metadata->>'path' = ?";
-        
+
         jdbcTemplate.update(sql, renameDto.newName(), newPath, oldPath);
 
         return ResponseEntity.ok().build();
@@ -194,13 +194,8 @@ public class IngestionController {
 
     @DeleteMapping("/clear")
     public ResponseEntity<String> clearEmbeddingsTable() {
-        try {
-            jdbcTemplate.execute("TRUNCATE TABLE embeddings");
-            return ResponseEntity.ok("Truncated embeddings.");
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError()
-                    .body(e.getMessage());
-        }
+        // Intentionally limited: no global truncate of shared embeddings in multi-user mode.
+        return ResponseEntity.status(405).body("Użyj DELETE /api/data/clear-all dla danych bieżącego użytkownika.");
     }
 
     @Transactional
@@ -208,31 +203,14 @@ public class IngestionController {
     public ResponseEntity<Map<String, String>> clearAllData() {
         ingestionService.clearAllData();
         return ResponseEntity.ok(Map.of(
-                "message", "Wyczyszczono foldery, pliki, embeddingi i graf wiedzy."
+                "message", "Wyczyszczono foldery, pliki, embeddingi i powiązane dane grafu bieżącego użytkownika."
         ));
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @GetMapping("/files")
     public ResponseEntity<List<FileDto>> getFiles() {
-        List<FileEntity> images = fileRepository.findAll();
+        UUID ownerId = currentUserService.requireUserId();
+        List<FileEntity> images = fileRepository.findAllByOwnerId(ownerId);
         List<FileDto> files = images
                 .stream()
                 .map(
@@ -252,11 +230,12 @@ public class IngestionController {
     /** Streams an image/document for native clients instead of forcing Base64 in a list response. */
     @GetMapping("/files/content")
     public ResponseEntity<byte[]> getFileContent(@RequestParam("path") String path) {
-        Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
-        if (fileOpt.isEmpty() || fileOpt.get().getImageData() == null) {
-            return ResponseEntity.notFound().build();
+        UUID ownerId = currentUserService.requireUserId();
+        FileEntity file = fileRepository.findByPathAndOwnerId(path, ownerId)
+                .orElseThrow(() -> ApiException.notFound("FILE_NOT_FOUND", "Plik nie istnieje."));
+        if (file.getImageData() == null) {
+            throw ApiException.notFound("FILE_NOT_FOUND", "Plik nie istnieje.");
         }
-        FileEntity file = fileOpt.get();
         MediaType mediaType;
         try {
             mediaType = MediaType.parseMediaType(file.getFileType() == null
@@ -298,12 +277,10 @@ public class IngestionController {
 
     @GetMapping("/files/embeddings")
     public ResponseEntity<Map<String, String>> getFileEmbeddings(@RequestParam("path") String path) {
-        Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
-        if (fileOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
+        UUID ownerId = currentUserService.requireUserId();
+        FileEntity file = fileRepository.findByPathAndOwnerId(path, ownerId)
+                .orElseThrow(() -> ApiException.notFound("FILE_NOT_FOUND", "Plik nie istnieje."));
 
-        FileEntity file = fileOpt.get();
         List<String> chunks = getEmbeddingChunks(path);
         String content = chunks.stream()
                 .filter(Objects::nonNull)
@@ -321,12 +298,10 @@ public class IngestionController {
 
     @GetMapping("/files/preview")
     public ResponseEntity<Map<String, String>> getFilePreview(@RequestParam("path") String path) {
-        Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
-        if (fileOpt.isEmpty()) {
-            return ResponseEntity.notFound().build();
-        }
+        UUID ownerId = currentUserService.requireUserId();
+        FileEntity file = fileRepository.findByPathAndOwnerId(path, ownerId)
+                .orElseThrow(() -> ApiException.notFound("FILE_NOT_FOUND", "Plik nie istnieje."));
 
-        FileEntity file = fileOpt.get();
         String mimeType = file.getFileType() != null ? file.getFileType() : "application/octet-stream";
 
         if (mimeType.startsWith("image/") && file.getImageData() != null) {
@@ -373,5 +348,21 @@ public class IngestionController {
                 "content", fallback,
                 "path", path
         ));
+    }
+
+    private List<FileEntity> ownerImages(UUID ownerId) {
+        return fileRepository.findAllByOwnerId(ownerId).stream()
+                .filter(file -> file.getImageData() != null && file.getImageData().length > 0)
+                .filter(file -> file.getFileType() != null && file.getFileType().toLowerCase(Locale.ROOT).contains("image"))
+                .toList();
+    }
+
+    private ReanalysisJob requireOwnedJob(UUID jobId) {
+        UUID ownerId = currentUserService.requireUserId();
+        ReanalysisJob job = reanalysisJobs.get(jobId);
+        if (job == null || !ownerId.equals(job.ownerId)) {
+            throw ApiException.notFound("JOB_NOT_FOUND", "Zadanie nie istnieje.");
+        }
+        return job;
     }
 }

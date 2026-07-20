@@ -1,3 +1,5 @@
+import { apiFetch } from "./auth";
+
 const API_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
 export interface SuggestionMention {
@@ -99,67 +101,67 @@ async function ensureIdentityResponse(res: Response, fallback: string): Promise<
 }
 
 export async function getPendingSuggestions(): Promise<IdentitySuggestion[]> {
-  const res = await fetch(`${API_URL}/api/knowledge/review/pending`);
+  const res = await apiFetch(`${API_URL}/api/knowledge/review/pending`);
   if (!res.ok) throw new Error("Failed to fetch pending suggestions");
   return res.json();
 }
 
 export async function confirmMention(mentionId: string, entityId: string, allowDuplicateOnFile = false): Promise<void> {
   const params = new URLSearchParams({ entityId, allowDuplicateOnFile: String(allowDuplicateOnFile) });
-  const res = await fetch(`${API_URL}/api/knowledge/mentions/${mentionId}/confirm?${params.toString()}`, { method: "POST" });
+  const res = await apiFetch(`${API_URL}/api/knowledge/mentions/${mentionId}/confirm?${params.toString()}`, { method: "POST" });
   await ensureIdentityResponse(res, "Failed to confirm mention");
 }
 
 export async function rejectMention(mentionId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/knowledge/mentions/${mentionId}/reject`, { method: "POST" });
+  const res = await apiFetch(`${API_URL}/api/knowledge/mentions/${mentionId}/reject`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to reject mention");
 }
 
 export async function mergeSuggestion(suggestionId: string, allowDuplicateOnFile = false): Promise<void> {
   const params = new URLSearchParams({ allowDuplicateOnFile: String(allowDuplicateOnFile) });
-  const res = await fetch(`${API_URL}/api/knowledge/suggestions/${suggestionId}/merge?${params.toString()}`, { method: "POST" });
+  const res = await apiFetch(`${API_URL}/api/knowledge/suggestions/${suggestionId}/merge?${params.toString()}`, { method: "POST" });
   await ensureIdentityResponse(res, "Failed to merge suggestion");
 }
 
 export async function splitSuggestion(suggestionId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/api/knowledge/suggestions/${suggestionId}/split`, { method: "POST" });
+  const res = await apiFetch(`${API_URL}/api/knowledge/suggestions/${suggestionId}/split`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to split suggestion");
 }
 
 export async function getAllEntities(): Promise<KnowledgeEntity[]> {
-  const res = await fetch(`${API_URL}/api/knowledge/entities`);
+  const res = await apiFetch(`${API_URL}/api/knowledge/entities`);
   if (!res.ok) throw new Error("Failed to fetch entities");
   return res.json();
 }
 
 export async function getEntity(entityId: string): Promise<KnowledgeEntity> {
-  const res = await fetch(`${API_URL}/api/knowledge/entities/${entityId}`);
+  const res = await apiFetch(`${API_URL}/api/knowledge/entities/${entityId}`);
   if (!res.ok) throw new Error("Failed to fetch entity");
   return res.json();
 }
 
 export async function getEntityAppearances(entityId: string): Promise<EntityAppearance[]> {
-  const res = await fetch(`${API_URL}/api/knowledge/entities/${entityId}/appearances`);
+  const res = await apiFetch(`${API_URL}/api/knowledge/entities/${entityId}/appearances`);
   if (!res.ok) throw new Error("Failed to fetch entity appearances");
   return res.json();
 }
 
 export async function getPersonRelationGraph(): Promise<PersonRelationGraph> {
-  const res = await fetch(`${API_URL}/api/knowledge/graph/person-relations`);
+  const res = await apiFetch(`${API_URL}/api/knowledge/graph/person-relations`);
   if (!res.ok) throw new Error("Failed to fetch person relation graph");
   return res.json();
 }
 
 export async function getMentionsForFile(path: string): Promise<EntityMention[]> {
   const params = new URLSearchParams({ path });
-  const res = await fetch(`${API_URL}/api/knowledge/mentions/by-file?${params.toString()}`);
+  const res = await apiFetch(`${API_URL}/api/knowledge/mentions/by-file?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch mentions for file");
   return res.json();
 }
 
 export async function detectFacesForFile(path: string): Promise<EntityMention[]> {
   const params = new URLSearchParams({ path });
-  const res = await fetch(`${API_URL}/api/knowledge/mentions/by-file/detect-faces?${params.toString()}`, {
+  const res = await apiFetch(`${API_URL}/api/knowledge/mentions/by-file/detect-faces?${params.toString()}`, {
     method: "POST",
   });
   if (!res.ok) throw new Error("Failed to detect faces for file");
@@ -171,7 +173,7 @@ export async function resolveFaceBatch(paths: string[]): Promise<{
   clusters: number;
   unresolved: number;
 }> {
-  const res = await fetch(`${API_URL}/api/knowledge/faces/resolve-batch`, {
+  const res = await apiFetch(`${API_URL}/api/knowledge/faces/resolve-batch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ paths }),
@@ -182,12 +184,12 @@ export async function resolveFaceBatch(paths: string[]): Promise<{
 
 export async function renameEntity(entityId: string, newName: string): Promise<void> {
   const params = new URLSearchParams({ newName });
-  const res = await fetch(`${API_URL}/api/knowledge/entities/${entityId}/rename?${params.toString()}`, { method: "PUT" });
+  const res = await apiFetch(`${API_URL}/api/knowledge/entities/${entityId}/rename?${params.toString()}`, { method: "PUT" });
   if (!res.ok) throw new Error("Failed to rename entity");
 }
 
 export async function renameMention(mentionId: string, newName: string, allowDuplicateOnFile = false): Promise<void> {
   const params = new URLSearchParams({ newName, allowDuplicateOnFile: String(allowDuplicateOnFile) });
-  const res = await fetch(`${API_URL}/api/knowledge/mentions/${mentionId}/rename?${params.toString()}`, { method: "PUT" });
+  const res = await apiFetch(`${API_URL}/api/knowledge/mentions/${mentionId}/rename?${params.toString()}`, { method: "PUT" });
   await ensureIdentityResponse(res, "Failed to rename mention");
 }

@@ -19,6 +19,9 @@ public class FolderEntity {
     private UUID id;
     private String name;
 
+    @Column(name = "owner_id")
+    private UUID ownerId;
+
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 

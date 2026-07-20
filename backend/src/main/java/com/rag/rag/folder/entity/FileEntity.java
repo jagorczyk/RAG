@@ -9,6 +9,8 @@ import com.rag.rag.ingestion.cache.ImageAnalysisStatus;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+import java.util.UUID;
+
 @Entity
 @Table(name = "files")
 @Data
@@ -26,6 +28,9 @@ public class FileEntity {
 
     private String fileName;
     private String fileType;
+
+    @Column(name = "owner_id")
+    private UUID ownerId;
 
     @JdbcTypeCode(SqlTypes.BINARY)
     @Column(name = "image_data")

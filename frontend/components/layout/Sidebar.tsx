@@ -15,9 +15,11 @@ import {
   Check,
   X,
   Users,
+  LogOut,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getChats, createChat, Chat, renameChat } from "@/lib/api";
+import { getStoredUser, logout } from "@/lib/auth";
 
 function groupChats(chats: Chat[]) {
   const now = new Date();
@@ -332,6 +334,23 @@ export function Sidebar() {
                     />
                   ))}
             </ul>
+          </div>
+
+          <div className="mt-auto border-t border-border pt-2">
+            {isOpen && getStoredUser() && (
+              <p className="mb-1 truncate px-2 text-xs text-ink-muted" title={getStoredUser()?.email}>
+                {getStoredUser()?.displayName || getStoredUser()?.email}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={() => logout()}
+              className={`nav-item w-full ${!isOpen ? "justify-center px-0" : ""}`}
+              title="Wyloguj"
+            >
+              <LogOut size={18} className="shrink-0" />
+              {isOpen && <span className="truncate">Wyloguj</span>}
+            </button>
           </div>
         </nav>
       </aside>
