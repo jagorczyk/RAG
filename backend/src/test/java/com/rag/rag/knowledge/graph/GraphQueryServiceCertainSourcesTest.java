@@ -1,5 +1,6 @@
 package com.rag.rag.knowledge.graph;
 
+import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
@@ -31,22 +32,25 @@ class GraphQueryServiceCertainSourcesTest {
     @Mock com.rag.rag.knowledge.repository.FactRepository factRepository;
     @Mock MentionEvidencePolicy mentionEvidencePolicy;
     @Mock com.rag.rag.knowledge.identity.IdentityResolutionService identityResolutionService;
+    @Mock CurrentUserService currentUserService;
     @InjectMocks GraphQueryService service;
 
     private KnowledgeEntity entity;
     private UUID entityId;
+    private final UUID ownerId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
 
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(service, "minFactConfidence", 0.75);
         entityId = UUID.randomUUID();
-        entity = KnowledgeEntity.builder().id(entityId).displayName("Igor").type("PERSON").build();
+        entity = KnowledgeEntity.builder().id(entityId).displayName("Igor").type("PERSON").ownerId(ownerId).build();
+        lenient().when(currentUserService.findUserId()).thenReturn(Optional.of(ownerId));
     }
 
     @Test
     void imagePathsUseOnlyConfirmedHighConfidenceMentions() {
-        when(entityRepository.findAll()).thenReturn(List.of(entity));
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Igor")).thenReturn(Optional.of(entity));
+        when(entityRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(entity));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId("Igor", ownerId)).thenReturn(Optional.of(entity));
 
         EntityMention confirmed = EntityMention.builder()
                 .id(UUID.randomUUID())
@@ -106,9 +110,9 @@ class GraphQueryServiceCertainSourcesTest {
     void allEntityPathsReturnOnlyTheIntersection() {
         KnowledgeEntity anna = KnowledgeEntity.builder().id(UUID.randomUUID())
                 .displayName("Anna").type("PERSON").build();
-        when(entityRepository.findAll()).thenReturn(List.of(entity, anna));
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Igor")).thenReturn(Optional.of(entity));
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Anna")).thenReturn(Optional.of(anna));
+        when(entityRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(entity, anna));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId("Igor", ownerId)).thenReturn(Optional.of(entity));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId("Anna", ownerId)).thenReturn(Optional.of(anna));
 
         EntityMention igorShared = confirmed(entity, "dir://shared.jpg");
         EntityMention igorOnly = confirmed(entity, "dir://igor.jpg");
@@ -128,9 +132,9 @@ class GraphQueryServiceCertainSourcesTest {
     void buildEvidenceAllSameFileEmptyWhenNoJointPhoto() {
         KnowledgeEntity anna = KnowledgeEntity.builder().id(UUID.randomUUID())
                 .displayName("Anna").type("PERSON").build();
-        when(entityRepository.findAll()).thenReturn(List.of(entity, anna));
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Igor")).thenReturn(Optional.of(entity));
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Anna")).thenReturn(Optional.of(anna));
+        when(entityRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(entity, anna));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId("Igor", ownerId)).thenReturn(Optional.of(entity));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId("Anna", ownerId)).thenReturn(Optional.of(anna));
 
         EntityMention igorOnly = confirmed(entity, "dir://only-igor.jpg");
         EntityMention annaOnly = confirmed(anna, "dir://only-anna.jpg");
@@ -153,9 +157,9 @@ class GraphQueryServiceCertainSourcesTest {
     void buildEvidenceAllSameFileReturnsOnlyJointPaths() {
         KnowledgeEntity anna = KnowledgeEntity.builder().id(UUID.randomUUID())
                 .displayName("Anna").type("PERSON").build();
-        when(entityRepository.findAll()).thenReturn(List.of(entity, anna));
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Igor")).thenReturn(Optional.of(entity));
-        when(entityRepository.findFirstByDisplayNameIgnoreCase("Anna")).thenReturn(Optional.of(anna));
+        when(entityRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(entity, anna));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId("Igor", ownerId)).thenReturn(Optional.of(entity));
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId("Anna", ownerId)).thenReturn(Optional.of(anna));
 
         EntityMention igorShared = confirmed(entity, "dir://shared.jpg");
         EntityMention igorOnly = confirmed(entity, "dir://only-igor.jpg");

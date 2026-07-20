@@ -14,4 +14,13 @@ public interface KnowledgeEntityRepository extends JpaRepository<KnowledgeEntity
     Optional<KnowledgeEntity> findFirstByDisplayNameIgnoreCase(String displayName);
 
     Optional<KnowledgeEntity> findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase(String displayName, String type);
+
+    Optional<KnowledgeEntity> findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId(
+            String displayName, String type, UUID ownerId);
+
+    Optional<KnowledgeEntity> findFirstByDisplayNameIgnoreCaseAndOwnerId(String displayName, UUID ownerId);
+
+    Optional<KnowledgeEntity> findByIdAndOwnerId(UUID id, UUID ownerId);
+
+    List<KnowledgeEntity> findAllByOwnerId(UUID ownerId);
 }

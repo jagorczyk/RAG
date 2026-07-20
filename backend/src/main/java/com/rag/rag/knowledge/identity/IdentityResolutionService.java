@@ -2,6 +2,8 @@ package com.rag.rag.knowledge.identity;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.*;
 import com.rag.rag.knowledge.fact.Fact;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
@@ -40,6 +42,8 @@ public class IdentityResolutionService {
     private final IdentitySuggestionRepository suggestionRepository;
     private final FaceEmbeddingRepository faceEmbeddingRepository;
     private final FactRepository factRepository;
+    private final FileRepository fileRepository;
+    private final CurrentUserService currentUserService;
     private final ChatLanguageModel chatModel;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -56,6 +60,8 @@ public class IdentityResolutionService {
             IdentitySuggestionRepository suggestionRepository,
             FaceEmbeddingRepository faceEmbeddingRepository,
             FactRepository factRepository,
+            FileRepository fileRepository,
+            CurrentUserService currentUserService,
             @Qualifier("chatLanguageModel") ChatLanguageModel chatModel
     ) {
         this.entityRepository = entityRepository;
@@ -64,6 +70,8 @@ public class IdentityResolutionService {
         this.suggestionRepository = suggestionRepository;
         this.faceEmbeddingRepository = faceEmbeddingRepository;
         this.factRepository = factRepository;
+        this.fileRepository = fileRepository;
+        this.currentUserService = currentUserService;
         this.chatModel = chatModel;
     }
 
@@ -74,8 +82,10 @@ public class IdentityResolutionService {
             log.debug("Ignoring unsupported entity type '{}' for mention '{}'", entityType, mention.getLabel());
             return;
         }
+        UUID ownerId = resolveOwnerId(mention);
+
         if (fileEntityTag != null && !fileEntityTag.isBlank()) {
-            linkMention(mention, findOrCreateEntityByName(fileEntityTag, type), MentionStatus.CONFIRMED,
+            linkMention(mention, findOrCreateEntityByName(fileEntityTag, type, ownerId), MentionStatus.CONFIRMED,
                     IdentityEvidenceSource.USER_TAG, 1.0, null);
             return;
         }
@@ -88,7 +98,7 @@ public class IdentityResolutionService {
         }
 
         if (!isGenericLabel(label)) {
-            Optional<KnowledgeEntity> exactMatch = findEntityByNameOrAlias(label, type);
+            Optional<KnowledgeEntity> exactMatch = findEntityByNameOrAlias(label, type, ownerId);
             if (exactMatch.isPresent()) {
                 linkMention(mention, exactMatch.get(), MentionStatus.CONFIRMED,
                         IdentityEvidenceSource.DESCRIPTION_MATCH, 1.0, null);
@@ -117,6 +127,9 @@ public class IdentityResolutionService {
             }
             if (candidate.getEntity() == null
                     || !type.equals(LivingEntityTypes.normalize(candidate.getEntity().getType()))) {
+                continue;
+            }
+            if (!sameOwner(candidate.getEntity(), ownerId)) {
                 continue;
             }
 
@@ -162,7 +175,7 @@ public class IdentityResolutionService {
         }
 
         Optional<KnowledgeEntity> existing = looksLikePersonName(label)
-                ? findEntityByNameOrAlias(label, type)
+                ? findEntityByNameOrAlias(label, type, ownerId)
                 : Optional.empty();
         if (existing.isPresent()) {
             linkMention(mention, existing.get(), MentionStatus.CONFIRMED,
@@ -171,8 +184,8 @@ public class IdentityResolutionService {
         }
 
         KnowledgeEntity entity = looksLikePersonName(label)
-                ? findOrCreateEntityByName(label, type)
-                : createSuggestedEntity(label, type);
+                ? findOrCreateEntityByName(label, type, ownerId)
+                : createSuggestedEntity(label, type, ownerId);
         boolean named = looksLikePersonName(label);
         linkMention(mention, entity, named ? MentionStatus.CONFIRMED : MentionStatus.SUGGESTED,
                 named ? IdentityEvidenceSource.DESCRIPTION_MATCH : null,
@@ -181,6 +194,11 @@ public class IdentityResolutionService {
 
     @Transactional
     public KnowledgeEntity findOrCreateEntityByName(String name, String type) {
+        return findOrCreateEntityByName(name, type, resolveOwnerId(null));
+    }
+
+    @Transactional
+    public KnowledgeEntity findOrCreateEntityByName(String name, String type, UUID ownerId) {
         String normalized = normalizeLabel(name);
         if (normalized == null) {
             throw new IllegalArgumentException("Entity name cannot be blank");
@@ -195,7 +213,8 @@ public class IdentityResolutionService {
             throw new IllegalArgumentException("Entity type must be PERSON or ANIMAL");
         }
 
-        Optional<KnowledgeEntity> existing = findEntityByNameOrAlias(normalized, normalizedType);
+        UUID effectiveOwner = ownerId != null ? ownerId : resolveOwnerId(null);
+        Optional<KnowledgeEntity> existing = findEntityByNameOrAlias(normalized, normalizedType, effectiveOwner);
         if (existing.isPresent()) {
             return existing.get();
         }
@@ -203,6 +222,7 @@ public class IdentityResolutionService {
         KnowledgeEntity newEntity = KnowledgeEntity.builder()
                 .displayName(normalized)
                 .type(normalizedType)
+                .ownerId(effectiveOwner)
                 .build();
         newEntity = entityRepository.save(newEntity);
 
@@ -226,19 +246,24 @@ public class IdentityResolutionService {
         if (normalizedType == null) {
             throw new IllegalArgumentException("Entity type must be PERSON or ANIMAL");
         }
-        return createSuggestedEntity(normalizedName, normalizedType);
+        return createSuggestedEntity(normalizedName, normalizedType, resolveOwnerId(null));
     }
 
     @Transactional
     public int consolidateDuplicateEntities() {
+        UUID ownerId = resolveOwnerId(null);
         Map<String, List<KnowledgeEntity>> grouped = new LinkedHashMap<>();
-        for (KnowledgeEntity entity : entityRepository.findAll()) {
+        List<KnowledgeEntity> scope = ownerId != null
+                ? entityRepository.findAllByOwnerId(ownerId)
+                : entityRepository.findAll();
+        for (KnowledgeEntity entity : scope) {
             String normalizedType = LivingEntityTypes.normalize(entity.getType());
             String normalizedName = normalizeLabel(entity.getDisplayName());
             if (normalizedType == null || normalizedName == null) {
                 continue;
             }
-            String key = normalizedType + "\u0000" + normalizedName.toLowerCase(Locale.ROOT);
+            String ownerKey = entity.getOwnerId() == null ? "null" : entity.getOwnerId().toString();
+            String key = ownerKey + "\u0000" + normalizedType + "\u0000" + normalizedName.toLowerCase(Locale.ROOT);
             grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(entity);
         }
 
@@ -286,15 +311,44 @@ public class IdentityResolutionService {
         log.info("Merged duplicate entity '{}' into '{}'", duplicate.getDisplayName(), target.getDisplayName());
     }
 
-    private Optional<KnowledgeEntity> findEntityByNameOrAlias(String name, String type) {
-        Optional<KnowledgeEntity> byName = entityRepository
-                .findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase(name, type);
-        if (byName.isPresent()) {
-            return byName;
+    private Optional<KnowledgeEntity> findEntityByNameOrAlias(String name, String type, UUID ownerId) {
+        if (ownerId != null) {
+            Optional<KnowledgeEntity> byName = entityRepository
+                    .findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId(name, type, ownerId);
+            if (byName.isPresent()) {
+                return byName;
+            }
+            return aliasRepository
+                    .findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCaseAndEntity_OwnerId(name, type, ownerId)
+                    .map(EntityAlias::getEntity);
         }
 
-        return aliasRepository.findFirstByAliasIgnoreCaseAndEntity_TypeIgnoreCase(name, type)
-                .map(EntityAlias::getEntity);
+        // No owner context: only match legacy entities without owner (never cross-user).
+        return entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase(name, type)
+                .filter(entity -> entity.getOwnerId() == null);
+    }
+
+    private UUID resolveOwnerId(EntityMention mention) {
+        Optional<UUID> fromSecurity = currentUserService.findUserId();
+        if (fromSecurity.isPresent()) {
+            return fromSecurity.get();
+        }
+        if (mention != null && mention.getFilePath() != null) {
+            return fileRepository.findByPath(mention.getFilePath())
+                    .map(file -> file.getOwnerId())
+                    .orElse(null);
+        }
+        return null;
+    }
+
+    private boolean sameOwner(KnowledgeEntity entity, UUID ownerId) {
+        if (entity == null) {
+            return false;
+        }
+        if (ownerId == null) {
+            return entity.getOwnerId() == null;
+        }
+        return ownerId.equals(entity.getOwnerId());
     }
 
     private void linkMention(EntityMention mention, KnowledgeEntity entity, MentionStatus status,
@@ -348,7 +402,7 @@ public class IdentityResolutionService {
             type = LivingEntityTypes.PERSON;
         }
 
-        Optional<KnowledgeEntity> existing = findEntityByNameOrAlias(normalized, type);
+        Optional<KnowledgeEntity> existing = findEntityByNameOrAlias(normalized, type, entity.getOwnerId());
         if (existing.isPresent() && !existing.get().getId().equals(entityId)) {
             KnowledgeEntity target = existing.get();
             mergeEntityInto(target, entity);
@@ -479,7 +533,7 @@ public class IdentityResolutionService {
         if (normalized == null) {
             throw new IllegalArgumentException("Unresolved person label cannot be blank");
         }
-        return createSuggestedEntity(normalized, "PERSON");
+        return createSuggestedEntity(normalized, "PERSON", resolveOwnerId(null));
     }
 
     private void saveSuggestion(EntityMention mention, EntityMention candidate, double score) {
@@ -590,10 +644,11 @@ public class IdentityResolutionService {
         return label.trim().split("\\s+").length <= 2;
     }
 
-    private KnowledgeEntity createSuggestedEntity(String label, String type) {
+    private KnowledgeEntity createSuggestedEntity(String label, String type, UUID ownerId) {
         KnowledgeEntity entity = KnowledgeEntity.builder()
                 .displayName(label)
                 .type(type)
+                .ownerId(ownerId)
                 .build();
         entity = entityRepository.save(entity);
         EntityAlias alias = EntityAlias.builder()

@@ -1,5 +1,7 @@
 package com.rag.rag.knowledge.identity;
 
+import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
@@ -29,6 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -49,12 +53,18 @@ class IdentityResolutionServiceTest {
     @Mock
     private FactRepository factRepository;
     @Mock
+    private FileRepository fileRepository;
+    @Mock
+    private CurrentUserService currentUserService;
+    @Mock
     private ChatLanguageModel chatModel;
 
     private IdentityResolutionService service;
+    private final UUID ownerId = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
     @BeforeEach
     void setUp() {
+        lenient().when(currentUserService.findUserId()).thenReturn(Optional.of(ownerId));
         service = new IdentityResolutionService(
                 entityRepository,
                 aliasRepository,
@@ -62,6 +72,8 @@ class IdentityResolutionServiceTest {
                 suggestionRepository,
                 faceEmbeddingRepository,
                 factRepository,
+                fileRepository,
+                currentUserService,
                 chatModel
         );
     }
@@ -104,7 +116,7 @@ class IdentityResolutionServiceTest {
                 .type("PERSON")
                 .build();
 
-        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase("Bartek", "PERSON"))
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Bartek", "PERSON", ownerId))
                 .thenReturn(Optional.empty());
         when(entityRepository.save(any(KnowledgeEntity.class))).thenReturn(entity);
         when(aliasRepository.save(any())).thenReturn(null);
@@ -153,7 +165,7 @@ class IdentityResolutionServiceTest {
                 .type("PERSON")
                 .build();
 
-        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase("Bartek", "PERSON"))
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Bartek", "PERSON", ownerId))
                 .thenReturn(Optional.of(existing));
 
         service.resolve(mention, null, "PERSON");
@@ -220,9 +232,9 @@ class IdentityResolutionServiceTest {
                 .type("ANIMAL")
                 .build();
 
-        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase("Figa", "PERSON"))
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Figa", "PERSON", ownerId))
                 .thenReturn(Optional.of(person));
-        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCase("Figa", "ANIMAL"))
+        when(entityRepository.findFirstByDisplayNameIgnoreCaseAndTypeIgnoreCaseAndOwnerId("Figa", "ANIMAL", ownerId))
                 .thenReturn(Optional.of(animal));
 
         assertEquals(person, service.findOrCreateEntityByName("Figa", "PERSON"));

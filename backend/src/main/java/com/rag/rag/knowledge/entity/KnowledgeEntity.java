@@ -30,6 +30,10 @@ public class KnowledgeEntity {
     @Builder.Default
     private String type = "PERSON";
 
+    /** Owning user account; null only for legacy rows (invisible to multi-user APIs). */
+    @Column(name = "owner_id")
+    private UUID ownerId;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

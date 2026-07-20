@@ -1,6 +1,8 @@
 package com.rag.rag.knowledge.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.core.exception.ApiException;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.dto.EntityAppearanceDto;
@@ -75,6 +77,7 @@ public class KnowledgeApiController {
     private final FactRepository factRepository;
     private final PersonRelationGraphService personRelationGraphService;
     private final MentionEvidencePolicy mentionEvidencePolicy;
+    private final CurrentUserService currentUserService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
 
@@ -83,9 +86,11 @@ public class KnowledgeApiController {
     @GetMapping("/review/pending")
     @Transactional
     public ResponseEntity<List<IdentitySuggestionViewDto>> getPendingSuggestions() {
+        UUID ownerId = currentUserService.requireUserId();
         List<IdentitySuggestion> pending = suggestionRepository
                 .findAllByStatusWithMentions(SuggestionStatus.PENDING).stream()
                 .filter(s -> isPersonMention(s.getMentionA()) && isPersonMention(s.getMentionB()))
+                .filter(s -> ownsMention(s.getMentionA(), ownerId) && ownsMention(s.getMentionB(), ownerId))
                 .toList();
 
         // Snapshot paths first so REQUIRES_NEW face work cannot touch live suggestion proxies.
@@ -100,19 +105,20 @@ public class KnowledgeApiController {
         }
         Set<String> ensuredFiles = new HashSet<>();
         for (String filePath : filePaths) {
-            ensureFaceEmbeddingsForFile(filePath, ensuredFiles);
+            ensureFaceEmbeddingsForFile(filePath, ensuredFiles, ownerId);
         }
 
         // Rebuild DTOs from freshly loaded graph after nested face transactions.
         List<IdentitySuggestionViewDto> result = suggestionRepository
                 .findAllByStatusWithMentions(SuggestionStatus.PENDING).stream()
                 .filter(s -> isPersonMention(s.getMentionA()) && isPersonMention(s.getMentionB()))
+                .filter(s -> ownsMention(s.getMentionA(), ownerId) && ownsMention(s.getMentionB(), ownerId))
                 .map(this::toSuggestionViewDto)
                 .toList();
         return ResponseEntity.ok(result);
     }
 
-    private void ensureFaceEmbeddingsForFile(String filePath, Set<String> ensuredFiles) {
+    private void ensureFaceEmbeddingsForFile(String filePath, Set<String> ensuredFiles, UUID ownerId) {
         if (filePath == null || filePath.isBlank() || !ensuredFiles.add(filePath)) {
             return;
         }
@@ -121,7 +127,7 @@ public class KnowledgeApiController {
             return;
         }
 
-        fileRepository.findByPath(filePath).ifPresent(file -> {
+        fileRepository.findByPathAndOwnerId(filePath, ownerId).ifPresent(file -> {
             if (file.getImageData() == null || file.getImageData().length == 0) {
                 return;
             }
@@ -168,10 +174,11 @@ public class KnowledgeApiController {
     @Transactional
     public ResponseEntity<Void> confirmMention(@PathVariable UUID id, @RequestParam UUID entityId,
                                                 @RequestParam(defaultValue = "false") boolean allowDuplicateOnFile) {
+        UUID ownerId = currentUserService.requireUserId();
         EntityMention mention = mentionRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mention not found"));
-        KnowledgeEntity entity = entityRepository.findById(entityId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found"));
+        requireOwnedMention(mention, ownerId);
+        KnowledgeEntity entity = requireOwnedEntity(entityId, ownerId);
         UUID previousEntityId = mention.getEntity() != null ? mention.getEntity().getId() : null;
         ensureNoDuplicateOnFile(mention, entity, allowDuplicateOnFile);
         relinkMention(mention.getId(), entity.getId());
@@ -183,7 +190,10 @@ public class KnowledgeApiController {
     @PostMapping("/mentions/{id}/reject")
     @Transactional
     public ResponseEntity<Void> rejectMention(@PathVariable UUID id) {
-        EntityMention mention = mentionRepository.findById(id).orElseThrow();
+        UUID ownerId = currentUserService.requireUserId();
+        EntityMention mention = mentionRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mention not found"));
+        requireOwnedMention(mention, ownerId);
         mention.setStatus(MentionStatus.REJECTED);
         mentionRepository.save(mention);
         return ResponseEntity.ok().build();
@@ -193,21 +203,26 @@ public class KnowledgeApiController {
     @Transactional
     public ResponseEntity<Void> mergeSuggestion(@PathVariable UUID id,
                                                  @RequestParam(defaultValue = "false") boolean allowDuplicateOnFile) {
+        UUID ownerId = currentUserService.requireUserId();
         IdentitySuggestion suggestion = suggestionRepository.findByIdWithMentions(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Suggestion not found"));
-        suggestion.setStatus(SuggestionStatus.MERGED);
-        suggestionRepository.save(suggestion);
-
         EntityMention mA = suggestion.getMentionA();
         EntityMention mB = suggestion.getMentionB();
         if (mA == null || mB == null || mA.getId() == null || mB.getId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Suggestion is missing mentions");
         }
+        requireOwnedMention(mA, ownerId);
+        requireOwnedMention(mB, ownerId);
+
+        suggestion.setStatus(SuggestionStatus.MERGED);
+        suggestionRepository.save(suggestion);
 
         UUID mentionAId = mA.getId();
         UUID mentionBId = mB.getId();
         KnowledgeEntity entity = mA.getEntity() != null ? mA.getEntity() : mB.getEntity();
-        if (entity == null) {
+        if (entity != null && entity.getId() != null) {
+            entity = requireOwnedEntity(entity.getId(), ownerId);
+        } else {
             String labelA = mA.getLabel();
             String labelB = mB.getLabel();
             String labelForEntity = null;
@@ -222,7 +237,7 @@ public class KnowledgeApiController {
                         "Najpierw nadaj imię jednej z osób — nie łącz samych etykiet person/osoba");
             }
             try {
-                entity = identityResolutionService.findOrCreateEntityByName(labelForEntity, "PERSON");
+                entity = identityResolutionService.findOrCreateEntityByName(labelForEntity, "PERSON", ownerId);
             } catch (IllegalArgumentException ex) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
             }
@@ -236,7 +251,7 @@ public class KnowledgeApiController {
         relinkMention(mentionAId, entityId);
 
         EntityMention managedB = mentionRepository.findById(mentionBId).orElseThrow();
-        KnowledgeEntity managedEntity = entityRepository.findById(entityId).orElseThrow();
+        KnowledgeEntity managedEntity = requireOwnedEntity(entityId, ownerId);
         ensureNoDuplicateOnFile(managedB, managedEntity, allowDuplicateOnFile);
         relinkMention(mentionBId, entityId);
 
@@ -246,7 +261,11 @@ public class KnowledgeApiController {
     @PostMapping("/suggestions/{id}/split")
     @Transactional
     public ResponseEntity<Void> splitSuggestion(@PathVariable UUID id) {
-        IdentitySuggestion suggestion = suggestionRepository.findById(id).orElseThrow();
+        UUID ownerId = currentUserService.requireUserId();
+        IdentitySuggestion suggestion = suggestionRepository.findByIdWithMentions(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Suggestion not found"));
+        requireOwnedMention(suggestion.getMentionA(), ownerId);
+        requireOwnedMention(suggestion.getMentionB(), ownerId);
         suggestion.setStatus(SuggestionStatus.REJECTED);
         suggestionRepository.save(suggestion);
         return ResponseEntity.ok().build();
@@ -254,17 +273,19 @@ public class KnowledgeApiController {
 
     @PostMapping("/entities")
     public ResponseEntity<KnowledgeEntity> createEntity(@RequestBody KnowledgeEntity entity) {
+        UUID ownerId = currentUserService.requireUserId();
         String normalizedType = LivingEntityTypes.normalize(entity.getType());
         if (!"PERSON".equals(normalizedType)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only PERSON entities are supported for new records");
         }
         entity.setType(normalizedType);
+        entity.setOwnerId(ownerId);
         return ResponseEntity.ok(entityRepository.save(entity));
     }
 
     @PostMapping("/entities/{id}/aliases")
     public ResponseEntity<EntityAlias> addAlias(@PathVariable UUID id, @RequestBody EntityAlias alias) {
-        KnowledgeEntity entity = entityRepository.findById(id).orElseThrow();
+        KnowledgeEntity entity = requireOwnedEntity(id, currentUserService.requireUserId());
         alias.setEntity(entity);
         return ResponseEntity.ok(aliasRepository.save(alias));
     }
@@ -272,8 +293,9 @@ public class KnowledgeApiController {
     @GetMapping("/entities")
     @Transactional
     public ResponseEntity<List<EntitySummaryDto>> getAllEntities() {
+        UUID ownerId = currentUserService.requireUserId();
         Map<String, EntitySummaryDto> entitiesByKey = new LinkedHashMap<>();
-        for (KnowledgeEntity entity : entityRepository.findAll()) {
+        for (KnowledgeEntity entity : entityRepository.findAllByOwnerId(ownerId)) {
             if (!"PERSON".equalsIgnoreCase(entity.getType())
                     || identityResolutionService.isGenericPersonLabel(entity.getDisplayName())) {
                 continue;
@@ -324,7 +346,8 @@ public class KnowledgeApiController {
             if (path == null || path.isBlank() || !seenPaths.add(path)) {
                 continue;
             }
-            Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
+            UUID ownerId = currentUserService.requireUserId();
+            Optional<FileEntity> fileOpt = fileRepository.findByPathAndOwnerId(path, ownerId);
             if (fileOpt.isEmpty()) {
                 continue;
             }
@@ -360,13 +383,39 @@ public class KnowledgeApiController {
     }
 
     private KnowledgeEntity requireNamedPersonEntity(UUID id) {
-        KnowledgeEntity entity = entityRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found"));
+        KnowledgeEntity entity = requireOwnedEntity(id, currentUserService.requireUserId());
         if (!"PERSON".equalsIgnoreCase(entity.getType())
                 || identityResolutionService.isGenericPersonLabel(entity.getDisplayName())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found");
         }
         return entity;
+    }
+
+    private KnowledgeEntity requireOwnedEntity(UUID id, UUID ownerId) {
+        return entityRepository.findByIdAndOwnerId(id, ownerId)
+                .orElseThrow(() -> ApiException.notFound("ENTITY_NOT_FOUND", "Osoba nie istnieje."));
+    }
+
+    private void requireOwnedMention(EntityMention mention, UUID ownerId) {
+        if (!ownsMention(mention, ownerId)) {
+            throw ApiException.notFound("MENTION_NOT_FOUND", "Wzmianka nie istnieje.");
+        }
+    }
+
+    private boolean ownsMention(EntityMention mention, UUID ownerId) {
+        if (mention == null || mention.getFilePath() == null || ownerId == null) {
+            return false;
+        }
+        if (mention.getEntity() != null && mention.getEntity().getOwnerId() != null) {
+            return ownerId.equals(mention.getEntity().getOwnerId());
+        }
+        return fileRepository.findByPathAndOwnerId(mention.getFilePath(), ownerId).isPresent();
+    }
+
+    private void requireOwnedFilePath(String path) {
+        UUID ownerId = currentUserService.requireUserId();
+        fileRepository.findByPathAndOwnerId(path, ownerId)
+                .orElseThrow(() -> ApiException.notFound("FILE_NOT_FOUND", "Plik nie istnieje."));
     }
 
     private EntitySummaryDto toEntitySummary(KnowledgeEntity entity) {
@@ -411,7 +460,8 @@ public class KnowledgeApiController {
     }
 
     private Optional<EntityPhotoDto> toEntityPhoto(String path) {
-        Optional<FileEntity> fileOpt = fileRepository.findByPath(path);
+        UUID ownerId = currentUserService.requireUserId();
+        Optional<FileEntity> fileOpt = fileRepository.findByPathAndOwnerId(path, ownerId);
         if (fileOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -437,6 +487,7 @@ public class KnowledgeApiController {
     @PutMapping("/entities/{id}/rename")
     @Transactional
     public ResponseEntity<Void> renameEntity(@PathVariable UUID id, @RequestParam String newName) {
+        requireNamedPersonEntity(id);
         try {
             identityResolutionService.renameNamedEntity(id, newName);
         } catch (IllegalArgumentException ex) {
@@ -473,11 +524,14 @@ public class KnowledgeApiController {
     @Transactional
     public ResponseEntity<Void> renameMention(@PathVariable UUID id, @RequestParam String newName,
                                                @RequestParam(defaultValue = "false") boolean allowDuplicateOnFile) {
-        EntityMention mention = mentionRepository.findById(id).orElseThrow();
+        UUID ownerId = currentUserService.requireUserId();
+        EntityMention mention = mentionRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mention not found"));
+        requireOwnedMention(mention, ownerId);
         UUID previousEntityId = mention.getEntity() != null ? mention.getEntity().getId() : null;
         KnowledgeEntity entity;
         try {
-            entity = identityResolutionService.findOrCreateEntityByName(newName, "PERSON");
+            entity = identityResolutionService.findOrCreateEntityByName(newName, "PERSON", ownerId);
         } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
         }
@@ -496,15 +550,16 @@ public class KnowledgeApiController {
         if (mentionId == null || entityId == null) {
             return;
         }
+        UUID ownerId = currentUserService.requireUserId();
         EntityMention mention = mentionRepository.findById(mentionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mention not found"));
-        KnowledgeEntity entity = entityRepository.findById(entityId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Entity not found"));
+        requireOwnedMention(mention, ownerId);
+        KnowledgeEntity entity = requireOwnedEntity(entityId, ownerId);
         identityResolutionService.confirmUserAssignment(mention, entity);
         faceEmbeddingRepository.relinkByMentionId(mentionId, entity);
         // Re-load after bulk UPDATE so promoteObservation never sees a cleared/detached proxy.
         EntityMention managedMention = mentionRepository.findById(mentionId).orElse(mention);
-        KnowledgeEntity managedEntity = entityRepository.findById(entityId).orElse(entity);
+        KnowledgeEntity managedEntity = requireOwnedEntity(entityId, ownerId);
         faceIdentityService.promoteObservation(managedMention, managedEntity);
     }
 
@@ -553,6 +608,7 @@ public class KnowledgeApiController {
     @GetMapping("/mentions/by-file")
     @Transactional(readOnly = true)
     public ResponseEntity<List<EntityMentionViewDto>> getMentionsForFile(@RequestParam String path) {
+        requireOwnedFilePath(path);
         List<EntityMentionViewDto> mentions = mentionRepository.findByFilePath(path).stream()
                 .filter(this::isReviewableMention)
                 .map(this::toMentionViewDto)
@@ -564,6 +620,7 @@ public class KnowledgeApiController {
     @PostMapping("/mentions/by-file/detect-faces")
     @Transactional
     public ResponseEntity<List<EntityMentionViewDto>> detectFacesForFile(@RequestParam String path) {
+        requireOwnedFilePath(path);
         FileEntity file = fileRepository.findByPathForUpdate(path)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "File not found"));
 
@@ -585,14 +642,19 @@ public class KnowledgeApiController {
     @PostMapping("/faces/resolve-batch")
     @Transactional
     public ResponseEntity<Map<String, Integer>> resolveFaceBatch(@RequestBody FaceBatchRequest request) {
+        UUID ownerId = currentUserService.requireUserId();
         List<String> paths = request == null || request.paths() == null
                 ? List.of()
-                : request.paths().stream().filter(path -> path != null && !path.isBlank()).distinct().toList();
+                : request.paths().stream()
+                .filter(path -> path != null && !path.isBlank())
+                .filter(path -> fileRepository.findByPathAndOwnerId(path, ownerId).isPresent())
+                .distinct()
+                .toList();
         Map<UUID, BatchFace> candidatesByMention = new LinkedHashMap<>();
         for (String path : paths) {
             if (faceEmbeddingRepository.findByFilePath(path).isEmpty()
                     && !faceObservationRepository.existsByFilePath(path)) {
-                ensureFaceEmbeddingsForFile(path, new HashSet<>());
+                ensureFaceEmbeddingsForFile(path, new HashSet<>(), ownerId);
             }
             for (FaceEmbedding face : faceEmbeddingRepository.findByFilePath(path)) {
                 if (face.getMention() == null || face.getMention().getId() == null) continue;

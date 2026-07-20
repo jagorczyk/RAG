@@ -1,5 +1,6 @@
 package com.rag.rag.knowledge.graph;
 
+import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.knowledge.dto.PersonGraphDto;
 import com.rag.rag.knowledge.dto.PersonGraphDto.PersonGraphEdgeDto;
 import com.rag.rag.knowledge.dto.PersonGraphDto.PersonGraphNodeDto;
@@ -47,6 +48,7 @@ public class PersonRelationGraphService {
     public static final String CO_OCCURRENCE_LABEL = "współwystępuje";
 
     private final KnowledgeEntityRepository entityRepository;
+    private final CurrentUserService currentUserService;
     private final EntityMentionRepository mentionRepository;
     private final FactRepository factRepository;
     private final IdentityResolutionService identityResolutionService;
@@ -247,7 +249,11 @@ public class PersonRelationGraphService {
 
     private List<KnowledgeEntity> listNamedPersonEntities() {
         Map<String, KnowledgeEntity> byKey = new LinkedHashMap<>();
-        for (KnowledgeEntity entity : entityRepository.findAll()) {
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        if (ownerId == null) {
+            return List.of();
+        }
+        for (KnowledgeEntity entity : entityRepository.findAllByOwnerId(ownerId)) {
             if (entity == null || entity.getId() == null) {
                 continue;
             }

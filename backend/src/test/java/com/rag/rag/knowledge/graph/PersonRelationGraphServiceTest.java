@@ -1,5 +1,6 @@
 package com.rag.rag.knowledge.graph;
 
+import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.knowledge.dto.PersonGraphDto;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
@@ -19,15 +20,18 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class PersonRelationGraphServiceTest {
 
     @Mock KnowledgeEntityRepository entityRepository;
+    @Mock CurrentUserService currentUserService;
     @Mock EntityMentionRepository mentionRepository;
     @Mock FactRepository factRepository;
     @Mock IdentityResolutionService identityResolutionService;
@@ -36,19 +40,21 @@ class PersonRelationGraphServiceTest {
 
     private KnowledgeEntity igor;
     private KnowledgeEntity anna;
+    private final UUID ownerId = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
 
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(service, "minFactConfidence", 0.75);
-        igor = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Igor").type("PERSON").build();
-        anna = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Anna").type("PERSON").build();
+        igor = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Igor").type("PERSON").ownerId(ownerId).build();
+        anna = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Anna").type("PERSON").ownerId(ownerId).build();
+        lenient().when(currentUserService.findUserId()).thenReturn(Optional.of(ownerId));
         when(identityResolutionService.isGenericPersonLabel("Igor")).thenReturn(false);
         when(identityResolutionService.isGenericPersonLabel("Anna")).thenReturn(false);
     }
 
     @Test
     void buildsCoOccurrenceAndSpatialEdgesFromCertainMentions() {
-        when(entityRepository.findAll()).thenReturn(List.of(igor, anna));
+        when(entityRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(igor, anna));
 
         EntityMention igorMention = EntityMention.builder()
                 .id(UUID.randomUUID())
@@ -99,7 +105,7 @@ class PersonRelationGraphServiceTest {
 
     @Test
     void ignoresSuggestedMentionsAndTechnicalFacts() {
-        when(entityRepository.findAll()).thenReturn(List.of(igor, anna));
+        when(entityRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(igor, anna));
 
         EntityMention suggested = EntityMention.builder()
                 .id(UUID.randomUUID())

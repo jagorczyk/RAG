@@ -1,5 +1,7 @@
 package com.rag.rag.knowledge.controller;
 
+import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.core.exception.ApiException;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
@@ -45,7 +47,9 @@ class KnowledgeApiControllerDeleteEntityTest {
     private FaceObservationRepository faceObservations;
     private FactRepository facts;
     private FileRepository files;
+    private CurrentUserService currentUserService;
     private KnowledgeApiController controller;
+    private final UUID ownerId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
 
     @BeforeEach
     void setUp() {
@@ -57,19 +61,22 @@ class KnowledgeApiControllerDeleteEntityTest {
         faceObservations = mock(FaceObservationRepository.class);
         facts = mock(FactRepository.class);
         files = mock(FileRepository.class);
+        currentUserService = mock(CurrentUserService.class);
+        when(currentUserService.requireUserId()).thenReturn(ownerId);
         IdentityResolutionService identities = mock(IdentityResolutionService.class);
         controller = new KnowledgeApiController(suggestions, mentions, entities, aliases, identities, files,
                 faceEmbeddings, mock(FaceIdentityService.class), mock(FaceCropService.class), faceObservations,
-                facts, mock(PersonRelationGraphService.class), mock(MentionEvidencePolicy.class));
+                facts, mock(PersonRelationGraphService.class), mock(MentionEvidencePolicy.class), currentUserService);
     }
 
     @Test
     void deletesOnlyRecognitionDataAndKeepsFiles() {
         UUID entityId = UUID.randomUUID();
         UUID mentionId = UUID.randomUUID();
-        KnowledgeEntity person = KnowledgeEntity.builder().id(entityId).displayName("Anna Kowalska").type("PERSON").build();
+        KnowledgeEntity person = KnowledgeEntity.builder().id(entityId).displayName("Anna Kowalska").type("PERSON")
+                .ownerId(ownerId).build();
         EntityMention mention = EntityMention.builder().id(mentionId).entity(person).filePath("folder/anna.jpg").label("Anna").build();
-        when(entities.findById(entityId)).thenReturn(Optional.of(person));
+        when(entities.findByIdAndOwnerId(entityId, ownerId)).thenReturn(Optional.of(person));
         when(mentions.findByEntityId(entityId)).thenReturn(List.of(mention));
 
         assertEquals(HttpStatus.NO_CONTENT, controller.deleteEntityRecognition(entityId).getStatusCode());
@@ -88,8 +95,9 @@ class KnowledgeApiControllerDeleteEntityTest {
     @Test
     void deletesPersonWithoutMentions() {
         UUID entityId = UUID.randomUUID();
-        KnowledgeEntity person = KnowledgeEntity.builder().id(entityId).displayName("Anna Kowalska").type("PERSON").build();
-        when(entities.findById(entityId)).thenReturn(Optional.of(person));
+        KnowledgeEntity person = KnowledgeEntity.builder().id(entityId).displayName("Anna Kowalska").type("PERSON")
+                .ownerId(ownerId).build();
+        when(entities.findByIdAndOwnerId(entityId, ownerId)).thenReturn(Optional.of(person));
         when(mentions.findByEntityId(entityId)).thenReturn(List.of());
 
         assertEquals(HttpStatus.NO_CONTENT, controller.deleteEntityRecognition(entityId).getStatusCode());
@@ -103,10 +111,10 @@ class KnowledgeApiControllerDeleteEntityTest {
     @Test
     void returnsNotFoundForUnknownPerson() {
         UUID entityId = UUID.randomUUID();
-        when(entities.findById(entityId)).thenReturn(Optional.empty());
+        when(entities.findByIdAndOwnerId(entityId, ownerId)).thenReturn(Optional.empty());
 
-        ResponseStatusException error = assertThrows(ResponseStatusException.class, () -> controller.deleteEntityRecognition(entityId));
-        assertEquals(HttpStatus.NOT_FOUND, error.getStatusCode());
+        ApiException error = assertThrows(ApiException.class, () -> controller.deleteEntityRecognition(entityId));
+        assertEquals(HttpStatus.NOT_FOUND, error.getStatus());
         verify(mentions, never()).findByEntityId(eq(entityId));
     }
 
@@ -127,6 +135,8 @@ class KnowledgeApiControllerDeleteEntityTest {
                 .embedding(new float[]{1f})
                 .status("PENDING")
                 .build();
+        when(files.findByPathAndOwnerId(mention.getFilePath(), ownerId)).thenReturn(Optional.of(
+                com.rag.rag.folder.entity.FileEntity.builder().path(mention.getFilePath()).fileType("image/jpeg").build()));
         when(mentions.findByFilePath(mention.getFilePath())).thenReturn(List.of(mention));
         when(files.findByPath(mention.getFilePath())).thenReturn(Optional.empty());
         when(faceEmbeddings.findFirstByMention_Id(mentionId)).thenReturn(Optional.empty());

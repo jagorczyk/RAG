@@ -1,5 +1,6 @@
 package com.rag.rag.knowledge.graph;
 
+import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Reads graph evidence selected by the query planner.  This service never
@@ -41,13 +43,14 @@ public class GraphQueryService {
     private final FactRepository factRepository;
     private final MentionEvidencePolicy mentionEvidencePolicy;
     private final IdentityResolutionService identityResolutionService;
+    private final CurrentUserService currentUserService;
 
     @Value("${rag.graph.min-fact-confidence:0.75}")
     private double minFactConfidence = 0.75;
 
     @Transactional(readOnly = true)
     public List<String> availableEntityNames() {
-        return entityRepository.findAll().stream()
+        return ownedEntities().stream()
                 .filter(entity -> !"PERSON".equalsIgnoreCase(entity.getType())
                         || !identityResolutionService.isGenericPersonLabel(entity.getDisplayName()))
                 .filter(entity -> mentionRepository.findByEntityId(entity.getId()).stream()
@@ -61,7 +64,7 @@ public class GraphQueryService {
     @Transactional(readOnly = true)
     public List<String> validateEntityNames(List<String> requestedNames) {
         if (requestedNames == null || requestedNames.isEmpty()) return List.of();
-        List<KnowledgeEntity> entities = entityRepository.findAll();
+        List<KnowledgeEntity> entities = ownedEntities();
         List<String> result = new ArrayList<>();
         for (String requested : requestedNames) {
             if (requested == null || requested.isBlank()) continue;
@@ -75,9 +78,12 @@ public class GraphQueryService {
     @Transactional(readOnly = true)
     public List<String> validateFilePaths(List<String> requestedPaths) {
         if (requestedPaths == null || requestedPaths.isEmpty()) return List.of();
+        UUID ownerId = currentUserService.findUserId().orElse(null);
         return requestedPaths.stream()
                 .filter(path -> path != null && !path.isBlank())
-                .filter(path -> fileRepository.findByPath(path).isPresent())
+                .filter(path -> ownerId == null
+                        ? fileRepository.findByPath(path).isPresent()
+                        : fileRepository.findByPathAndOwnerId(path, ownerId).isPresent())
                 .distinct().toList();
     }
 
@@ -86,7 +92,7 @@ public class GraphQueryService {
         if (entityNames == null || entityNames.isEmpty()) return List.of();
         Set<String> paths = new LinkedHashSet<>();
         for (String name : validateEntityNames(entityNames)) {
-            entityRepository.findFirstByDisplayNameIgnoreCase(name).ifPresent(entity ->
+            findOwnedEntityByName(name).ifPresent(entity ->
                     mentionRepository.findByEntityId(entity.getId()).stream()
                             .filter(this::isCertainMention)
                             .map(EntityMention::getFilePath)
@@ -103,7 +109,7 @@ public class GraphQueryService {
 
         Set<String> intersection = null;
         for (String name : validated) {
-            Optional<KnowledgeEntity> entity = entityRepository.findFirstByDisplayNameIgnoreCase(name);
+            Optional<KnowledgeEntity> entity = findOwnedEntityByName(name);
             if (entity.isEmpty()) return List.of();
             Set<String> paths = mentionRepository.findByEntityId(entity.get().getId()).stream()
                     .filter(this::isCertainMention)
@@ -115,6 +121,22 @@ public class GraphQueryService {
             if (intersection.isEmpty()) return List.of();
         }
         return intersection == null ? List.of() : List.copyOf(intersection);
+    }
+
+    private List<KnowledgeEntity> ownedEntities() {
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        if (ownerId == null) {
+            return List.of();
+        }
+        return entityRepository.findAllByOwnerId(ownerId);
+    }
+
+    private Optional<KnowledgeEntity> findOwnedEntityByName(String name) {
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        if (ownerId == null || name == null || name.isBlank()) {
+            return Optional.empty();
+        }
+        return entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId(name.trim(), ownerId);
     }
 
     @Transactional(readOnly = true)
@@ -188,7 +210,7 @@ public class GraphQueryService {
     public String buildContextForEntities(List<String> entityNames) {
         StringBuilder context = new StringBuilder();
         for (String name : validateEntityNames(entityNames)) {
-            entityRepository.findFirstByDisplayNameIgnoreCase(name)
+            findOwnedEntityByName(name)
                     .ifPresent(entity -> appendEntityContext(context, entity));
         }
         return context.toString();
