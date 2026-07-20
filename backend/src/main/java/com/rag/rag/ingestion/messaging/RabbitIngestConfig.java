@@ -10,6 +10,7 @@ import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,6 +20,15 @@ import java.util.Map;
 @Configuration
 @ConditionalOnProperty(name = "rag.ingest.async-enabled", havingValue = "true", matchIfMissing = true)
 public class RabbitIngestConfig {
+
+    @Value("${rag.ingest.worker-concurrency:2}")
+    private int workerConcurrency;
+
+    @Value("${rag.ingest.worker-max-concurrency:4}")
+    private int workerMaxConcurrency;
+
+    @Value("${rag.ingest.worker-prefetch:1}")
+    private int workerPrefetch;
 
     @Bean
     public MessageConverter jacksonMessageConverter() {
@@ -81,6 +91,25 @@ public class RabbitIngestConfig {
         factory.setMessageConverter(jacksonMessageConverter);
         // Failed messages go to DLQ (default-requeue-rejected=false in properties)
         factory.setDefaultRequeueRejected(false);
+        applyWorkerConcurrency(factory, workerConcurrency, workerMaxConcurrency, workerPrefetch);
         return factory;
+    }
+
+    /**
+     * Applies bounded concurrent consumers for document ingest.
+     * Exposed for unit tests so configuration is not only implicit Spring wiring.
+     */
+    static void applyWorkerConcurrency(
+            SimpleRabbitListenerContainerFactory factory,
+            int concurrency,
+            int maxConcurrency,
+            int prefetch
+    ) {
+        int concurrent = Math.max(1, concurrency);
+        int max = Math.max(concurrent, maxConcurrency);
+        int pref = Math.max(1, prefetch);
+        factory.setConcurrentConsumers(concurrent);
+        factory.setMaxConcurrentConsumers(max);
+        factory.setPrefetchCount(pref);
     }
 }

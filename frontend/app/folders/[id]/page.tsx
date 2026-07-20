@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import {
   getFilesInFolder,
-  uploadFileToFolderWithProgress,
+  uploadFileToFolderTracked,
   getFolders,
   Folder,
   renameFile,
@@ -28,6 +28,7 @@ import {
   FileItem,
   FilePreview,
   type UploadProgress,
+  type UploadResult,
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { ImagePreview } from "@/components/ui/ImagePreview";
@@ -41,7 +42,10 @@ import {
 } from "@/components/knowledge/UploadIdentityPrompt";
 import { buildIdentityReviewQueue } from "@/lib/upload-identity";
 import { resolveFaceBatch } from "@/lib/knowledge-api";
-import type { UploadResult } from "@/lib/api";
+import {
+  DEFAULT_UPLOAD_CONCURRENCY,
+  mapWithConcurrency,
+} from "@/lib/concurrency";
 
 interface FolderDetailPageProps {
   params: Promise<{ id: string }>;
@@ -123,30 +127,90 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
     );
     if (filesToUpload.length === 0) return;
 
+    const fileTotal = filesToUpload.length;
+    const ratios = new Array<number>(fileTotal).fill(0);
+    const phases = new Array<UploadProgress["phase"]>(fileTotal).fill("uploading");
+    const activeNames = new Set<string>();
+
+    const publishAggregateProgress = () => {
+      const sum = ratios.reduce((acc, value) => acc + value, 0);
+      const percent = Math.round(Math.min(100, (sum / fileTotal) * 100));
+      const completed = ratios.filter((value) => value >= 1).length;
+      const anyUploading = phases.some(
+        (phase, index) => phase === "uploading" && ratios[index] < 1
+      );
+      const label =
+        activeNames.size === 0
+          ? filesToUpload[Math.min(completed, fileTotal - 1)]?.name ?? "Pliki"
+          : activeNames.size === 1
+            ? [...activeNames][0]
+            : `${[...activeNames][0]} (+${activeNames.size - 1})`;
+      setIngestionProgress({
+        percent,
+        fileIndex: Math.min(fileTotal, Math.max(1, completed + (completed < fileTotal ? 1 : 0))),
+        fileTotal,
+        fileName: label,
+        phase: anyUploading ? "uploading" : "processing",
+      });
+    };
+
     setIsUploading(true);
     setIngestionProgress({
       percent: 0,
       fileIndex: 1,
-      fileTotal: filesToUpload.length,
+      fileTotal,
       fileName: filesToUpload[0].name,
       phase: "uploading",
     });
 
     try {
-      const uploadResults: UploadResult[] = [];
       const skipIdentityPrompt = entityTag.trim().length > 0;
+      const tag = entityTag.trim().length > 0 ? entityTag : undefined;
 
-      for (let i = 0; i < filesToUpload.length; i++) {
-        const result = await uploadFileToFolderWithProgress(
-          id,
-          filesToUpload[i],
-          i,
-          filesToUpload.length,
-          setIngestionProgress,
-          entityTag
-        );
-        uploadResults.push(result);
-      }
+      // Bounded parallel uploads: start multiple HTTP+ingest cycles at once.
+      const settled = await mapWithConcurrency(
+        filesToUpload,
+        DEFAULT_UPLOAD_CONCURRENCY,
+        async (file, index) => {
+          activeNames.add(file.name);
+          publishAggregateProgress();
+          try {
+            return await uploadFileToFolderTracked(
+              id,
+              file,
+              tag,
+              (update) => {
+                ratios[index] = update.ratio;
+                phases[index] = update.phase;
+                publishAggregateProgress();
+              }
+            );
+          } finally {
+            activeNames.delete(file.name);
+            if (ratios[index] < 1) {
+              // Failed mid-way still counts as attempted for the bar.
+              ratios[index] = 1;
+            }
+            publishAggregateProgress();
+          }
+        }
+      );
+
+      const uploadResults: UploadResult[] = [];
+      const errors: string[] = [];
+      settled.forEach((outcome, index) => {
+        if (outcome.status === "fulfilled") {
+          uploadResults.push(outcome.value);
+        } else {
+          const reason = outcome.reason;
+          const message =
+            reason instanceof Error
+              ? reason.message
+              : `Nie udało się wgrać pliku ${filesToUpload[index]?.name ?? index}.`;
+          errors.push(message);
+          console.error("Upload failed for file", filesToUpload[index]?.name, reason);
+        }
+      });
 
       const imagePaths = uploadResults
         .filter((result) => result.image && result.path)
@@ -157,16 +221,19 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
 
       setIngestionProgress({
         percent: 100,
-        fileIndex: filesToUpload.length,
-        fileTotal: filesToUpload.length,
-        fileName: filesToUpload[filesToUpload.length - 1].name,
+        fileIndex: fileTotal,
+        fileTotal,
+        fileName:
+          errors.length > 0
+            ? `Gotowe (${uploadResults.length}/${fileTotal}, błędy: ${errors.length})`
+            : filesToUpload[fileTotal - 1]?.name ?? "Gotowe",
         phase: "processing",
       });
 
       const folderFiles = await getFilesInFolder(folder.name);
       setFiles(folderFiles);
 
-      if (!skipIdentityPrompt) {
+      if (!skipIdentityPrompt && uploadResults.length > 0) {
         const imageUrlByPath = new Map(
           folderFiles
             .filter((file) => file.type.includes("image") && file.url)
@@ -179,6 +246,15 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
         if (reviewQueue.length > 0) {
           setIdentityReviewFiles(reviewQueue);
         }
+      }
+
+      if (errors.length > 0) {
+        const preview = errors.slice(0, 3).join("\n");
+        const more =
+          errors.length > 3 ? `\n…i ${errors.length - 3} kolejnych.` : "";
+        alert(
+          `Część plików nie została wgrana (${errors.length}/${fileTotal}):\n${preview}${more}`
+        );
       }
     } catch (error) {
       console.error("Upload failed", error);

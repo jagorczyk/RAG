@@ -57,14 +57,14 @@ export interface Message {
   sources?: Source[];
   uncertain?: boolean;
   evidence?: QueryEvidence[];
-  answerKind?: "GRAPH_QUERY" | "DOCUMENT" | "HYBRID" | "VISUAL_VALIDATION" | "NO_EVIDENCE";
+  answerKind?: "GRAPH" | "GRAPH_QUERY" | "DOCUMENT" | "HYBRID" | "VISUAL_VALIDATION" | "NO_EVIDENCE";
 }
 
 export interface QueryEvidence {
   path: string;
   confidence: number;
   reasons: string[];
-  matchStatus?: "MATCH" | "CONFIRMED";
+  matchStatus?: "MATCH" | "CONFIRMED" | "RETRIEVED";
   retrievalScore?: number;
   entityConfidence?: number;
   conditionConfidence?: number;
@@ -250,13 +250,22 @@ export async function waitForIngestionReady(
   throw new Error("Przekroczono limit czasu oczekiwania na przetworzenie pliku.");
 }
 
-export function uploadFileToFolderWithProgress(
+/** Per-file progress (0..1). Used by concurrent multi-upload aggregation. */
+export type FileUploadProgressUpdate = {
+  ratio: number;
+  phase: UploadProgress["phase"];
+  fileName: string;
+};
+
+/**
+ * Upload one file; reports per-file ratio via onFileProgress.
+ * Prefer this for concurrent pools — overall percent is aggregated by the caller.
+ */
+export function uploadFileToFolderTracked(
   folderId: string,
   file: File,
-  fileIndex: number,
-  fileTotal: number,
-  onProgress?: (progress: UploadProgress) => void,
-  entityTag?: string
+  entityTag?: string,
+  onFileProgress?: (update: FileUploadProgressUpdate) => void
 ): Promise<UploadResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -265,13 +274,10 @@ export function uploadFileToFolderWithProgress(
 
     const report = (fileRatio: number, phase: UploadProgress["phase"]) => {
       const clampedRatio = Math.max(0, Math.min(1, fileRatio));
-      const overallPercent = ((fileIndex + clampedRatio) / fileTotal) * 100;
-      onProgress?.({
-        percent: Math.round(Math.min(100, overallPercent)),
-        fileIndex: fileIndex + 1,
-        fileTotal,
-        fileName: file.name,
+      onFileProgress?.({
+        ratio: clampedRatio,
         phase,
+        fileName: file.name,
       });
     };
 
@@ -287,7 +293,7 @@ export function uploadFileToFolderWithProgress(
 
     xhr.addEventListener("load", () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        report(1, "processing");
+        report(0.95, "processing");
         let parsed: UploadResult;
         try {
           parsed = JSON.parse(xhr.responseText) as UploadResult;
@@ -312,6 +318,7 @@ export function uploadFileToFolderWithProgress(
           return;
         }
 
+        report(1, "processing");
         resolve(parsed);
         return;
       }
@@ -341,6 +348,27 @@ export function uploadFileToFolderWithProgress(
     xhr.send(formData);
 
     report(0, "uploading");
+  });
+}
+
+export function uploadFileToFolderWithProgress(
+  folderId: string,
+  file: File,
+  fileIndex: number,
+  fileTotal: number,
+  onProgress?: (progress: UploadProgress) => void,
+  entityTag?: string
+): Promise<UploadResult> {
+  const total = Math.max(1, fileTotal);
+  return uploadFileToFolderTracked(folderId, file, entityTag, (update) => {
+    const overallPercent = ((fileIndex + update.ratio) / total) * 100;
+    onProgress?.({
+      percent: Math.round(Math.min(100, overallPercent)),
+      fileIndex: fileIndex + 1,
+      fileTotal: total,
+      fileName: update.fileName,
+      phase: update.phase,
+    });
   });
 }
 

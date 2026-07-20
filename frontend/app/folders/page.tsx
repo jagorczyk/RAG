@@ -29,6 +29,10 @@ import {
   createChat,
   type Chat,
 } from "@/lib/api";
+import {
+  DEFAULT_UPLOAD_CONCURRENCY,
+  mapWithConcurrency,
+} from "@/lib/concurrency";
 import { SearchField } from "@/components/ui/SearchField";
 import { SectionTitle } from "@/components/ui/SectionTitle";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -119,12 +123,16 @@ export default function FoldersPage() {
       const folderName = relativePath.split("/")[0] || "Nowy folder";
       const newFolder = await createFolder(folderName);
       setFolders((prev) => [...prev, newFolder]);
-      for (let i = 0; i < e.target.files.length; i++) {
-        const file = e.target.files[i];
-        if (!file.name.startsWith(".")) {
+      const filesToUpload = Array.from(e.target.files).filter(
+        (file) => !file.name.startsWith(".")
+      );
+      await mapWithConcurrency(
+        filesToUpload,
+        DEFAULT_UPLOAD_CONCURRENCY,
+        async (file) => {
           await uploadFileToFolder(newFolder.id, file);
         }
-      }
+      );
     } catch (error) {
       console.error("Folder upload failed", error);
       alert("Wystąpił błąd podczas wgrywania folderu.");

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:mobile-ui": "node scripts/assert-mobile-ui.mjs"
+    "test:mobile-ui": "node scripts/assert-mobile-ui.mjs",
+    "test:parallel-upload": "node --experimental-strip-types scripts/assert-parallel-upload.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.7.0",
