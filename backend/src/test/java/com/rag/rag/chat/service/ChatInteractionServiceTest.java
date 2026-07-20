@@ -475,6 +475,62 @@ class ChatInteractionServiceTest {
         verify(chatAiService, never()).answer(any(), anyString());
     }
 
+    @Test
+    void pureVisualMatchWithBlankAnswerKeepsSourcesAndShortPolishFallback() {
+        // Criterion 1: MATCH is grounding — blank/free-form parse failure must not become NO_EVIDENCE
+        // and must not drop MATCH source paths (skeptic gap).
+        String question = "Czy Michał ma blond włosy?";
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(),
+                question, "blond włosy", true, false,
+                QueryPlan.RetrievalMode.VISUAL_VALIDATION, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        VisualQueryMatch match = new VisualQueryMatch("dir://michal.jpg", BigDecimal.valueOf(0.91),
+                List.of("blond włosy"), VisualMatchDecision.Decision.MATCH, List.of(),
+                BigDecimal.valueOf(0.8), BigDecimal.valueOf(0.9));
+        when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
+        when(ingestionService.createSourceDto(eq("dir://michal.jpg"), any(), anyDouble()))
+                .thenReturn(new SourceDto("dir://michal.jpg", "michal.jpg", 0.8, null, "IMAGE"));
+        // Simulate JSON/free-form parse failure on the real answer service path.
+        when(verifiedVisualAnswerService.answer(eq(question), eq(List.of(match)))).thenReturn("");
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertNotEquals("NO_EVIDENCE", response.answerKind());
+        assertEquals(QueryPlan.RetrievalMode.VISUAL_VALIDATION.name(), response.answerKind());
+        assertFalse(response.response().isBlank());
+        assertFalse(response.response().contains("Nie znaleziono potwierdzonych dowodów wizualnych."));
+        assertFalse(response.response().contains("Nie znaleziono informacji w dokumentach."));
+        assertEquals(VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER, response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals("dir://michal.jpg", response.sources().get(0).path());
+        assertEquals(1, response.evidence().size());
+        verify(chatAiService, never()).answer(any(), anyString());
+    }
+
+    @Test
+    void pureVisualMatchWithFreeFormAnswerKeepsMatchSources() {
+        String question = "Co robi osoba na zdjęciu?";
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(),
+                question, question, true, false,
+                QueryPlan.RetrievalMode.VISUAL_VALIDATION, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        VisualQueryMatch match = new VisualQueryMatch("dir://action.jpg", BigDecimal.valueOf(0.88),
+                List.of("osoba biegnie"), VisualMatchDecision.Decision.MATCH, List.of(),
+                BigDecimal.valueOf(0.7), BigDecimal.valueOf(0.85));
+        when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
+        when(ingestionService.createSourceDto(eq("dir://action.jpg"), any(), anyDouble()))
+                .thenReturn(new SourceDto("dir://action.jpg", "action.jpg", 0.7, null, "IMAGE"));
+        when(verifiedVisualAnswerService.answer(eq(question), eq(List.of(match))))
+                .thenReturn("Osoba biegnie po plaży.");
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals("Osoba biegnie po plaży.", response.response());
+        assertNotEquals("NO_EVIDENCE", response.answerKind());
+        assertEquals(1, response.sources().size());
+        assertEquals("dir://action.jpg", response.sources().get(0).path());
+    }
+
     private static QueryPlan coPresencePlan(String question, List<String> entities,
                                             QueryPlan.RetrievalMode mode) {
         return new QueryPlan(question, entities, List.of(), question, question, false, false,

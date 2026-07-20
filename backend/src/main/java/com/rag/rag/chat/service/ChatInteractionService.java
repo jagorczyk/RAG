@@ -217,16 +217,18 @@ public class ChatInteractionService {
         boolean uncertain = plan.ambiguous() || matches.stream()
                 .anyMatch(match -> match.decision() == VisualMatchDecision.Decision.UNCERTAIN);
         // Answer prose stays short; detailed reasons stay only in evidence/sources UI.
+        // MATCH evidence is already grounding (criterion 1) — never drop sources or force
+        // NO_EVIDENCE because the answer model returned blank / non-JSON prose.
         String answer = verifiedVisualAnswerService.answer(plan.question(), matches);
         if (answer == null || answer.isBlank()) {
-            String denial = "Nie udało się przygotować odpowiedzi wyłącznie z potwierdzonych dowodów.";
-            if (persistDenial) {
-                saveAiMessage(chatId, denial, List.of(), List.of(), "NO_EVIDENCE", true);
-            }
-            // Blank answer with !persistDenial lets the caller try text/graph fallback.
-            return new MessageResponse(denial, List.of(), true, List.of(), "NO_EVIDENCE");
+            answer = VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER;
+            uncertain = true;
         }
         String cleaned = removeTechnicalReferences(answer, visualSources);
+        if (cleaned == null || cleaned.isBlank()) {
+            cleaned = VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER;
+            uncertain = true;
+        }
         saveAiMessage(chatId, cleaned, visualSources, evidence, QueryPlan.RetrievalMode.VISUAL_VALIDATION.name(), uncertain);
         return new MessageResponse(cleaned, visualSources, uncertain, evidence,
                 QueryPlan.RetrievalMode.VISUAL_VALIDATION.name());
