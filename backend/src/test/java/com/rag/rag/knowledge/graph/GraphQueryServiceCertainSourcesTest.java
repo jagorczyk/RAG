@@ -2,9 +2,11 @@ package com.rag.rag.knowledge.graph;
 
 import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.folder.repository.FileRepository;
+import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.fact.Fact;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +47,42 @@ class GraphQueryServiceCertainSourcesTest {
         entityId = UUID.randomUUID();
         entity = KnowledgeEntity.builder().id(entityId).displayName("Igor").type("PERSON").ownerId(ownerId).build();
         lenient().when(currentUserService.findUserId()).thenReturn(Optional.of(ownerId));
+    }
+
+    @Test
+    void certainParticipantNamesForPathsReturnsOnlyCertainNonGenericNames() {
+        KnowledgeEntity igor = entity;
+        KnowledgeEntity animal = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("animal 1").type("ANIMAL").ownerId(ownerId).build();
+        KnowledgeEntity pendingEntity = KnowledgeEntity.builder()
+                .id(UUID.randomUUID()).displayName("person 1").type("PERSON").ownerId(ownerId).build();
+
+        EntityMention confirmedIgor = EntityMention.builder()
+                .id(UUID.randomUUID()).entity(igor).filePath("dir://photo.jpg")
+                .label("Igor").confidence(new BigDecimal("0.900")).status(MentionStatus.CONFIRMED).build();
+        EntityMention suggested = EntityMention.builder()
+                .id(UUID.randomUUID()).entity(igor).filePath("dir://photo.jpg")
+                .label("Igor").confidence(new BigDecimal("0.900")).status(MentionStatus.SUGGESTED).build();
+        EntityMention pendingPerson = EntityMention.builder()
+                .id(UUID.randomUUID()).entity(pendingEntity).filePath("dir://photo.jpg")
+                .label("person 1").confidence(new BigDecimal("0.900")).status(MentionStatus.PENDING).build();
+        EntityMention confirmedAnimal = EntityMention.builder()
+                .id(UUID.randomUUID()).entity(animal).filePath("dir://photo.jpg")
+                .label("animal 1").confidence(new BigDecimal("0.900")).status(MentionStatus.CONFIRMED).build();
+
+        when(mentionRepository.findByFilePath("dir://photo.jpg"))
+                .thenReturn(List.of(confirmedIgor, suggested, pendingPerson, confirmedAnimal));
+        when(mentionEvidencePolicy.isCertain(confirmedIgor)).thenReturn(true);
+        when(mentionEvidencePolicy.isCertain(suggested)).thenReturn(false);
+        when(mentionEvidencePolicy.isCertain(pendingPerson)).thenReturn(false);
+        when(mentionEvidencePolicy.isCertain(confirmedAnimal)).thenReturn(true);
+        when(identityResolutionService.isGenericPersonLabel("Igor")).thenReturn(false);
+        when(identityResolutionService.isGenericPersonLabel("animal 1")).thenReturn(false);
+
+        List<String> names = service.certainParticipantNamesForPaths(List.of("dir://photo.jpg"));
+
+        assertEquals(List.of("Igor", "animal 1"), names);
+        assertFalse(names.contains("person 1"));
     }
 
     @Test
@@ -90,6 +128,28 @@ class GraphQueryServiceCertainSourcesTest {
     }
 
     @Test
+    void resolvesAtFileOnlyInsideCurrentOwnerLibrary() {
+        FileEntity selected = FileEntity.builder().path("dir://mine/photo.jpg")
+                .fileName("photo.jpg").ownerId(ownerId).build();
+        FileEntity other = FileEntity.builder().path("dir://mine/other.jpg")
+                .fileName("other.jpg").ownerId(ownerId).build();
+        when(fileRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(selected, other));
+
+        assertEquals(List.of(selected.getPath()),
+                service.resolveExplicitFileScope("Co przedstawia @photo.jpg?"));
+    }
+
+    @Test
+    void resolvesAtFileWithSpacesFromOwnedLibrary() {
+        FileEntity selected = FileEntity.builder().path("dir://mine/wakacje/photo one.jpg")
+                .fileName("photo one.jpg").ownerId(ownerId).build();
+        when(fileRepository.findAllByOwnerId(ownerId)).thenReturn(List.of(selected));
+
+        assertEquals(List.of(selected.getPath()),
+                service.resolveExplicitFileScope("Co przedstawia @photo one.jpg?"));
+    }
+
+    @Test
     void hasCertainEvidenceRequiresConfirmedMention() {
         EntityMention suggested = EntityMention.builder()
                 .id(UUID.randomUUID())
@@ -104,6 +164,22 @@ class GraphQueryServiceCertainSourcesTest {
         when(factRepository.findByFilePath("dir://x.jpg")).thenReturn(List.of());
 
         assertFalse(service.hasCertainEvidenceForFile("dir://x.jpg"));
+    }
+
+    @Test
+    void relationWithUncertainTargetIsNotCertainGraphEvidence() {
+        EntityMention subject = confirmed(entity, "dir://relation.jpg");
+        EntityMention target = EntityMention.builder().id(UUID.randomUUID())
+                .filePath("dir://relation.jpg").label("person 2")
+                .confidence(new BigDecimal("0.900")).status(MentionStatus.PENDING).build();
+        Fact relation = Fact.builder().mention(subject).targetMention(target).action("obok")
+                .object("person 2").filePath("dir://relation.jpg")
+                .confidence(new BigDecimal("0.900")).build();
+        when(factRepository.findByFilePath("dir://relation.jpg")).thenReturn(List.of(relation));
+        when(mentionEvidencePolicy.isCertain(subject)).thenReturn(true);
+        when(mentionEvidencePolicy.isCertain(target)).thenReturn(false);
+
+        assertTrue(service.getCertainFactsForFile("dir://relation.jpg").isEmpty());
     }
 
     @Test
@@ -123,7 +199,6 @@ class GraphQueryServiceCertainSourcesTest {
         when(fileRepository.findByPath(anyString())).thenAnswer(invocation -> Optional.of(
                 com.rag.rag.folder.entity.FileEntity.builder()
                         .path(invocation.getArgument(0)).fileType("image/jpeg").build()));
-
         assertEquals(List.of("dir://shared.jpg"),
                 service.imagePathsForAllEntities(List.of("Igor", "Anna")));
     }
@@ -170,6 +245,9 @@ class GraphQueryServiceCertainSourcesTest {
         when(fileRepository.findByPath(anyString())).thenAnswer(invocation -> Optional.of(
                 com.rag.rag.folder.entity.FileEntity.builder()
                         .path(invocation.getArgument(0)).fileType("image/jpeg").build()));
+        when(fileRepository.findByPathAndOwnerId("dir://shared.jpg", ownerId)).thenReturn(Optional.of(
+                com.rag.rag.folder.entity.FileEntity.builder().path("dir://shared.jpg")
+                        .fileType("image/jpeg").ownerId(ownerId).build()));
         when(mentionRepository.findByFilePath("dir://shared.jpg")).thenReturn(List.of(igorShared, annaShared));
         when(factRepository.findByFilePath("dir://shared.jpg")).thenReturn(List.of());
 

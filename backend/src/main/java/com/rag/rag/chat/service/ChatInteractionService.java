@@ -172,6 +172,12 @@ public class ChatInteractionService {
         if (noGrounding) {
             answer = "Nie znaleziono informacji w dokumentach.";
             sources = List.of();
+        } else {
+            // Certain graph/sources win over free-form vision/file capability refusals.
+            List<String> rosterPaths = rosterPaths(plan, graphEvidence, sources);
+            List<String> certainNames = graphQueryService.certainParticipantNamesForPaths(rosterPaths);
+            boolean hasCertain = graphEvidence.hasEvidence() || !sources.isEmpty();
+            answer = ChatAnswerGrounding.resolveAgainstDenial(answer, certainNames, hasCertain);
         }
         String cleaned = removeTechnicalReferences(answer, sources);
         List<QueryEvidenceDto> sourceEvidence = sources.stream()
@@ -223,6 +229,14 @@ public class ChatInteractionService {
         if (answer == null || answer.isBlank()) {
             answer = VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER;
             uncertain = true;
+        }
+        if (!visualSources.isEmpty()) {
+            List<String> matchPaths = visualSources.stream()
+                    .map(SourceDto::path)
+                    .filter(path -> path != null && !path.isBlank())
+                    .toList();
+            List<String> certainNames = graphQueryService.certainParticipantNamesForPaths(matchPaths);
+            answer = ChatAnswerGrounding.resolveAgainstDenial(answer, certainNames, true);
         }
         String cleaned = removeTechnicalReferences(answer, visualSources);
         if (cleaned == null || cleaned.isBlank()) {
@@ -295,17 +309,51 @@ public class ChatInteractionService {
             return "";
         }
         String cleaned = answer;
-        for (SourceDto source : sources) {
-            if (source.path() != null) cleaned = cleaned.replace(source.path(), "");
-            if (source.fileName() != null) {
-                cleaned = cleaned.replace("@" + source.fileName(), "");
-                cleaned = cleaned.replace(source.fileName(), "");
+        if (sources != null) {
+            for (SourceDto source : sources) {
+                if (source.path() != null) cleaned = cleaned.replace(source.path(), "");
+                if (source.fileName() != null) {
+                    cleaned = cleaned.replace("@" + source.fileName(), "");
+                    cleaned = cleaned.replace(source.fileName(), "");
+                }
             }
         }
         cleaned = DIR_PATH.matcher(cleaned).replaceAll("");
         cleaned = AT_FILENAME.matcher(cleaned).replaceAll("");
         cleaned = cleaned.replaceAll("(?i)\\b(źródło|zrodlo|plik|source)\\s*[:=]\\s*\\S+", "");
-        return cleaned.replaceAll("[ \\t]+", " ").replaceAll("\\n{3,}", "\n\n").trim();
+        cleaned = cleaned.replaceAll("[ \\t]+", " ").replaceAll("\\n{3,}", "\n\n").trim();
+        return ChatAnswerGrounding.cleanEmptyQuoteArtifacts(cleaned);
+    }
+
+    /**
+     * Paths used to load certain participant names: plan fileScope, then certain graph paths,
+     * then final source paths. Technical set only — no question routing.
+     */
+    private static List<String> rosterPaths(QueryPlan plan, GraphEvidenceResult graphEvidence,
+                                            List<SourceDto> sources) {
+        LinkedHashMap<String, Boolean> paths = new LinkedHashMap<>();
+        if (plan != null && plan.fileScope() != null) {
+            for (String path : plan.fileScope()) {
+                if (path != null && !path.isBlank()) {
+                    paths.putIfAbsent(path.trim(), Boolean.TRUE);
+                }
+            }
+        }
+        if (graphEvidence != null && graphEvidence.certainPaths() != null) {
+            for (String path : graphEvidence.certainPaths()) {
+                if (path != null && !path.isBlank()) {
+                    paths.putIfAbsent(path.trim(), Boolean.TRUE);
+                }
+            }
+        }
+        if (sources != null) {
+            for (SourceDto source : sources) {
+                if (source != null && source.path() != null && !source.path().isBlank()) {
+                    paths.putIfAbsent(source.path().trim(), Boolean.TRUE);
+                }
+            }
+        }
+        return List.copyOf(paths.keySet());
     }
 
     private String fileName(String path) {

@@ -3,6 +3,7 @@ package com.rag.rag.chat.service;
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.Result;
 import dev.langchain4j.service.UserMessage;
+import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.spring.AiService;
 import dev.langchain4j.service.spring.AiServiceWiringMode;
 
@@ -21,13 +22,19 @@ public interface ChatService {
             Jesteś asystentem dokumentów i grafu wiedzy. Odpowiadaj po polsku.
             Używaj wyłącznie dostarczonych, zweryfikowanych dowodów. Sekcje grafu wiedzy
             mają pierwszeństwo przed fragmentami dokumentów.
+            Gdy w kontekście są imiona lub etykiety uczestników zdjęcia, wymień je w odpowiedzi.
+            Kontekst tekstowy o obrazach z bazy i grafu jest pełnoprawnym dowodem — nie mów,
+            że nie widzisz zdjęć, nie masz dostępu do plików ani nie możesz określić, kto
+            jest na zdjęciu, gdy takie informacje są w dostarczonym kontekście.
             Gdy brakuje istotnych informacji, odpowiedz dokładnie:
             "Nie znaleziono informacji w dokumentach."
             Odpowiedź ma być krótka i zwięzła: zwykle jedno zdanie, najwyżej dwa.
-            Nie opisuj ponownie wyglądu osób, sceny, ubrań ani szczegółów z dowodów —
-            szczegóły i źródła są w UI. Nie pisz o pewności, score ani „na podstawie dowodów”.
+            Odpowiadaj konkretnie na szczegół, o który pyta użytkownik, w tym czynność,
+            wygląd lub scenę, jeżeli tego dotyczy pytanie. Nie dodawaj nieproszonych opisów.
+            Nie pisz o pewności, score ani „na podstawie dowodów”.
             Nie umieszczaj nazw plików, ścieżek, identyfikatorów ani list źródeł w treści.
             """;
 
+    @SystemMessage(ANSWER_INSTRUCTIONS)
     Result<String> answer(@MemoryId UUID chatId, @UserMessage String question);
 }

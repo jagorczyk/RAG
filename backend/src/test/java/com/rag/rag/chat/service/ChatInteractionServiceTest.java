@@ -55,6 +55,8 @@ class ChatInteractionServiceTest {
         lenient().when(graphQueryService.buildContextForEntities(any())).thenReturn("");
         lenient().when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
                 .thenReturn(new GraphEvidenceResult("", List.of()));
+        lenient().when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of());
     }
 
     @Test
@@ -529,6 +531,124 @@ class ChatInteractionServiceTest {
         assertNotEquals("NO_EVIDENCE", response.answerKind());
         assertEquals(1, response.sources().size());
         assertEquals("dir://action.jpg", response.sources().get(0).path());
+    }
+
+    @Test
+    void certainGraphParticipantsOverrideVisionCapabilityDenial() {
+        // Shipped text/graph path: model refuses vision while certain graph names exist → roster.
+        String question = "Pytanie o uczestników pliku w zakresie.";
+        String path = "dir://awdaw/4C Matura-342.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(path),
+                question, "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "- entity=Igor; file=" + path + "\n- entity=Piotrek; file=" + path,
+                        List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Igor", "Piotrek", "Bargiel", "Dawid", "Olek"));
+        Result<String> result = Result.<String>builder()
+                .content("Niestety, nie mogę zobaczyć zdjęć ani obrazów, więc nie jestem w stanie określić, kto jest na zdjęciu.")
+                .build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "4C Matura-342.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertFalse(ChatAnswerGrounding.isCapabilityDenial(response.response()));
+        assertTrue(response.response().contains("Igor"));
+        assertTrue(response.response().contains("Piotrek"));
+        assertTrue(response.response().contains("Bargiel"));
+        assertTrue(response.response().contains("Dawid"));
+        assertTrue(response.response().contains("Olek"));
+        assertEquals(1, response.sources().size());
+        assertEquals(path, response.sources().get(0).path());
+        assertFalse(response.uncertain());
+        assertNotEquals("NO_EVIDENCE", response.answerKind());
+        verify(graphQueryService).certainParticipantNamesForPaths(anyList());
+    }
+
+    @Test
+    void noCertainGraphOrSourcesStillUsesNoEvidenceDenial() {
+        QueryPlan plan = new QueryPlan("Pytanie bez dowodów", List.of(), List.of(),
+                "Pytanie bez dowodów", "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z dowodów.");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("", List.of()));
+        Result<String> result = Result.<String>builder()
+                .content("Nie mogę zobaczyć zdjęć.")
+                .build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of());
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals("Nie znaleziono informacji w dokumentach.", response.response());
+        assertEquals("NO_EVIDENCE", response.answerKind());
+        assertTrue(response.sources().isEmpty());
+        assertTrue(response.uncertain());
+        // Roster path must not invent participants without certain evidence.
+        verify(graphQueryService, never()).certainParticipantNamesForPaths(anyList());
+    }
+
+    @Test
+    void strippingFilenameDoesNotLeaveEmptyQuoteShellsInAnswer() {
+        String path = "dir://awdaw/4C Matura-342.jpg";
+        String fileName = "4C Matura-342.jpg";
+        QueryPlan plan = new QueryPlan("Opisz kontekst", List.of(), List.of(path),
+                "Opisz kontekst", "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz krótko.");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("- entity=Igor; file=" + path, List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Igor"));
+        // Non-denial answer that embeds the filename in quotes (post-strip must clean shells).
+        Result<String> result = Result.<String>builder()
+                .content("Na zdjęciu widać grupę osób, takich jak „" + fileName + "”.")
+                .build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, fileName, 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertFalse(response.response().contains(fileName));
+        assertFalse(response.response().contains("„”"));
+        assertFalse(response.response().contains("\"\""));
+        assertFalse(response.response().contains("«»"));
+        assertFalse(response.response().toLowerCase().contains("takich jak"));
+    }
+
+    @Test
+    void visualMatchDenialWithCertainNamesIsReplacedByRoster() {
+        String path = "dir://awdaw/4C Matura-342.jpg";
+        String question = "Warunek wizualny z zakresem pliku";
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(path),
+                question, "warunek", true, false, QueryPlan.RetrievalMode.VISUAL_VALIDATION,
+                "Odpowiedz z obrazu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        VisualQueryMatch match = new VisualQueryMatch(path, BigDecimal.valueOf(0.9),
+                List.of("scena potwierdzona"), VisualMatchDecision.Decision.MATCH, List.of(),
+                BigDecimal.ONE, BigDecimal.valueOf(0.9));
+        when(dynamicVisualMatcher.findEvidence(any(QueryPlan.class))).thenReturn(List.of(match));
+        when(ingestionService.createSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "4C Matura-342.jpg", 1.0, null, "IMAGE"));
+        when(verifiedVisualAnswerService.answer(eq(plan.question()), eq(List.of(match))))
+                .thenReturn("Nie mam dostępu do konkretnych plików, zdjęć ani obrazów.");
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Igor", "Dawid"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertFalse(ChatAnswerGrounding.isCapabilityDenial(response.response()));
+        assertTrue(response.response().contains("Igor"));
+        assertTrue(response.response().contains("Dawid"));
+        assertEquals(1, response.sources().size());
+        assertEquals(QueryPlan.RetrievalMode.VISUAL_VALIDATION.name(), response.answerKind());
     }
 
     private static QueryPlan coPresencePlan(String question, List<String> entities,

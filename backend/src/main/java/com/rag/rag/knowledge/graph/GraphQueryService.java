@@ -25,6 +25,8 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Reads graph evidence selected by the query planner.  This service never
@@ -37,6 +39,7 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class GraphQueryService {
+    private static final Pattern FILE_REFERENCE = Pattern.compile("@\\\"([^\\\"]+)\\\"|@([^\\s,\\]!?]+)");
     private final KnowledgeEntityRepository entityRepository;
     private final EntityMentionRepository mentionRepository;
     private final FileRepository fileRepository;
@@ -85,6 +88,41 @@ public class GraphQueryService {
                         ? fileRepository.findByPath(path).isPresent()
                         : fileRepository.findByPathAndOwnerId(path, ownerId).isPresent())
                 .distinct().toList();
+    }
+
+    /** Resolves the technical {@code @file} syntax only inside the current owner's library. */
+    @Transactional(readOnly = true)
+    public List<String> resolveExplicitFileScope(String question) {
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        if (ownerId == null || question == null || question.isBlank()) return List.of();
+
+        LinkedHashSet<String> references = new LinkedHashSet<>();
+        Matcher matcher = FILE_REFERENCE.matcher(question);
+        while (matcher.find()) {
+            String value = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+            if (value != null && !value.isBlank()) references.add(value.trim());
+        }
+        if (references.isEmpty()) return List.of();
+
+        LinkedHashSet<String> paths = new LinkedHashSet<>();
+        String normalizedQuestion = question.toLowerCase(Locale.ROOT);
+        for (FileEntity file : fileRepository.findAllByOwnerId(ownerId)) {
+            if (file.getPath() == null) continue;
+            boolean exactLibraryMention = file.getFileName() != null
+                    && normalizedQuestion.contains("@" + file.getFileName().toLowerCase(Locale.ROOT));
+            for (String reference : references) {
+                if (exactLibraryMention || file.getPath().equalsIgnoreCase(reference)
+                        || (file.getFileName() != null && file.getFileName().equalsIgnoreCase(reference))) {
+                    paths.add(file.getPath());
+                    break;
+                }
+            }
+        }
+        return List.copyOf(paths);
+    }
+
+    public boolean hasExplicitFileReference(String question) {
+        return question != null && FILE_REFERENCE.matcher(question).find();
     }
 
     @Transactional(readOnly = true)
@@ -157,12 +195,20 @@ public class GraphQueryService {
                 if (!fileContext.isBlank()) contexts.add(fileContext);
             }
         } else {
-            String entityContext = buildContextForEntities(validatedEntities);
+            Set<String> allowedPaths = validatedScope.isEmpty()
+                    ? Set.of()
+                    : new LinkedHashSet<>(validatedScope);
+            String entityContext = buildContextForEntities(validatedEntities, allowedPaths);
             if (!entityContext.isBlank()) contexts.add(entityContext);
             certainPaths.addAll(imagePathsForEntities(validatedEntities));
+            if (!validatedScope.isEmpty() && !validatedEntities.isEmpty()) {
+                certainPaths.retainAll(validatedScope);
+            }
             for (String path : validatedScope) {
-                String fileContext = buildFullContextForFile(path);
-                if (!fileContext.isBlank()) contexts.add(fileContext);
+                if (validatedEntities.isEmpty()) {
+                    String fileContext = buildFullContextForFile(path);
+                    if (!fileContext.isBlank()) contexts.add(fileContext);
+                }
                 if (hasCertainEvidenceForFile(path, validatedEntities)) certainPaths.add(path);
             }
         }
@@ -180,6 +226,37 @@ public class GraphQueryService {
                 .map(mentionEvidencePolicy::evidenceConfidence)
                 .filter(value -> value != null)
                 .max(Comparator.naturalOrder()).orElse(BigDecimal.ZERO);
+    }
+
+    /**
+     * Display names of certain (CONFIRMED) identity-linked participants on the given files.
+     * Skips generic vision labels (e.g. person 1). Order is stable, de-duplicated.
+     */
+    @Transactional(readOnly = true)
+    public List<String> certainParticipantNamesForPaths(List<String> filePaths) {
+        if (filePaths == null || filePaths.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (String path : filePaths) {
+            if (path == null || path.isBlank()) {
+                continue;
+            }
+            for (EntityMention mention : mentionRepository.findByFilePath(path)) {
+                if (!isCertainMention(mention) || mention.getEntity() == null) {
+                    continue;
+                }
+                String displayName = mention.getEntity().getDisplayName();
+                if (displayName == null || displayName.isBlank()) {
+                    continue;
+                }
+                if (identityResolutionService.isGenericPersonLabel(displayName)) {
+                    continue;
+                }
+                names.add(displayName.trim());
+            }
+        }
+        return List.copyOf(names);
     }
 
     /**
@@ -208,10 +285,14 @@ public class GraphQueryService {
 
     @Transactional(readOnly = true)
     public String buildContextForEntities(List<String> entityNames) {
+        return buildContextForEntities(entityNames, Set.of());
+    }
+
+    private String buildContextForEntities(List<String> entityNames, Set<String> allowedPaths) {
         StringBuilder context = new StringBuilder();
         for (String name : validateEntityNames(entityNames)) {
             findOwnedEntityByName(name)
-                    .ifPresent(entity -> appendEntityContext(context, entity));
+                    .ifPresent(entity -> appendEntityContext(context, entity, allowedPaths));
         }
         return context.toString();
     }
@@ -219,6 +300,8 @@ public class GraphQueryService {
     @Transactional(readOnly = true)
     public String buildFullContextForFile(String filePath) {
         if (filePath == null || filePath.isBlank()) return "";
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        if (ownerId == null || fileRepository.findByPathAndOwnerId(filePath, ownerId).isEmpty()) return "";
         StringBuilder context = new StringBuilder();
         // Certain identity-linked mentions and facts only (principle 2).
         List<EntityMention> mentions = mentionRepository.findByFilePath(filePath).stream()
@@ -244,9 +327,19 @@ public class GraphQueryService {
                 .toList();
     }
 
-    private void appendEntityContext(StringBuilder context, KnowledgeEntity entity) {
+    private void appendEntityContext(StringBuilder context, KnowledgeEntity entity, Set<String> allowedPaths) {
         for (EntityMention mention : mentionRepository.findByEntityId(entity.getId())) {
-            if (isCertainMention(mention)) appendMention(context, mention);
+            if (!isCertainMention(mention)
+                    || (allowedPaths != null && !allowedPaths.isEmpty()
+                    && !allowedPaths.contains(mention.getFilePath()))) {
+                continue;
+            }
+            appendMention(context, mention);
+            for (Fact fact : getCertainFactsForFile(mention.getFilePath())) {
+                if (fact.getMention() != null && mention.getId().equals(fact.getMention().getId())) {
+                    appendFact(context, fact);
+                }
+            }
         }
     }
 
@@ -292,7 +385,8 @@ public class GraphQueryService {
         return fact != null
                 && fact.getConfidence() != null
                 && fact.getConfidence().compareTo(BigDecimal.valueOf(minFactConfidence)) >= 0
-                && isCertainMention(fact.getMention());
+                && isCertainMention(fact.getMention())
+                && (fact.getTargetMention() == null || isCertainMention(fact.getTargetMention()));
     }
 
     private boolean isImagePath(String path) {
