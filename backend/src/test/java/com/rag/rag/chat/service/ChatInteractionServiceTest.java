@@ -638,6 +638,32 @@ class ChatInteractionServiceTest {
     }
 
     @Test
+    void englishGreetingNonAnswerWithSourcesIsReplacedByEntityPresence() {
+        // Live failure mode: DeepInfra returned a generic greeting while hybrid sources were good.
+        String question = "Na których zdjęciach jest ta osoba?";
+        String path = "dir://awdaw/a.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Anna"), List.of(),
+                question, "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("- entity=Anna; file=" + path, List.of(path)));
+        Result<String> result = Result.<String>builder()
+                .content("Hello! How can I assist you today?")
+                .build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "a.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertFalse(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(response.response()));
+        assertEquals("Anna jest na potwierdzonych zdjęciach w bibliotece.", response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals(path, response.sources().get(0).path());
+    }
+
+    @Test
     void noCertainGraphOrSourcesStillUsesNoEvidenceDenial() {
         QueryPlan plan = new QueryPlan("Pytanie bez dowodów", List.of(), List.of(),
                 "Pytanie bez dowodów", "", false, false, QueryPlan.RetrievalMode.HYBRID,

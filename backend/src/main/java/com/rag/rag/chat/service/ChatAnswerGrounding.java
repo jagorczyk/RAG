@@ -113,6 +113,48 @@ public final class ChatAnswerGrounding {
     }
 
     /**
+     * True when the model returned an empty shell or generic assistant greeting instead of
+     * using retrieval/graph evidence. Answer shape only — not user-question routing.
+     */
+    public static boolean isEmptyOrGreetingNonAnswer(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return true;
+        }
+        String trimmed = answer.trim();
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        // Very short pure greetings / openers with no substance.
+        if (trimmed.length() <= 80 && containsAny(lower,
+                "how can i assist you",
+                "how can i help you",
+                "how may i assist you",
+                "how may i help you",
+                "what can i help you with",
+                "what can i do for you",
+                "w czym mogę pomóc",
+                "w czym moge pomoc",
+                "jak mogę pomóc",
+                "jak moge pomoc",
+                "czym mogę pomóc",
+                "czym moge pomoc",
+                "jak mogę ci pomóc",
+                "jak moge ci pomoc")) {
+            return true;
+        }
+        // Exact-ish greeting-only lines (optionally with Hello/Hi/Cześć prefix).
+        if (lower.matches("^(hello|hi|hey|cześć|czesc|witaj)[!.,\\s].{0,60}$")
+                && containsAny(lower, "assist", "help", "pomóc", "pomoc")) {
+            return true;
+        }
+        return lower.equals("hello!")
+                || lower.equals("hello")
+                || lower.equals("hi!")
+                || lower.equals("hi")
+                || lower.equals("hey!")
+                || lower.equals("cześć!")
+                || lower.equals("czesc!");
+    }
+
+    /**
      * True when the answer is free-form encyclopedic / etymology-style prose about a name
      * rather than evidence-backed photo content. Answer shape only — no person-name routing.
      */
@@ -142,6 +184,15 @@ public final class ChatAnswerGrounding {
                 "derives from greek",
                 "popular name meaning",
                 "etymology of the name");
+    }
+
+    /**
+     * True when the model answer must not be shown as-is despite certain evidence.
+     */
+    public static boolean shouldRewriteUngroundedAnswer(String modelAnswer, boolean entityScoped) {
+        return isCapabilityDenial(modelAnswer)
+                || isEmptyOrGreetingNonAnswer(modelAnswer)
+                || (entityScoped && isGeneralKnowledgeEssay(modelAnswer));
     }
 
     /**
@@ -175,9 +226,7 @@ public final class ChatAnswerGrounding {
         if (!hasCertainEvidenceOrSources) {
             return modelAnswer == null ? "" : modelAnswer;
         }
-        boolean rewrite = isCapabilityDenial(modelAnswer)
-                || (entityScoped && isGeneralKnowledgeEssay(modelAnswer));
-        if (!rewrite) {
+        if (!shouldRewriteUngroundedAnswer(modelAnswer, entityScoped)) {
             return modelAnswer == null ? "" : modelAnswer;
         }
         List<String> names = normalizeNames(recoveryNames);

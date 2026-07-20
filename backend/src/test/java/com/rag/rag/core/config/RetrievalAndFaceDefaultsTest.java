@@ -24,6 +24,10 @@ class RetrievalAndFaceDefaultsTest {
         assertEquals("15", props.getProperty("rag.retrieval.graph-max-results"));
         assertEquals("40", props.getProperty("rag.retrieval.lexical-max-results"));
 
+        assertEquals("90", defaultFromPlaceholder(props.getProperty("llm.timeout-seconds")));
+        assertEquals("120", defaultFromPlaceholder(props.getProperty("llm.vision.timeout-seconds")));
+        assertEquals("0", defaultFromPlaceholder(props.getProperty("llm.vision.max-retries")));
+
         // Env placeholders: ${FACE_MATCH_THRESHOLD:0.50}
         assertEquals("0.50", defaultFromPlaceholder(props.getProperty("face.match.threshold")));
         assertEquals("0.45", defaultFromPlaceholder(props.getProperty("face.match.suggestion-threshold")));

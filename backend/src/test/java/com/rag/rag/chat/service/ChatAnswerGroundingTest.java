@@ -45,6 +45,35 @@ class ChatAnswerGroundingTest {
     }
 
     @Test
+    void detectsEmptyAndGreetingNonAnswers() {
+        assertTrue(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(
+                "Hello! How can I assist you today?"));
+        assertTrue(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(
+                "Hi! How can I help you?"));
+        assertTrue(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(
+                "Cześć! W czym mogę pomóc?"));
+        assertTrue(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(""));
+        assertTrue(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(null));
+        assertFalse(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(
+                "Osoba jest na potwierdzonych zdjęciach w bibliotece."));
+        assertFalse(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(
+                "Na zdjęciu stoi Igor w garniturze."));
+    }
+
+    @Test
+    void greetingNonAnswerWithEvidenceIsReplacedByGroundedPresence() {
+        String hello = "Hello! How can I assist you today?";
+        String entityScoped = ChatAnswerGrounding.resolveGroundedAnswer(
+                hello, List.of("Anna"), true, true);
+        assertEquals("Anna jest na potwierdzonych zdjęciach w bibliotece.", entityScoped);
+
+        String roster = ChatAnswerGrounding.resolveGroundedAnswer(
+                hello, List.of("Igor", "Anna"), true, false);
+        assertEquals("Na zdjęciu są Igor i Anna.", roster);
+        assertFalse(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(entityScoped));
+    }
+
+    @Test
     void resolveAgainstIdentityIgnoranceUsesRosterWhenNamesExist() {
         String denial = "Nie jestem w stanie odpowiedzieć na to pytanie, ponieważ nie mam informacji, o kogo konkretnie pytasz. Jeśli podasz więcej szczegółów lub kontekst, postaram się pomóc!";
         String resolved = ChatAnswerGrounding.resolveAgainstDenial(
