@@ -126,11 +126,24 @@ public class ChatInteractionService {
             answer = "Nie udało się przygotować odpowiedzi na podstawie dostępnych danych.";
         }
         List<SourceDto> sources = mergeSources(result, plan, graphEvidence, effectiveMode);
+        // Only probe raw retrieval when there is no graph grounding — avoid extra work / side effects
+        // on pure GRAPH / joint-file turns (tests and source merge already special-case those).
+        boolean mayLackGraph = graphContext.isBlank() && !graphEvidence.hasEvidence();
+        List<SourceDto> retrievedSources = List.of();
+        if (mayLackGraph && result != null) {
+            retrievedSources = ingestionService.getSources(result);
+        }
+        // Empty index + no graph: do not let the LLM invent answers from world knowledge.
+        boolean noGrounding = mayLackGraph && retrievedSources.isEmpty();
+        if (noGrounding) {
+            answer = "Nie znaleziono informacji w dokumentach.";
+        }
         String cleaned = removeTechnicalReferences(answer, sources);
         boolean uncertain = plan.ambiguous()
                 || graphMissFallback
-                || (sources.isEmpty() && !graphContext.isBlank());
-        String answerKind = effectiveMode.name();
+                || noGrounding
+                || sources.isEmpty();
+        String answerKind = noGrounding ? "NO_EVIDENCE" : effectiveMode.name();
         saveAiMessage(chatId, cleaned, sources, List.of(), answerKind, uncertain);
         return new MessageResponse(cleaned, sources, uncertain, List.of(), answerKind);
     }

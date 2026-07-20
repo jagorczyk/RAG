@@ -223,7 +223,14 @@ public class RetrievalConfiguration {
                 if (!graphContext.isEmpty()) {
                     return UserMessage.from(graphContext + "\n\nPytanie użytkownika: " + actualQuestion);
                 }
-                return UserMessage.from(actualQuestion);
+                // No document chunks and no graph block in the query — refuse instead of free-form.
+                return UserMessage.from("""
+                        Brak fragmentów dokumentów w indeksie dla tego pytania.
+                        Odpowiedz dokładnie jednym zdaniem: Nie znaleziono informacji w dokumentach.
+                        Nie zgaduj i nie używaj wiedzy spoza systemu.
+
+                        Pytanie użytkownika: %s
+                        """.formatted(actualQuestion));
             }
 
             String contextJoined = contents.stream()

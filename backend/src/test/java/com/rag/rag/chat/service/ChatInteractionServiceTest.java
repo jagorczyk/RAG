@@ -97,13 +97,35 @@ class ChatInteractionServiceTest {
         // Named entities without certain graph paths: hybrid text may answer, but sources stay empty
         // so another person's document is not promoted as a certain source for Igor.
         verify(chatAiService).answer(eq(chatId), anyString());
-        verify(ingestionService).getSources(result);
+        verify(ingestionService, atLeastOnce()).getSources(result);
         verify(ingestionService, never()).createGraphFactSourceDto(anyString(), any(), anyDouble());
         assertEquals("Igor je zupę według dokumentu.", response.response());
         assertFalse(response.response().contains("Nie znaleziono pewnych informacji w grafie wiedzy"));
         assertEquals(QueryPlan.RetrievalMode.HYBRID.name(), response.answerKind());
         assertTrue(response.sources().isEmpty());
         assertTrue(response.uncertain());
+    }
+
+    @Test
+    void emptyRetrievalAndEmptyGraphForcesNoEvidenceAnswer() {
+        QueryPlan plan = new QueryPlan("Co jest na zdjęciu?", List.of(), List.of(),
+                "Co jest na zdjęciu?", "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z dowodów.");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("", List.of()));
+        Result<String> result = Result.<String>builder()
+                .content("Na zdjęciu widać plażę i palmy.") // hallucinated without retrieval
+                .build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of());
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals("Nie znaleziono informacji w dokumentach.", response.response());
+        assertTrue(response.sources().isEmpty());
+        assertTrue(response.uncertain());
+        assertEquals("NO_EVIDENCE", response.answerKind());
     }
 
     @Test
