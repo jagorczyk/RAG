@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, User, X } from "lucide-react";
+import { Trash2, User, X } from "lucide-react";
 import { FaceAnnotatedImage } from "@/components/ui/FaceAnnotatedImage";
 import { getFaceColor } from "@/lib/face-colors";
 import {
@@ -55,6 +55,11 @@ function mentionNeedsReview(mention: EntityMention): boolean {
   return name.startsWith("osoba ") || name === "osoba" || mention.status !== "CONFIRMED";
 }
 
+/** Stable face index for color + label (must match bbox overlay order). */
+function faceColorIndex(faceMentions: EntityMention[], mentionId: string): number {
+  const index = faceMentions.findIndex((item) => item.id === mentionId);
+  return index >= 0 ? index : 0;
+}
 
 export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdentityPromptProps) {
   const [fileIndex, setFileIndex] = useState(0);
@@ -63,7 +68,8 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
   const [entities, setEntities] = useState<KnowledgeEntity[]>([]);
   const [nameInputs, setNameInputs] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   const currentFile = files[fileIndex];
 
@@ -146,42 +152,89 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
     [entities]
   );
 
-  const goNext = () => {
+  const goNext = useCallback(() => {
     if (fileIndex + 1 < files.length) {
       setFileIndex((prev) => prev + 1);
       return;
     }
     onComplete();
-  };
+  }, [fileIndex, files.length, onComplete]);
 
-  const saveMentionName = async (mentionId: string) => {
-    const name = nameInputs[mentionId]?.trim();
-    if (!name) {
-      return;
+  const saveMentionName = async (
+    mentionId: string,
+    name: string,
+    allowDuplicateOnFile = false
+  ): Promise<boolean> => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return true;
     }
-    setSavingId(mentionId);
     const existing = personEntities.find(
-      (entity) => entity.displayName.toLowerCase() === name.toLowerCase()
+      (entity) => entity.displayName.toLowerCase() === trimmed.toLowerCase()
     );
-    const save = (allowDuplicateOnFile: boolean) =>
-      existing
-        ? confirmMention(mentionId, existing.id, allowDuplicateOnFile)
-        : renameMention(mentionId, name, allowDuplicateOnFile);
     try {
-      await save(false);
-      await loadFileData();
+      if (existing) {
+        await confirmMention(mentionId, existing.id, allowDuplicateOnFile);
+      } else {
+        await renameMention(mentionId, trimmed, allowDuplicateOnFile);
+      }
+      return true;
     } catch (error) {
-      if (error instanceof IdentityConflictError && window.confirm(
-        "Ta osoba jest już przypisana do innej twarzy na tym zdjęciu. Potwierdzić celowy wyjątek?"
-      )) {
-        await save(true);
-        await loadFileData();
-        return;
+      if (error instanceof IdentityConflictError) {
+        if (
+          !allowDuplicateOnFile &&
+          window.confirm(
+            "Ta osoba jest już przypisana do innej twarzy na tym zdjęciu. Potwierdzić celowy wyjątek?"
+          )
+        ) {
+          return saveMentionName(mentionId, trimmed, true);
+        }
+        return false;
       }
       console.error("Failed to save mention identity", error);
+      throw error;
+    }
+  };
+
+  /** Apply filled name inputs, then advance (Dalej / Gotowe). */
+  const processFilledNamesAndGoNext = async () => {
+    setSaving(true);
+    try {
+      for (const mention of reviewMentions) {
+        const name = nameInputs[mention.id]?.trim();
+        if (!name) {
+          continue;
+        }
+        const ok = await saveMentionName(mention.id, name);
+        if (!ok) {
+          return;
+        }
+      }
+      // Refresh entity list so subsequent files see newly created people.
+      try {
+        setEntities(await getAllEntities());
+      } catch {
+        /* non-fatal */
+      }
+      goNext();
+    } catch (error) {
+      console.error("Failed to process identities", error);
       alert("Nie udało się zapisać tożsamości.");
     } finally {
-      setSavingId(null);
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async (mentionId: string) => {
+    setRemovingId(mentionId);
+    try {
+      await rejectMention(mentionId);
+      await loadFileData();
+    } catch (error) {
+      console.error(error);
+      alert("Nie udało się usunąć detekcji.");
+    } finally {
+      setRemovingId(null);
     }
   };
 
@@ -220,9 +273,7 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
     if (!loading && nothingToReview && currentFile) {
       goNext();
     }
-    // goNext is stable enough via fileIndex/files; avoid stale loops by only depending on load state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, nothingToReview, currentFile?.path, fileIndex]);
+  }, [loading, nothingToReview, currentFile, goNext]);
 
   if (!currentFile) {
     return null;
@@ -244,6 +295,8 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
     );
   }
 
+  const busy = saving || removingId !== null;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4"
@@ -259,6 +312,9 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
             </h3>
             <p className="mt-0.5 text-sm text-ink-muted">
               {currentFile.fileName} · {fileIndex + 1} z {files.length}
+            </p>
+            <p className="mt-1 text-xs text-ink-muted">
+              Wpisz imiona i kliknij Gotowe — wtedy zapiszą się osoby. Usuń odrzuca fałszywą detekcję.
             </p>
           </div>
           <button type="button" onClick={onClose} className="btn-ghost p-1" aria-label="Zamknij">
@@ -279,33 +335,38 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
               {reviewMentions.length > 0 && (
                 <div className="space-y-3">
                   <h4 className="text-sm font-medium text-ink">Podpisz wykryte osoby</h4>
-                  {reviewMentions.map((mention, index) => {
-                    const color = getFaceColor(
-                      faceMentions.findIndex((item) => item.id === mention.id)
-                    );
+                  {reviewMentions.map((mention) => {
+                    const colorIndex = faceColorIndex(faceMentions, mention.id);
+                    const color = getFaceColor(colorIndex);
+                    const personNumber = colorIndex + 1;
                     return (
                       <div
                         key={mention.id}
-                        className="rounded-[8px] border bg-surface p-3"
-                        style={{ borderColor: color.border }}
+                        className="rounded-[8px] border-2 bg-surface p-3"
+                        style={{
+                          borderColor: color.border,
+                          backgroundColor: color.bg,
+                        }}
                       >
                         <div className="mb-2 flex flex-wrap items-center gap-2">
                           <span
-                            className="inline-block h-3 w-3 rounded-sm"
-                            style={{ backgroundColor: color.border }}
+                            className="inline-flex h-6 min-w-6 items-center justify-center rounded-md text-xs font-extrabold"
+                            style={{
+                              backgroundColor: color.border,
+                              color: color.text,
+                            }}
                             aria-hidden
-                          />
+                          >
+                            {personNumber}
+                          </span>
                           <span className="text-xs font-medium text-ink">
-                            Osoba {index + 1}
+                            Osoba {personNumber}
                           </span>
                           <span className="status-badge status-badge-suggested">
                             {mention.status === "CONFIRMED" ? "Do doprecyzowania" : "Do potwierdzenia"}
                           </span>
-                          <span className="text-xs text-ink-muted">
-                            wykryto: {mention.label}
-                          </span>
                         </div>
-                        <div className="relative z-20 flex flex-col gap-2 sm:flex-row">
+                        <div className="relative z-20 flex flex-col gap-2 sm:flex-row sm:items-center">
                           <input
                             type="text"
                             list={`upload-entity-suggestions-${mention.id}`}
@@ -317,7 +378,12 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                               }))
                             }
                             placeholder="Wpisz imię (np. Igor)"
-                            className="relative z-20 flex-1 rounded-[6px] border border-border bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+                            disabled={busy}
+                            className="relative z-20 flex-1 rounded-[6px] border-2 bg-surface-raised px-3 py-2 text-sm text-ink outline-none focus:outline focus:outline-2 focus:outline-offset-1"
+                            style={{
+                              borderColor: color.border,
+                              outlineColor: color.border,
+                            }}
                           />
                           <datalist id={`upload-entity-suggestions-${mention.id}`}>
                             {personEntities.map((entity) => (
@@ -326,49 +392,15 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
                           </datalist>
                           <button
                             type="button"
-                            onClick={() => saveMentionName(mention.id)}
-                            disabled={!nameInputs[mention.id]?.trim() || savingId === mention.id}
-                            className="btn-primary h-auto px-3 py-2 text-sm"
+                            onClick={() => handleRemove(mention.id)}
+                            disabled={busy}
+                            className="btn-secondary inline-flex h-auto items-center justify-center gap-1.5 px-3 py-2 text-sm text-error"
+                            aria-label={`Usuń detekcję osoby ${personNumber}`}
                           >
-                            <Check size={14} className="mr-1" />
-                            {savingId === mention.id ? "Zapisuję..." : "Potwierdź"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              setSavingId(mention.id);
-                              try {
-                                await rejectMention(mention.id);
-                                await loadFileData();
-                              } finally {
-                                setSavingId(null);
-                              }
-                            }}
-                            disabled={savingId === mention.id}
-                            className="btn-secondary h-auto px-3 py-2 text-sm text-error"
-                          >
-                            Odrzuć detekcję
+                            <Trash2 size={14} />
+                            {removingId === mention.id ? "Usuwam…" : "Usuń"}
                           </button>
                         </div>
-                        {mention.entityDisplayName &&
-                          !isGenericName(mention.entityDisplayName) &&
-                          mention.entityId && (
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                setSavingId(mention.id);
-                                try {
-                                  await confirmMention(mention.id, mention.entityId!);
-                                  await loadFileData();
-                                } finally {
-                                  setSavingId(null);
-                                }
-                              }}
-                              className="mt-2 text-xs text-accent hover:underline"
-                            >
-                              Potwierdź sugestię: {mention.entityDisplayName}
-                            </button>
-                          )}
                       </div>
                     );
                   })}
@@ -434,20 +466,29 @@ export function UploadIdentityPrompt({ files, onClose, onComplete }: UploadIdent
         </div>
 
         <footer className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
-          <button type="button" onClick={onClose} className="btn-ghost text-sm">
+          <button type="button" onClick={onClose} className="btn-ghost text-sm" disabled={busy}>
             Zamknij
           </button>
           <div className="flex gap-2">
-            <button type="button" onClick={goNext} className="btn-secondary text-sm">
+            <button
+              type="button"
+              onClick={goNext}
+              className="btn-secondary text-sm"
+              disabled={busy}
+            >
               {fileIndex + 1 < files.length ? "Pomiń · następne" : "Pomiń"}
             </button>
             <button
               type="button"
-              onClick={goNext}
+              onClick={() => void processFilledNamesAndGoNext()}
               className="btn-primary text-sm"
-              disabled={loading}
+              disabled={busy || loading}
             >
-              {fileIndex + 1 < files.length ? "Dalej" : "Gotowe"}
+              {saving
+                ? "Zapisuję…"
+                : fileIndex + 1 < files.length
+                  ? "Dalej"
+                  : "Gotowe"}
             </button>
           </div>
         </footer>
