@@ -84,7 +84,9 @@ class IngestionAcceptServiceTest {
                 mock(JdbcTemplate.class),
                 txManager,
                 mock(CurrentUserService.class),
-                mock(ObjectProvider.class)
+                mock(ObjectProvider.class),
+                mock(com.rag.rag.chat.repository.ChatMemoryRepository.class),
+                mock(com.rag.rag.chat.repository.ChatMessageRepository.class)
         );
         // Do not run processQueued in this unit — only accept + idempotency
         ReflectionTestUtils.setField(service, "asyncIngestEnabled", true);

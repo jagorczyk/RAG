@@ -159,6 +159,7 @@ export default function FoldersPage() {
     try {
       await clearAllData();
       setFolders([]);
+      setChats([]);
       setShowClearModal(false);
       setClearConfirmText("");
     } catch (error) {
@@ -520,7 +521,7 @@ export default function FoldersPage() {
       >
         <h3 className="text-lg font-extrabold text-ink">Wyczyścić wszystkie dane?</h3>
         <p className="mt-2 text-sm text-ink-muted">
-          Zostaną usunięte foldery, pliki, embeddingi i graf wiedzy. Wpisz{" "}
+          Zostaną usunięte osoby, rozmowy, wiadomości, foldery i pliki. Wpisz{" "}
           <span className="font-semibold text-ink">WYCZYSC</span>, aby potwierdzić.
         </p>
         <input

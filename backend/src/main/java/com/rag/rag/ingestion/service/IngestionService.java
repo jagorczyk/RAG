@@ -1,6 +1,9 @@
 package com.rag.rag.ingestion.service;
 
 import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.chat.entity.ChatMemoryEntity;
+import com.rag.rag.chat.repository.ChatMemoryRepository;
+import com.rag.rag.chat.repository.ChatMessageRepository;
 import com.rag.rag.folder.dto.UploadResultDto;
 import com.rag.rag.folder.entity.FolderEntity;
 import com.rag.rag.folder.entity.FileEntity;
@@ -36,6 +39,7 @@ import com.rag.rag.knowledge.entity.LivingEntityTypes;
 import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.entity.OrphanEntityCleanupPolicy;
 import com.rag.rag.knowledge.extraction.ExtractedEntityDto;
+import com.rag.rag.knowledge.extraction.FaceAnchorImageRenderer;
 import com.rag.rag.knowledge.extraction.StructuredVisionExtractor;
 import com.rag.rag.knowledge.extraction.StructuredVisionExtractor.ExtractionResult;
 import com.rag.rag.knowledge.extraction.VisionResultDto;
@@ -44,6 +48,7 @@ import com.rag.rag.knowledge.fact.Fact;
 import com.rag.rag.knowledge.face.FaceEmbedding;
 import com.rag.rag.knowledge.face.FaceIdentityService;
 import com.rag.rag.knowledge.face.FaceAnalyzeResponse;
+import com.rag.rag.knowledge.face.DetectedFaceDto;
 import com.rag.rag.knowledge.face.FaceRecognitionClient;
 import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
@@ -112,6 +117,8 @@ public class IngestionService {
     private final TransactionTemplate transactionTemplate;
     private final CurrentUserService currentUserService;
     private final ObjectProvider<DocumentIngestPublisher> documentIngestPublisher;
+    private final ChatMemoryRepository chatMemoryRepository;
+    private final ChatMessageRepository chatMessageRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionService(
@@ -133,7 +140,9 @@ public class IngestionService {
             JdbcTemplate jdbcTemplate,
             PlatformTransactionManager transactionManager,
             CurrentUserService currentUserService,
-            ObjectProvider<DocumentIngestPublisher> documentIngestPublisher
+            ObjectProvider<DocumentIngestPublisher> documentIngestPublisher,
+            ChatMemoryRepository chatMemoryRepository,
+            ChatMessageRepository chatMessageRepository
     ) {
         this.ingestor = ingestor;
         this.fileRepository = fileRepository;
@@ -154,6 +163,8 @@ public class IngestionService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.currentUserService = currentUserService;
         this.documentIngestPublisher = documentIngestPublisher;
+        this.chatMemoryRepository = chatMemoryRepository;
+        this.chatMessageRepository = chatMessageRepository;
     }
 
     private Document chooseParser(byte[] fileData, String path, String fileName, String extension) {
@@ -229,7 +240,6 @@ public class IngestionService {
                     .toOutputStream(outputStream);
 
             byte[] processedBytes = outputStream.toByteArray();
-            String base64Image = Base64.getEncoder().encodeToString(processedBytes);
             String contentHash = sha256Hex(imageData);
 
             FileEntity fileEntity = ensureFileEntityExists(path, fileName, mimeType, processedBytes, contentHash);
@@ -237,7 +247,13 @@ public class IngestionService {
             fileEntity.setFaceAnalysisStatus(ImageAnalysisStatus.PROCESSING);
             fileRepository.save(fileEntity);
 
-            ExtractionResult result = loadVisionResult(contentHash, base64Image, mimeType);
+            FaceAnalyzeResponse faceResponse = loadFaceResponse(contentHash, processedBytes, fileName);
+            List<DetectedFaceDto> detectedFaces = detectedFaces(faceResponse);
+            FaceAnchorImageRenderer.AnchoredImage anchoredImage = FaceAnchorImageRenderer.render(
+                    processedBytes, format, detectedFaces);
+            String base64Image = Base64.getEncoder().encodeToString(anchoredImage.bytes());
+            ExtractionResult result = loadVisionResult(contentHash, base64Image, mimeType,
+                    anchoredImage.anchors().keySet());
             setAnalysisStatus(path, ImageAnalysisAnalyzer.VISION, ImageAnalysisStatus.COMPLETED);
 
             if (result.isStructured() && result.resultDto() != null) {
@@ -283,6 +299,16 @@ public class IngestionService {
                                     existing -> existing,
                                     (first, ignored) -> first));
                     List<EntityMention> existingMentions = new ArrayList<>(mentionRepo.findByFilePath(path));
+                    // Legacy named mentions stored their geometry on face_embeddings only. Hydrate it before
+                    // matching the new face-anchored projection so facts migrate onto the confirmed mention.
+                    for (FaceEmbedding embedding : faceEmbeddingRepository.findByFilePath(path)) {
+                        EntityMention linked = embedding.getMention();
+                        if (linked != null && embedding.getBbox() != null && embedding.getBbox().length >= 4
+                                && (linked.getBbox() == null || linked.getBbox().isBlank())) {
+                            linked.setBbox(writeJson(embedding.getBbox()));
+                            mentionRepo.save(linked);
+                        }
+                    }
                     Set<UUID> assignedExistingMentions = new HashSet<>();
                     Map<String, EntityMention> mentionsByLabel = new LinkedHashMap<>();
                     int unnamedPersonIndex = 0;
@@ -306,20 +332,31 @@ public class IngestionService {
                         }
 
                         String normalizedLabel = label.toLowerCase(Locale.ROOT).trim();
-                        EntityMention mention = existingPendingByLabel.get(normalizedLabel);
-                        if (mention == null && p.getBbox() != null && !p.getBbox().isEmpty()) {
+                        DetectedFaceDto anchoredFace = p.getFaceAnchorId() == null ? null
+                                : anchoredImage.anchors().get(p.getFaceAnchorId());
+                        if (anchoredFace != null && anchoredFace.bbox() != null) {
+                            p.setBbox(anchoredFace.bbox());
+                        }
+                        EntityMention mention = null;
+                        // Geometry is more stable than model labels such as "person 1" across re-analysis.
+                        if (p.getBbox() != null && !p.getBbox().isEmpty()) {
                             mention = findMentionByBbox(existingMentions, p.getBbox(), assignedExistingMentions);
                         }
+                        if (mention == null) mention = existingPendingByLabel.get(normalizedLabel);
                         boolean newMention = mention == null;
                         if (newMention) {
                             mention = EntityMention.builder()
                                 .filePath(path)
                                 .label(label)
+                                .visionLabel(label)
+                                .faceAnchorId(anchoredFace == null ? null : p.getFaceAnchorId())
                                 .entityType(entityType == null ? LivingEntityTypes.PERSON : entityType)
                                 .confidence(new BigDecimal("0.900"))
                                 .status(MentionStatus.SUGGESTED)
                                 .build();
                         }
+                        mention.setVisionLabel(label);
+                        mention.setFaceAnchorId(anchoredFace == null ? null : p.getFaceAnchorId());
                         
                         if (p.getVisualCues() != null) {
                             try {
@@ -360,6 +397,8 @@ public class IngestionService {
                                 Fact fact = Fact.builder()
                                     .mention(mention)
                                     .action(action)
+                                    .statementPl(subjectStatement(mention, action, null))
+                                    .evidenceOrigin("VISION_STRUCTURED")
                                     .filePath(path)
                                     .confidence(new BigDecimal("0.900"))
                                     .build();
@@ -372,7 +411,10 @@ public class IngestionService {
                             identityResolutionService.resolve(mention, tagForEntity, entityType);
                         }
 
-                        canonicalText.append("Uczestnik: ").append(label)
+                        String canonicalParticipant = mention.getEntity() != null
+                                && mention.getEntity().getDisplayName() != null
+                                ? mention.getEntity().getDisplayName() : label;
+                        canonicalText.append("Uczestnik: ").append(canonicalParticipant)
                                 .append(" (typ: ").append(entityType).append("). ");
                         if (p.getActions() != null && !p.getActions().isEmpty()) {
                             canonicalText.append("Czynności: ").append(String.join(", ", p.getActions())).append(". ");
@@ -381,14 +423,18 @@ public class IngestionService {
                             canonicalText.append("Obiekty i otoczenie: ").append(String.join(", ", objects)).append(". ");
                             for (String objectValue : objects) {
                                 factRepo.save(Fact.builder().mention(mention).action("RELATED_OBJECT")
-                                        .object(objectValue).filePath(path).confidence(new BigDecimal("0.850")).build());
+                                        .object(objectValue).statementPl(subjectStatement(mention, "ma przy sobie", objectValue))
+                                        .evidenceOrigin("VISION_STRUCTURED")
+                                        .filePath(path).confidence(new BigDecimal("0.850")).build());
                             }
                         }
                         if (!nearbyText.isEmpty()) {
                             canonicalText.append("Napisy obok: ").append(String.join(", ", nearbyText)).append(". ");
                             for (String textValue : nearbyText) {
                                 factRepo.save(Fact.builder().mention(mention).action("NEAR_TEXT")
-                                        .object(textValue).filePath(path).confidence(new BigDecimal("0.800")).build());
+                                        .object(textValue).statementPl(subjectStatement(mention, "ma obok napis", textValue))
+                                        .evidenceOrigin("VISION_STRUCTURED")
+                                        .filePath(path).confidence(new BigDecimal("0.800")).build());
                             }
                         }
                         if (p.getVisualCues() != null && !p.getVisualCues().isEmpty()) {
@@ -396,6 +442,17 @@ public class IngestionService {
                         }
                         if (p.getBbox() != null && !p.getBbox().isEmpty()) {
                             canonicalText.append("Położenie bbox: ").append(p.getBbox()).append(". ");
+                        }
+                    }
+
+                    // Mentions not present in the current structured result must never remain certain.
+                    for (EntityMention existing : existingMentions) {
+                        if (existing.getId() != null && !assignedExistingMentions.contains(existing.getId())) {
+                            existing.setStatus(MentionStatus.REJECTED);
+                            existing.setIdentitySource(null);
+                            existing.setIdentityConfidence(null);
+                            existing.setIdentityMargin(null);
+                            mentionRepo.save(existing);
                         }
                     }
 
@@ -423,13 +480,17 @@ public class IngestionService {
                                         .targetMention(object)
                                         .action(factAction)
                                         .object(objectLabel)
+                                        .statementPl(subjectStatement(subject, factAction, objectLabel))
+                                        .evidenceOrigin("VISION_STRUCTURED")
                                         .filePath(path)
                                         .confidence(new BigDecimal("0.900"))
                                         .build());
                             }
 
                             canonicalText.append("Relacja: ")
-                                    .append(subject != null ? subject.getLabel() : relation.getSubjectLabel())
+                                    .append(subject != null && subject.getEntity() != null
+                                            ? subject.getEntity().getDisplayName()
+                                            : subject != null ? subject.getLabel() : relation.getSubjectLabel())
                                     .append(" ")
                                     .append(factAction)
                                     .append(" ")
@@ -453,6 +514,12 @@ public class IngestionService {
                     if (structuredJson != null && !structuredJson.isBlank()) {
                         canonicalText.append("Opis strukturalny JSON: ").append(structuredJson).append(" ");
                     }
+
+                    fileOpt.ifPresent(file -> {
+                        file.setGraphProjectionVersion(visionAnalyzerVersion);
+                        file.setGraphProjectionStatus("CURRENT");
+                        fileRepository.save(file);
+                    });
 
                 }
                 // Face analysis runs after the vision/ingest transaction commits so a face
@@ -496,6 +563,7 @@ public class IngestionService {
             document.metadata().put("path", path);
             document.metadata().put("filename", file.getFileName());
             document.metadata().put("source_type", "IMAGE");
+            if (file.getOwnerId() != null) document.metadata().put("owner_id", file.getOwnerId().toString());
             String folder = path;
             int slash = folder.indexOf('/', "dir://".length());
             document.metadata().put("document_id", slash > 0 ? folder.substring("dir://".length(), slash) : "");
@@ -563,6 +631,16 @@ public class IngestionService {
         }
     }
 
+    private String subjectStatement(EntityMention mention, String predicate, String value) {
+        String subject = mention != null && mention.getEntity() != null
+                ? mention.getEntity().getDisplayName()
+                : mention != null ? mention.getLabel() : "uczestnik";
+        StringBuilder statement = new StringBuilder(subject == null ? "uczestnik" : subject.trim());
+        if (predicate != null && !predicate.isBlank()) statement.append(' ').append(predicate.trim());
+        if (value != null && !value.isBlank()) statement.append(' ').append(value.trim());
+        return statement.append('.').toString();
+    }
+
     private EntityMention findMentionByBbox(List<EntityMention> mentions, List<Float> target,
                                             Set<UUID> alreadyAssigned) {
         if (target == null || target.size() < 4) return null;
@@ -609,10 +687,11 @@ public class IngestionService {
         return union <= 0 ? 0.0 : intersection / union;
     }
 
-    private ExtractionResult loadVisionResult(String contentHash, String base64Image, String mimeType) {
+    private ExtractionResult loadVisionResult(String contentHash, String base64Image, String mimeType,
+                                              Set<String> faceAnchors) {
         String payload = imageAnalysisCacheService.getOrCompute(contentHash, ImageAnalysisAnalyzer.VISION,
                 visionAnalyzerVersion, () -> {
-                    ExtractionResult result = extractor.extract(base64Image, mimeType);
+                    ExtractionResult result = extractor.extract(base64Image, mimeType, faceAnchors);
                     try {
                         return objectMapper.writeValueAsString(new CachedVisionResult(
                                 result.resultDto(), result.rawText(), result.isStructured()));
@@ -631,6 +710,20 @@ public class IngestionService {
     private boolean runFaceAnalysis(String contentHash, byte[] imageData, String path,
                                     String fileName, List<EntityMention> personMentions) {
         try {
+            FaceAnalyzeResponse response = loadFaceResponse(contentHash, imageData, fileName);
+            List<DetectedFaceDto> faces = detectedFaces(response);
+            faceIdentityService.processDetectedFaces(faces, path, fileName, personMentions);
+            setAnalysisStatus(path, ImageAnalysisAnalyzer.FACE, ImageAnalysisStatus.COMPLETED);
+            return true;
+        } catch (Exception e) {
+            setAnalysisStatus(path, ImageAnalysisAnalyzer.FACE, ImageAnalysisStatus.FAILED);
+            log.warn("Face analysis failed for {}", path, e);
+            return false;
+        }
+    }
+
+    private FaceAnalyzeResponse loadFaceResponse(String contentHash, byte[] imageData, String fileName) {
+        try {
             String payload = imageAnalysisCacheService.getOrCompute(contentHash, ImageAnalysisAnalyzer.FACE,
                     faceAnalyzerVersion, () -> {
                         try {
@@ -640,19 +733,17 @@ public class IngestionService {
                             throw new IllegalStateException("Unable to cache face analysis", e);
                         }
                     });
-            FaceAnalyzeResponse response = objectMapper.readValue(payload, FaceAnalyzeResponse.class);
-            List<com.rag.rag.knowledge.face.DetectedFaceDto> faces = response.faces() == null ? List.of()
-                    : response.faces().stream()
-                    .map(face -> face.withImageDimensions(response.imageWidth() == null ? 0 : response.imageWidth(), response.imageHeight() == null ? 0 : response.imageHeight()))
-                    .toList();
-            faceIdentityService.processDetectedFaces(faces, path, fileName, personMentions);
-            setAnalysisStatus(path, ImageAnalysisAnalyzer.FACE, ImageAnalysisStatus.COMPLETED);
-            return true;
+            return objectMapper.readValue(payload, FaceAnalyzeResponse.class);
         } catch (Exception e) {
-            setAnalysisStatus(path, ImageAnalysisAnalyzer.FACE, ImageAnalysisStatus.FAILED);
-            log.warn("Face analysis failed for {}", path, e);
-            return false;
+            throw new IllegalStateException("Unable to load face analysis", e);
         }
+    }
+
+    private List<DetectedFaceDto> detectedFaces(FaceAnalyzeResponse response) {
+        if (response == null || response.faces() == null) return List.of();
+        int width = response.imageWidth() == null ? 0 : response.imageWidth();
+        int height = response.imageHeight() == null ? 0 : response.imageHeight();
+        return response.faces().stream().map(face -> face.withImageDimensions(width, height)).toList();
     }
 
     private void setAnalysisStatus(String path, ImageAnalysisAnalyzer analyzer, ImageAnalysisStatus status) {
@@ -740,19 +831,61 @@ public class IngestionService {
     }
 
     /**
-     * Deletes only the current owner's folders/files and related graph/embedding rows.
-     * Does not truncate global knowledge tables belonging to other users.
+     * Deletes the current owner's library and chat data: folders, files, people (entities),
+     * conversations and messages — scoped to {@code ownerId} only.
      */
     @Transactional
     public void clearAllDataForOwner(UUID ownerId) {
+        if (ownerId == null) {
+            throw new IllegalArgumentException("ownerId is required");
+        }
+        clearOwnedChats(ownerId);
+
         List<String> paths = fileRepository.findAllByOwnerId(ownerId).stream()
                 .map(FileEntity::getPath)
                 .filter(path -> path != null && !path.isBlank())
                 .toList();
         deleteFiles(paths);
+
+        // Force-remove remaining people (incl. USER-aliased entities kept by orphan cleanup).
+        clearOwnedKnowledgeEntities(ownerId);
+
         folderRepository.findAllByOwnerIdOrderByUpdatedAtDesc(ownerId)
                 .forEach(folderRepository::delete);
-        log.info("Cleared folders/files/related data for owner {}", ownerId);
+        log.info("Cleared folders, files, people, chats and messages for owner {}", ownerId);
+    }
+
+    private void clearOwnedChats(UUID ownerId) {
+        List<ChatMemoryEntity> chats = chatMemoryRepository.findAllByOwnerIdOrderByLastMessageAtDesc(ownerId);
+        for (ChatMemoryEntity chat : chats) {
+            if (chat.getChatId() != null) {
+                chatMessageRepository.deleteByChatId(chat.getChatId());
+            }
+            chatMemoryRepository.delete(chat);
+        }
+    }
+
+    private void clearOwnedKnowledgeEntities(UUID ownerId) {
+        for (KnowledgeEntity entity : knowledgeEntityRepo.findAllByOwnerId(ownerId)) {
+            UUID entityId = entity.getId();
+            if (entityId == null) {
+                continue;
+            }
+            List<UUID> mentionIds = mentionRepo.findByEntityId(entityId).stream()
+                    .map(EntityMention::getId)
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+            if (!mentionIds.isEmpty()) {
+                suggestionRepo.deleteByMentionIds(mentionIds);
+                factRepo.deleteByMentionIds(mentionIds);
+                faceObservationRepository.deleteByMentionIds(mentionIds);
+                faceEmbeddingRepository.deleteByMentionIdIn(mentionIds);
+            }
+            faceEmbeddingRepository.deleteByEntityId(entityId);
+            mentionRepo.deleteByEntityId(entityId);
+            aliasRepo.deleteByEntityId(entityId);
+            knowledgeEntityRepo.delete(entity);
+        }
     }
 
     /**
@@ -882,6 +1015,8 @@ public class IngestionService {
                             .put("filename", fileName)
                             .put("path", path)
                             .put("source_type", sourceType(fileName));
+                    UUID metadataOwner = event.ownerId() != null ? event.ownerId() : file.getOwnerId();
+                    if (metadataOwner != null) parsedDocument.metadata().put("owner_id", metadataOwner.toString());
                     ingestor.ingest(parsedDocument);
                     log.info("Successfully processed queued file: {}", path);
                 }
@@ -922,10 +1057,17 @@ public class IngestionService {
             });
         } catch (Exception e) {
             log.error("Queued ingest failed for path={}", path, e);
-            fileRepository.findByPath(path).ifPresent(entity -> {
-                entity.setIngestionStatus(IngestionStatus.FAILED);
-                fileRepository.save(entity);
-            });
+            try {
+                fileRepository.findByPath(path).ifPresent(entity -> {
+                    entity.setIngestionStatus(IngestionStatus.FAILED);
+                    fileRepository.save(entity);
+                });
+            } catch (Exception statusError) {
+                // A secondary persistence problem must not replace the ingest exception
+                // that explains why parsing, vision or embedding actually failed.
+                e.addSuppressed(statusError);
+                log.error("Could not persist FAILED ingest status for path={}", path, statusError);
+            }
             throw e instanceof RuntimeException re ? re : new RuntimeException(e);
         }
     }
@@ -1024,7 +1166,10 @@ public class IngestionService {
         String type = "OTHER";
         String finalFileName = metadataFileName != null ? metadataFileName : path;
 
-        var fileOpt = fileRepository.findByPath(path);
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        var fileOpt = ownerId == null
+                ? fileRepository.findByPath(path)
+                : fileRepository.findByPathAndOwnerId(path, ownerId);
         if (fileOpt.isPresent()) {
             FileEntity file = fileOpt.get();
             finalFileName = file.getFileName();

@@ -117,7 +117,9 @@ class DeleteFilesCascadeTest {
                 jdbcTemplate,
                 txManager,
                 mock(CurrentUserService.class),
-                mock(ObjectProvider.class)
+                mock(ObjectProvider.class),
+                mock(com.rag.rag.chat.repository.ChatMemoryRepository.class),
+                mock(com.rag.rag.chat.repository.ChatMessageRepository.class)
         );
 
         mentionId = UUID.randomUUID();

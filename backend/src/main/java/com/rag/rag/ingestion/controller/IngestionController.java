@@ -204,7 +204,7 @@ public class IngestionController {
     public ResponseEntity<Map<String, String>> clearAllData() {
         ingestionService.clearAllData();
         return ResponseEntity.ok(Map.of(
-                "message", "Wyczyszczono foldery, pliki, embeddingi i powiązane dane grafu bieżącego użytkownika."
+                "message", "Wyczyszczono osoby, rozmowy, wiadomości, foldery i pliki bieżącego użytkownika."
         ));
     }
 
