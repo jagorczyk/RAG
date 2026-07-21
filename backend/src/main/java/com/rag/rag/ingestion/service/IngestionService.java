@@ -573,6 +573,7 @@ public class IngestionService {
                 return Document.from(canonicalText.toString());
             } else {
                 var fileOpt = fileRepository.findByPath(path);
+                String raw = result.rawText() == null ? "" : result.rawText().trim();
                 if (fileOpt.isPresent()) {
                     FileEntity f = fileOpt.get();
                     f.setIngestionStatus(IngestionStatus.NEEDS_REVIEW);
@@ -580,9 +581,21 @@ public class IngestionService {
                     // when the model returns unparseable JSON (embeddings still store raw text).
                     f.setGraphProjectionVersion(visionAnalyzerVersion);
                     f.setGraphProjectionStatus("FAILED");
+                    // Keep raw vision prose searchable until re-analyze succeeds.
+                    if (!raw.isBlank()) {
+                        f.setImageSummary(raw.length() > 4000 ? raw.substring(0, 4000) : raw);
+                    }
                     fileRepository.save(f);
                 }
-                return Document.from(result.rawText() != null ? result.rawText() : "Brak opisu obrazu.");
+                StringBuilder fallback = new StringBuilder();
+                fallback.append("Plik: ").append(fileName).append(". ");
+                fallback.append("Uwaga: strukturalna analiza vision nie powiodła się; poniżej surowy opis modelu. ");
+                if (!raw.isBlank()) {
+                    fallback.append(raw);
+                } else {
+                    fallback.append("Brak opisu obrazu.");
+                }
+                return Document.from(fallback.toString());
             }
         } catch (InvalidImageException e) {
             throw e;

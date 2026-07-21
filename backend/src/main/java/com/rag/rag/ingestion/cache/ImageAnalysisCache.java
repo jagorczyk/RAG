@@ -7,7 +7,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import lombok.AllArgsConstructor;
@@ -51,7 +50,11 @@ public class ImageAnalysisCache {
     @Column(nullable = false, length = 16)
     private ImageAnalysisStatus status;
 
-    @Lob
+    /**
+     * Must NOT use {@code @Lob}: on PostgreSQL Hibernate stores LOBs as OID references,
+     * so reads return only the numeric oid (e.g. "162191") and vision/face cache breaks.
+     * Plain TEXT holds the full JSON payload inline.
+     */
     @Column(columnDefinition = "text")
     private String payload;
 

@@ -1,5 +1,6 @@
 package com.rag.rag.ingestion.cache;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -9,6 +10,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
+@Slf4j
 @Service
 public class ImageAnalysisCacheService {
 
@@ -65,7 +67,16 @@ public class ImageAnalysisCacheService {
                 .build());
 
         if (row.getStatus() == ImageAnalysisStatus.COMPLETED) {
-            return row.getPayload();
+            String cached = row.getPayload();
+            // Reject legacy @Lob OID leftovers ("162191") and empty rows — recompute.
+            if (isUsableCachePayload(cached)) {
+                return cached;
+            }
+            log.warn("Discarding unusable {} cache payload for hash={} (len={})",
+                    analyzer, contentHash, cached == null ? 0 : cached.length());
+            row.setStatus(ImageAnalysisStatus.PROCESSING);
+            row.setPayload(null);
+            row.setErrorMessage("invalid_cached_payload");
         }
 
         row.setStatus(ImageAnalysisStatus.PROCESSING);
@@ -89,5 +100,22 @@ public class ImageAnalysisCacheService {
                     });
             throw e;
         }
+    }
+
+    /**
+     * Cached payloads must be real JSON/text, not a PostgreSQL large-object OID digit string.
+     */
+    static boolean isUsableCachePayload(String payload) {
+        if (payload == null || payload.isBlank()) {
+            return false;
+        }
+        String trimmed = payload.trim();
+        // Legacy @Lob OID only (all digits, short).
+        if (trimmed.length() <= 12 && trimmed.chars().allMatch(Character::isDigit)) {
+            return false;
+        }
+        // Vision/face payloads are JSON objects/arrays.
+        char first = trimmed.charAt(0);
+        return first == '{' || first == '[';
     }
 }

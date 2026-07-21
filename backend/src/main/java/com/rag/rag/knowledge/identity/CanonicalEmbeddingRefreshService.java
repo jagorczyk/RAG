@@ -4,7 +4,9 @@ import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
+import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.fact.Fact;
+import com.rag.rag.knowledge.fact.FactStatementRewriter;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FactRepository;
 import dev.langchain4j.data.document.Document;
@@ -110,24 +112,25 @@ public class CanonicalEmbeddingRefreshService {
 
         jdbcTemplate.update(DELETE_EMBEDDINGS_SQL, path);
         embeddingStoreIngestor.ingest(document);
-        log.info("Refreshed document embeddings for path {} after identity rename", path);
+        log.info("Refreshed document embeddings for path {} after identity rename ({} chars)", path, text.length());
     }
 
     /**
      * Builds embeddable text from graph labels (current names) + stored vision context.
+     * Prefer Polish claim statements over technical action codes.
      * Package-visible for unit tests. No vision LLM call.
      */
     String buildCanonicalText(FileEntity file, List<EntityMention> mentions, List<Fact> facts) {
         StringBuilder canonical = new StringBuilder();
         if (file != null) {
             if (file.getImageScene() != null && !file.getImageScene().isBlank()) {
-                canonical.append("Scena: ").append(file.getImageScene()).append(". ");
+                canonical.append("Scena: ").append(file.getImageScene().trim()).append(". ");
             }
             if (file.getImageSummary() != null && !file.getImageSummary().isBlank()) {
-                canonical.append("Kontekst sceny: ").append(file.getImageSummary()).append(". ");
+                canonical.append("Kontekst sceny: ").append(file.getImageSummary().trim()).append(". ");
             }
             if (file.getSceneAttributes() != null && !file.getSceneAttributes().isBlank()) {
-                canonical.append("Atrybuty sceny: ").append(file.getSceneAttributes()).append(". ");
+                canonical.append("Atrybuty sceny: ").append(file.getSceneAttributes().trim()).append(". ");
             }
             String fileName = file.getFileName() != null ? file.getFileName() : fileNameFromPath(file.getPath());
             if (fileName != null && !fileName.isBlank()) {
@@ -137,45 +140,49 @@ public class CanonicalEmbeddingRefreshService {
 
         if (mentions != null) {
             for (EntityMention mention : mentions) {
-                if (mention == null) {
+                if (mention == null || mention.getStatus() == MentionStatus.REJECTED) {
                     continue;
                 }
                 String participant = participantName(mention);
                 String type = mention.getEntityType() != null ? mention.getEntityType() : "PERSON";
                 canonical.append("Uczestnik: ").append(participant)
                         .append(" (typ: ").append(type).append("). ");
-                if (mention.getVisualCues() != null && !mention.getVisualCues().isBlank()) {
-                    canonical.append("Wygląd: ").append(mention.getVisualCues()).append(". ");
-                }
-                if (mention.getContextObjects() != null && !mention.getContextObjects().isBlank()) {
-                    canonical.append("Obiekty i otoczenie: ").append(mention.getContextObjects()).append(". ");
-                }
-                if (mention.getNearbyText() != null && !mention.getNearbyText().isBlank()) {
-                    canonical.append("Napisy obok: ").append(mention.getNearbyText()).append(". ");
-                }
+                appendJsonField(canonical, "Wygląd", mention.getVisualCues());
+                appendJsonField(canonical, "Obiekty i otoczenie", mention.getContextObjects());
+                appendJsonField(canonical, "Napisy obok", mention.getNearbyText());
             }
         }
 
         if (facts != null) {
+            LinkedHashSet<String> seenStatements = new LinkedHashSet<>();
             for (Fact fact : facts) {
-                if (fact == null || fact.getAction() == null || fact.getAction().isBlank()) {
+                if (fact == null) {
                     continue;
                 }
-                String subject = fact.getMention() != null
-                        ? participantName(fact.getMention())
-                        : "unknown";
-                String value = factObjectLabel(fact);
-                canonical.append("Relacja: ")
-                        .append(subject)
-                        .append(' ')
-                        .append(fact.getAction().trim())
-                        .append(' ')
-                        .append(value)
-                        .append(". ");
+                String statement = fact.getStatementPl();
+                if (statement == null || statement.isBlank()) {
+                    String subject = fact.getMention() != null
+                            ? participantName(fact.getMention())
+                            : "uczestnik";
+                    String value = factObjectLabel(fact);
+                    statement = FactStatementRewriter.buildStatement(subject, fact.getAction(), value);
+                }
+                statement = statement.trim();
+                if (statement.isEmpty()) {
+                    continue;
+                }
+                String key = statement.toLowerCase(Locale.ROOT);
+                if (!seenStatements.add(key)) {
+                    continue;
+                }
+                canonical.append(statement.endsWith(".") ? statement : statement + ".").append(' ');
             }
         }
 
-        if (file != null && file.getStructuredVisionContext() != null
+        // Structured JSON only as last-resort recall if prose is still thin.
+        int proseLen = canonical.length();
+        if (file != null && proseLen < 120
+                && file.getStructuredVisionContext() != null
                 && !file.getStructuredVisionContext().isBlank()) {
             canonical.append("Opis strukturalny JSON: ")
                     .append(file.getStructuredVisionContext())
@@ -186,6 +193,23 @@ public class CanonicalEmbeddingRefreshService {
         }
 
         return canonical.toString().trim();
+    }
+
+    private static void appendJsonField(StringBuilder canonical, String label, String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            return;
+        }
+        String cleaned = rawJson.trim();
+        // Strip crude JSON array brackets for readable embed text.
+        if (cleaned.startsWith("[") && cleaned.endsWith("]")) {
+            cleaned = cleaned.substring(1, cleaned.length() - 1)
+                    .replace("\"", "")
+                    .trim();
+        }
+        if (cleaned.isBlank()) {
+            return;
+        }
+        canonical.append(label).append(": ").append(cleaned).append(". ");
     }
 
     static String participantName(EntityMention mention) {
@@ -216,11 +240,11 @@ public class CanonicalEmbeddingRefreshService {
         if (file.getFileType() != null && file.getFileType().toLowerCase(Locale.ROOT).startsWith("image/")) {
             return true;
         }
-        String path = file.getPath();
-        if (path == null) {
+        String name = file.getFileName() != null ? file.getFileName() : file.getPath();
+        if (name == null) {
             return false;
         }
-        String lower = path.toLowerCase(Locale.ROOT);
+        String lower = name.toLowerCase(Locale.ROOT);
         return lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png")
                 || lower.endsWith(".webp") || lower.endsWith(".gif");
     }
@@ -237,7 +261,8 @@ public class CanonicalEmbeddingRefreshService {
         if (path == null || !path.startsWith("dir://")) {
             return "";
         }
-        int slash = path.indexOf('/', "dir://".length());
-        return slash > 0 ? path.substring("dir://".length(), slash) : "";
+        int start = "dir://".length();
+        int slash = path.indexOf('/', start);
+        return slash > start ? path.substring(start, slash) : "";
     }
 }
