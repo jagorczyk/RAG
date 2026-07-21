@@ -37,10 +37,27 @@ public final class ChatRetrievalPolicy {
             return plan.retrievalMode() == QueryPlan.RetrievalMode.HYBRID
                     || plan.retrievalMode() == QueryPlan.RetrievalMode.DOCUMENT;
         }
+        // Explicit @file / planner fileScope: always load the photo graph dump for grounding
+        // (any mode — including DOCUMENT/VISUAL fallthrough), not only HYBRID.
         if (plan.fileScope() != null && !plan.fileScope().isEmpty()) {
-            return plan.retrievalMode() == QueryPlan.RetrievalMode.HYBRID;
+            return true;
         }
         return false;
+    }
+
+    /**
+     * Prefer immutable claim prose over free-form LLM when the graph already has claim statements.
+     * GRAPH always; also scoped file turns (any mode) so open "co wiesz o @plik" cannot invent essays.
+     */
+    public static boolean preferClaimAnswer(QueryPlan plan, GraphEvidenceResult evidence) {
+        if (plan == null || evidence == null
+                || evidence.claims() == null || evidence.claims().isEmpty()) {
+            return false;
+        }
+        if (plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH) {
+            return true;
+        }
+        return plan.fileScope() != null && !plan.fileScope().isEmpty();
     }
 
     public static boolean requiresJointFileEvidence(QueryPlan plan) {

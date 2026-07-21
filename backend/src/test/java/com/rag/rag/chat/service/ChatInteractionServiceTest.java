@@ -710,6 +710,82 @@ class ChatInteractionServiceTest {
     }
 
     @Test
+    void fileScopedEncyclopedicHallucinationIsRewrittenToRoster() {
+        // Live failure: "co wiesz o @20230502_094428.jpg" → linguistics definition essay.
+        String question = "co wiesz o @20230502_094428.jpg";
+        String path = "dir://photos/20230502_094428.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(path),
+                question, "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of(path));
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "=== Zdjęcie 1 ===\nUczestnicy: Igor, Anna",
+                        List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Igor", "Anna"));
+        String lecture = """
+                Pełne ograniczenie semantyczne (ang. *full semantic constraint*) odnosi się do sytuacji, \
+                w której znaczenie słowa lub wyrażenia jest ściśle określone przez kontekst lub reguły językowe, \
+                co uniemożliwia jego dowolną interpretację. W języku polskim pełne ograniczenie semantyczne \
+                może występować w różnych sytuacjach, np.:
+
+                1. Terminy specjalistyczne: Słowa używane w konkretnych dziedzinach nauki lub techniki.
+                2. Frazeologizmy: Stałe związki frazeologiczne mają jednoznaczne znaczenie.
+                3. Kontekst kulturowy: Niektóre słowa mają ściśle określone znaczenie.
+                4. Reguły gramatyczne: Gramatyka narzuca jednoznaczne znaczenie.
+
+                Pełne ograniczenie semantyczne jest przeciwieństwem niepełnego ograniczenia semantycznego.
+                """;
+        when(chatAiService.answer(eq(chatId), anyString()))
+                .thenReturn(Result.<String>builder().content(lecture).build());
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "20230502_094428.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertFalse(ChatAnswerGrounding.isGeneralKnowledgeEssay(response.response()));
+        assertFalse(response.response().toLowerCase().contains("semantyczne"));
+        assertFalse(response.response().toLowerCase().contains("frazeolog"));
+        assertEquals("Na zdjęciu są Igor i Anna.", response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals(path, response.sources().get(0).path());
+        assertNotEquals("NO_EVIDENCE", response.answerKind());
+    }
+
+    @Test
+    void fileScopedHybridWithClaimsUsesImmutableClaimProse() {
+        // Open @file on HYBRID must not free-form invent; claims win first.
+        String question = "co wiesz o @scene.jpg";
+        String path = "dir://photos/scene.jpg";
+        GroundedVisualClaim claim = new GroundedVisualClaim(
+                "F-1", UUID.randomUUID(), "Igor", "ubiór", "czarna koszulka",
+                "Igor ma czarną koszulkę.", path, BigDecimal.valueOf(0.92), "VISION_STRUCTURED", "face_1");
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(path),
+                question, "", false, false, QueryPlan.RetrievalMode.HYBRID, "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of(path));
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "=== Zdjęcie 1 ===\nUczestnicy: Igor",
+                        List.of(path),
+                        List.of(claim)));
+        when(claimAnswerComposer.answerFromClaims(anyString(), anyList(), anyList()))
+                .thenReturn(new ClaimAnswerComposer.ClaimAnswerResult(
+                        "Igor ma czarną koszulkę.", List.of("F-1"), List.of(path), true));
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "scene.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals("Igor ma czarną koszulkę.", response.response());
+        verify(chatAiService, never()).answer(any(), anyString());
+        assertEquals(1, response.sources().size());
+        assertEquals(path, response.sources().get(0).path());
+    }
+
+    @Test
     void speculativeOlekHypothesisListWithGoodSourcesIsRewrittenWithoutDroppingSources() {
         // Live failure: sources (GRAPH_FACT paths) correct, model invents activity menu.
         String question = "Co robi Olek na zdjęciu?";

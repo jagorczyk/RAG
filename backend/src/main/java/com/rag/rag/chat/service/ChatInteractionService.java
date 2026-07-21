@@ -118,12 +118,10 @@ public class ChatInteractionService {
         boolean graphMissFallback = ChatRetrievalPolicy.shouldFallbackFromGraph(plan, graphEvidence);
         QueryPlan.RetrievalMode effectiveMode = ChatRetrievalPolicy.effectiveRetrievalMode(plan, graphEvidence);
 
-        // Evidence-first GRAPH: select immutable claims (same as visual) before free-form LLM.
+        // Evidence-first: immutable claims before free-form LLM (GRAPH, or any mode with fileScope).
         if (!graphMissFallback
-                && effectiveMode == QueryPlan.RetrievalMode.GRAPH
                 && claimAnswerComposer != null
-                && graphEvidence.claims() != null
-                && !graphEvidence.claims().isEmpty()) {
+                && ChatRetrievalPolicy.preferClaimAnswer(plan, graphEvidence)) {
             MessageResponse claimResponse = tryClaimGraphAnswer(chatId, plan, graphEvidence, effectiveMode);
             if (claimResponse != null) {
                 return claimResponse;
@@ -138,6 +136,7 @@ public class ChatInteractionService {
                 Odpowiedź po polsku: konkretna, naturalna, zwykle 1–3 zdania.
                 Wykorzystaj z kontekstu wszystko, o co pyta użytkownik: ubiór, kolory, włosy,
                 wygląd, czynności, relacje przestrzenne, scenę — bez zgadywania poza dowodami.
+                Zakaz esejów encyklopedycznych, definicji pojęć i wiedzy spoza dowodów.
                 Bez list hipotez („może na przykład… 1. 2. 3.”) i bez prośby o więcej szczegółów.
                 Bez pewności, score i listy plików.
                 """;

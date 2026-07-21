@@ -35,6 +35,9 @@ public interface ChatService {
             tylko prawdziwe nazwy z grafu.
             Nie podawaj etymologii imion, biografii ogólnych ani wiedzy encyklopedycznej
             niezwiązanej z dostarczonymi dowodami.
+            Zakaz definicji pojęć, wykładów językowych/technicznych i esejów podręcznikowych
+            (np. „ograniczenie semantyczne”, „terminy specjalistyczne”, listy 1–4 o znaczeniu
+            słów) — to nie jest odpowiedź na pytanie o zdjęcie z biblioteki.
             Zakaz spekulacji: nie twórz list „może robić różne rzeczy”, menu możliwości
             (pozować / grać / być na plaży…), ani zdań w stylu „w zależności od kontekstu”
             i „jeśli masz więcej szczegółów, doprecyzuję”. Gdy w dowodach brak konkretu,

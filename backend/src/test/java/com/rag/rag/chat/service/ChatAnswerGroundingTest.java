@@ -61,6 +61,40 @@ class ChatAnswerGroundingTest {
     }
 
     @Test
+    void detectsOffTopicDefinitionalLectureAboutSemanticConstraint() {
+        // Live failure: "co wiesz o @photo.jpg" → linguistics textbook dump.
+        String lecture = """
+                Pełne ograniczenie semantyczne (ang. *full semantic constraint*) odnosi się do sytuacji, \
+                w której znaczenie słowa lub wyrażenia jest ściśle określone przez kontekst lub reguły językowe, \
+                co uniemożliwia jego dowolną interpretację. W języku polskim pełne ograniczenie semantyczne \
+                może występować w różnych sytuacjach, np.:
+
+                1. Terminy specjalistyczne: Słowa używane w konkretnych dziedzinach nauki lub techniki mają \
+                ściśle określone znaczenie. Przykładem może być słowo "atom" w fizyce.
+                2. Frazeologizmy: Stałe związki frazeologiczne mają jednoznaczne znaczenie, np. "bić rekordy".
+                3. Kontekst kulturowy: Niektóre słowa mają ściśle określone znaczenie w danym kontekście kulturowym.
+                4. Reguły gramatyczne: W niektórych przypadkach gramatyka narzuca jednoznaczne znaczenie.
+
+                Pełne ograniczenie semantyczne jest przeciwieństwem niepełnego ograniczenia semantycznego, \
+                gdzie znaczenie może być bardziej otwarte na interpretację.
+                """;
+        assertTrue(ChatAnswerGrounding.isGeneralKnowledgeEssay(lecture));
+        assertTrue(ChatAnswerGrounding.shouldRewriteUngroundedAnswer(lecture, false));
+
+        String resolvedWithNames = ChatAnswerGrounding.resolveGroundedAnswer(
+                lecture, List.of("Igor", "Anna"), true, false);
+        assertEquals("Na zdjęciu są Igor i Anna.", resolvedWithNames);
+
+        String resolvedNoNames = ChatAnswerGrounding.resolveGroundedAnswer(
+                lecture, List.of(), true, false);
+        assertEquals(ChatAnswerGrounding.GROUNDED_NO_DETAIL_FALLBACK, resolvedNoNames);
+
+        // Grounded photo answers must not be rewritten.
+        assertFalse(ChatAnswerGrounding.isGeneralKnowledgeEssay(
+                "Na zdjęciu stoi Igor w czarnej koszulce obok Anny."));
+    }
+
+    @Test
     void detectsEmptyAndGreetingNonAnswers() {
         assertTrue(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(
                 "Hello! How can I assist you today?"));

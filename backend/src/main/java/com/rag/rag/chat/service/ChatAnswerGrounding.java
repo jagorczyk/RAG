@@ -183,15 +183,17 @@ public final class ChatAnswerGrounding {
     }
 
     /**
-     * True when the answer is free-form encyclopedic / etymology-style prose about a name
+     * True when the answer is free-form encyclopedic / etymology / textbook-definition prose
      * rather than evidence-backed photo content. Answer shape only — no person-name routing.
+     * Catches name essays and off-topic lectures (e.g. linguistics definitions) that ignore
+     * the photo library.
      */
     public static boolean isGeneralKnowledgeEssay(String answer) {
         if (answer == null || answer.isBlank()) {
             return false;
         }
         String lower = answer.toLowerCase(Locale.ROOT);
-        return containsAny(lower,
+        if (containsAny(lower,
                 "pochodzi z języka",
                 "pochodzi z jezyka",
                 "jest zdrobnieniem",
@@ -211,7 +213,76 @@ public final class ChatAnswerGrounding {
                 "derives from the greek",
                 "derives from greek",
                 "popular name meaning",
-                "etymology of the name");
+                "etymology of the name")) {
+            return true;
+        }
+        // Off-topic definitional / textbook lectures (live failure: @photo → linguistics essay).
+        return isOffTopicDefinitionalLecture(lower, answer.trim().length());
+    }
+
+    /**
+     * Long abstract definition essay with numbered sections and no photo grounding vocabulary.
+     * Answer shape only — does not inspect the user question.
+     */
+    static boolean isOffTopicDefinitionalLecture(String lower, int length) {
+        if (lower == null || lower.isBlank() || length < 160) {
+            return false;
+        }
+        // Photo/library grounding — keep short factual answers about images.
+        if (containsAny(lower,
+                "na zdjęciu",
+                "na zdjeciu",
+                "na potwierdzonych",
+                "w bibliotece",
+                "grafie wiedzy",
+                "nie znaleziono",
+                "brak potwierdz",
+                "stoi ",
+                "siedzi ",
+                "ubrany",
+                "ubrana",
+                "koszul",
+                "spodni",
+                "włos",
+                "wlos",
+                "osoba ",
+                "osoby ",
+                "uczestnik")) {
+            return false;
+        }
+        boolean definitional = containsAny(lower,
+                "odnosi się do sytuacji",
+                "odnosi sie do sytuacji",
+                "odnosi się do",
+                "odnosi sie do",
+                "jest przeciwieństwem",
+                "jest przeciwiestwem",
+                "jest przeciwieństwem niepełnego",
+                "pełne ograniczenie semantyczne",
+                "pelne ograniczenie semantyczne",
+                "ograniczenie semantyczne",
+                "full semantic constraint",
+                "ściśle określone znaczenie",
+                "scisle okreslone znaczenie",
+                "ściśle określone",
+                "w języku polskim",
+                "w jezyku polskim",
+                "terminy specjalistyczne",
+                "frazeologizm",
+                "reguły gramatyczne",
+                "reguly gramatyczne",
+                "przykładem może być",
+                "przykladem moze byc",
+                "przykładem może być słowo",
+                "w konkretnych dziedzinach",
+                "in linguistics",
+                "semantic constraint",
+                "ang. *",
+                "(ang.");
+        boolean numberedLecture = hasNumberedOptionMenu(lower)
+                || (lower.contains("1.") && lower.contains("2.") && lower.contains("3."));
+        // Multi-section textbook dump without any image vocabulary.
+        return definitional && (numberedLecture || length > 400);
     }
 
     /**
@@ -520,12 +591,23 @@ public final class ChatAnswerGrounding {
         if (!hasCertainEvidenceOrSources) {
             return modelAnswer == null ? "" : modelAnswer;
         }
+        List<String> names = normalizeNames(recoveryNames);
         // Speculative multi-option menus never leave the system when evidence exists —
         // prefer an explicit no-detail notice over inventing activities.
         if (isSpeculativeHypothesisList(modelAnswer)) {
             return GROUNDED_NO_DETAIL_FALLBACK;
         }
-        List<String> names = normalizeNames(recoveryNames);
+        // Free encyclopedic / textbook essays: roster when we know who is on the photo,
+        // otherwise no-detail (never leave definition lectures in the UI).
+        if (isGeneralKnowledgeEssay(modelAnswer)) {
+            if (!names.isEmpty()) {
+                if (entityScoped && names.size() == 1) {
+                    return formatEntityScopedPresence(names);
+                }
+                return formatParticipantRoster(names);
+            }
+            return GROUNDED_NO_DETAIL_FALLBACK;
+        }
         if (!shouldRewriteUngroundedAnswer(modelAnswer, entityScoped, names)) {
             return modelAnswer == null ? "" : modelAnswer;
         }
