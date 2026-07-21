@@ -41,6 +41,7 @@ public class ChatInteractionService {
     private final ChatService chatAiService;
     private final ChatMemoryRepository chatMemoryRepository;
     private final ChatMessageRepository chatMessageRepository;
+    private final ChatMemoryService chatMemoryService;
     private final IngestionService ingestionService;
     private final GraphQueryService graphQueryService;
     private final DynamicVisualMatcher dynamicVisualMatcher;
@@ -88,10 +89,10 @@ public class ChatInteractionService {
             log.info("Visual path empty; falling back to text/graph for mode={}, fileScope={}, entities={}",
                     plan.retrievalMode(), plan.fileScope(), plan.entities());
         }
-        return processTextOrGraphPlan(chatId, plan);
+        return processTextOrGraphPlan(chatId, plan, conversationContext);
     }
 
-    private MessageResponse processTextOrGraphPlan(UUID chatId, QueryPlan plan) {
+    private MessageResponse processTextOrGraphPlan(UUID chatId, QueryPlan plan, String conversationContext) {
         boolean needsGraph = plan.retrievalMode() != QueryPlan.RetrievalMode.DOCUMENT
                 || ChatRetrievalPolicy.requiresJointFileEvidence(plan);
         GraphEvidenceResult graphEvidence = needsGraph
@@ -109,8 +110,12 @@ public class ChatInteractionService {
         QueryPlan.RetrievalMode effectiveMode = ChatRetrievalPolicy.effectiveRetrievalMode(plan, graphEvidence);
 
         String graphContext = graphEvidence.context();
+        String questionForModel = answerFacingQuestion(plan);
+        String originalQuestion = plan.question() == null ? "" : plan.question().trim();
+        String recentTurns = compactConversationContext(conversationContext);
         // Always end with "Pytanie użytkownika:" so retrieval injection and chat-memory
         // normalization can recover the bare question (not the instruction blob).
+        // Prefer planner standalone retrievalQuery/condition so short follow-ups resolve.
         String prompt;
         if (graphMissFallback) {
             // No certain graph rows — answer from hybrid document retrieval on the question.
@@ -120,18 +125,22 @@ public class ChatInteractionService {
                     Graf wiedzy nie ma pewnych dowodów dla tego pytania; użyj wyłącznie kontekstu dokumentów z retrieval.
                     Gdy brak fragmentów dokumentów, odpowiedz dokładnie: Nie znaleziono informacji w dokumentach.
                     Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+                    %s
+                    Oryginalne brzmienie użytkownika: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(plan.answerInstruction(), plan.question());
+                    """.formatted(plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
         } else if (graphContext.isBlank()) {
             prompt = """
                     [Instrukcja odpowiedzi]
                     %s
                     Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
                     Używaj wyłącznie fragmentów dokumentów z retrieval — nie zgaduj.
+                    %s
+                    Oryginalne brzmienie użytkownika: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(plan.answerInstruction(), plan.question());
+                    """.formatted(plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
         } else {
             prompt = """
                     [Kontekst zweryfikowany]
@@ -141,9 +150,11 @@ public class ChatInteractionService {
                     %s
                     Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
                     Używaj wyłącznie powyższego kontekstu i fragmentów dokumentów z retrieval — nie zgaduj.
+                    %s
+                    Oryginalne brzmienie użytkownika: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(graphContext, plan.answerInstruction(), plan.question());
+                    """.formatted(graphContext, plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
         }
 
         // Named-entity turns with certain graph paths: restrict hybrid RAG to those files
@@ -188,6 +199,7 @@ public class ChatInteractionService {
                     answer, recoveryNames, hasCertain, entityScoped);
         }
         String cleaned = removeTechnicalReferences(answer, sources);
+        syncGroundedAnswerToMemory(chatId, cleaned);
         List<QueryEvidenceDto> sourceEvidence = sources.stream()
                 .map(source -> new QueryEvidenceDto(source.path(),
                         java.math.BigDecimal.valueOf(source.score() == null ? 0.0 : source.score()),
@@ -260,6 +272,7 @@ public class ChatInteractionService {
             cleaned = VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER;
             uncertain = true;
         }
+        syncGroundedAnswerToMemory(chatId, cleaned);
         saveAiMessage(chatId, cleaned, visualSources, evidence, QueryPlan.RetrievalMode.VISUAL_VALIDATION.name(), uncertain);
         return new MessageResponse(cleaned, visualSources, uncertain, evidence,
                 QueryPlan.RetrievalMode.VISUAL_VALIDATION.name());
@@ -276,9 +289,18 @@ public class ChatInteractionService {
         // Hybrid/vector hits that cover only a subset of entities must not be re-injected.
         if (ChatRetrievalPolicy.requiresJointFileEvidence(plan)) {
             for (String path : graphEvidence.certainPaths()) {
-                addSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0));
+                putSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0), true);
             }
             return List.copyOf(unique.values());
+        }
+
+        // Graph facts first so CONFIRMED paths win labels over hybrid RETRIEVED for same path.
+        if (mode != QueryPlan.RetrievalMode.DOCUMENT) {
+            for (String path : graphEvidence.certainPaths()) {
+                if (RetrievalPathScope.pathInScope(path, fileScope)) {
+                    putSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0), true);
+                }
+            }
         }
 
         if (mode != QueryPlan.RetrievalMode.GRAPH && result != null) {
@@ -291,25 +313,70 @@ public class ChatInteractionService {
                 if (!ChatRetrievalPolicy.allowsHybridSourceForNamedEntities(plan, graphEvidence, source.path())) {
                     continue;
                 }
-                addSource(unique, source);
-            }
-        }
-
-        if (mode != QueryPlan.RetrievalMode.DOCUMENT) {
-            for (String path : graphEvidence.certainPaths()) {
-                if (RetrievalPathScope.pathInScope(path, fileScope)) {
-                    addSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0));
-                }
+                putSource(unique, source, false);
             }
         }
 
         return List.copyOf(unique.values());
     }
 
-    private void addSource(Map<String, SourceDto> unique, SourceDto source) {
+    /**
+     * @param preferOverExisting when true (graph facts), replaces a non-GRAPH_FACT entry for the same path
+     */
+    private void putSource(Map<String, SourceDto> unique, SourceDto source, boolean preferOverExisting) {
         if (source == null) return;
         String key = source.path() == null ? "source-" + unique.size() : source.path();
-        unique.putIfAbsent(key, source);
+        SourceDto existing = unique.get(key);
+        if (existing == null) {
+            unique.put(key, source);
+            return;
+        }
+        if (preferOverExisting && !"GRAPH_FACT".equals(existing.type())) {
+            unique.put(key, source);
+        }
+    }
+
+    /**
+     * Standalone question for the answer model: planner retrievalQuery/condition when they
+     * expand a short follow-up; otherwise the raw user question. Technical fields only.
+     */
+    static String answerFacingQuestion(QueryPlan plan) {
+        if (plan == null) {
+            return "";
+        }
+        String raw = plan.question() == null ? "" : plan.question().trim();
+        String retrieval = plan.retrievalQuery() == null ? "" : plan.retrievalQuery().trim();
+        String condition = plan.condition() == null ? "" : plan.condition().trim();
+        if (!retrieval.isBlank() && !retrieval.equalsIgnoreCase(raw)) {
+            return retrieval;
+        }
+        if (!condition.isBlank() && !condition.equalsIgnoreCase(raw)) {
+            return condition;
+        }
+        return raw;
+    }
+
+    /** Compact recent turns for the answer prompt (no phrase routing). */
+    static String compactConversationContext(String conversationContext) {
+        if (conversationContext == null || conversationContext.isBlank()) {
+            return "";
+        }
+        String trimmed = conversationContext.trim();
+        if (trimmed.length() > 1200) {
+            trimmed = trimmed.substring(trimmed.length() - 1200).trim();
+        }
+        return "\n[Ostatnie tury rozmowy]\n" + trimmed + "\n";
+    }
+
+    private void syncGroundedAnswerToMemory(UUID chatId, String cleaned) {
+        if (chatMemoryService == null || cleaned == null || cleaned.isBlank()) {
+            return;
+        }
+        try {
+            chatMemoryService.replaceLastAiMessage(chatId, cleaned);
+        } catch (Exception e) {
+            log.warn("Failed to sync grounded answer into chat memory for {}: {}", chatId, e.getMessage());
+        }
     }
 
     private String answerPrompt(String context) {

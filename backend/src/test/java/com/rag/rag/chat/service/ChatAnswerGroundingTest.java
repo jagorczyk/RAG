@@ -185,4 +185,33 @@ class ChatAnswerGroundingTest {
         String multi = ChatAnswerGrounding.formatEntityScopedPresence(List.of("Igor", "Anna"));
         assertEquals("Igor i Anna są na potwierdzonych zdjęciach w bibliotece.", multi);
     }
+
+    @Test
+    void detectsClarificationSeekingFromTestKon123() {
+        String olekClarify = "It seems like you might be saying \"a olek,\" but I'm not entirely sure what you mean. "
+                + "Could you clarify or provide more context? Are you referring to something specific, "
+                + "like a name, a phrase, or a cultural reference? Let me know so I can assist you better! 😊";
+        assertTrue(ChatAnswerGrounding.isClarificationSeekingNonAnswer(olekClarify));
+        assertTrue(ChatAnswerGrounding.isEnglishAssistantNonAnswer(olekClarify));
+        assertTrue(ChatAnswerGrounding.shouldRewriteUngroundedAnswer(olekClarify, true));
+
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                olekClarify, List.of("Olek"), true, true);
+        assertEquals("Olek jest na potwierdzonych zdjęciach w bibliotece.", resolved);
+
+        assertTrue(ChatAnswerGrounding.isClarificationSeekingNonAnswer(
+                "Nie do końca rozumiem — czy możesz doprecyzować?"));
+        assertFalse(ChatAnswerGrounding.isClarificationSeekingNonAnswer(
+                "Olek jest na potwierdzonych zdjęciach w bibliotece."));
+    }
+
+    @Test
+    void englishAssistantNonAnswerDoesNotFlagPolishEvidenceAnswers() {
+        assertFalse(ChatAnswerGrounding.isEnglishAssistantNonAnswer(
+                "Olek jest na potwierdzonych zdjęciach w bibliotece."));
+        assertFalse(ChatAnswerGrounding.isEnglishAssistantNonAnswer(
+                "Na zdjęciu stoi Igor w garniturze."));
+        assertTrue(ChatAnswerGrounding.isEnglishAssistantNonAnswer(
+                "It seems like you might be referring to something specific. Let me know so I can help!"));
+    }
 }

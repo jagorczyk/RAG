@@ -2,6 +2,7 @@ package com.rag.rag.chat.service;
 
 import com.rag.rag.chat.entity.ChatMemoryEntity;
 import com.rag.rag.chat.repository.ChatMemoryRepository;
+import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ChatMessageSerializer;
@@ -66,6 +67,47 @@ public class ChatMemoryService implements ChatMemoryStore {
             entity.setMessages(json);
             repository.save(entity);
         }
+    }
+
+    /**
+     * Replaces the last AI turn in LangChain memory with the post-grounded UI answer so
+     * follow-ups condition on the same text the user saw (not raw model denials/greetings).
+     * Also re-normalizes any user blobs still present. No-op when text is blank or no AI turn.
+     */
+    @Transactional
+    public void replaceLastAiMessage(UUID chatId, String groundedAnswer) {
+        if (chatId == null || groundedAnswer == null || groundedAnswer.isBlank()) {
+            return;
+        }
+        List<ChatMessage> current = getMessages(chatId);
+        if (current.isEmpty()) {
+            return;
+        }
+        List<ChatMessage> updated = new ArrayList<>(current.size());
+        int lastAi = -1;
+        for (int i = 0; i < current.size(); i++) {
+            if (current.get(i) instanceof AiMessage) {
+                lastAi = i;
+            }
+        }
+        if (lastAi < 0) {
+            return;
+        }
+        for (int i = 0; i < current.size(); i++) {
+            ChatMessage msg = current.get(i);
+            if (i == lastAi) {
+                updated.add(AiMessage.from(groundedAnswer.trim()));
+                continue;
+            }
+            if (msg instanceof UserMessage userMsg) {
+                String text = userMsg.singleText();
+                String cleaned = ChatUserMessageNormalizer.extractOriginalQuestion(text);
+                updated.add(UserMessage.from(cleaned));
+            } else {
+                updated.add(msg);
+            }
+        }
+        updateMessages(chatId, updated);
     }
 
     @Override

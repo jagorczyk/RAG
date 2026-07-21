@@ -40,6 +40,7 @@ class ChatInteractionServiceTest {
     @Mock private ChatService chatAiService;
     @Mock private ChatMemoryRepository chatMemoryRepository;
     @Mock private ChatMessageRepository chatMessageRepository;
+    @Mock private ChatMemoryService chatMemoryService;
     @Mock private IngestionService ingestionService;
     @Mock private GraphQueryService graphQueryService;
     @Mock private DynamicVisualMatcher dynamicVisualMatcher;
@@ -742,6 +743,77 @@ class ChatInteractionServiceTest {
         assertTrue(response.response().contains("Dawid"));
         assertEquals(1, response.sources().size());
         assertEquals(QueryPlan.RetrievalMode.VISUAL_VALIDATION.name(), response.answerKind());
+    }
+
+    @Test
+    void shortFollowUpWithEnglishClarifyIsRewrittenToEntityPresence() {
+        // Regression: test-kon-123 — "a olek?" with good hybrid/graph sources but EN clarify prose.
+        String question = "a olek?";
+        String path = "dir://awdaw/4C Matura-342.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Olek"), List.of(),
+                "zdjęcia na których jest Olek", "Olek na potwierdzonych zdjęciach",
+                false, false, QueryPlan.RetrievalMode.HYBRID, "Odpowiedz krótko po polsku.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("- entity=Olek; file=" + path, List.of(path)));
+        Result<String> result = Result.<String>builder()
+                .content("It seems like you might be saying \"a olek,\" but I'm not entirely sure what you mean. "
+                        + "Could you clarify or provide more context? Let me know so I can assist you better! 😊")
+                .build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result))
+                .thenReturn(List.of(new SourceDto(path, "4C Matura-342.jpg", 0.9, null, "IMAGE")));
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "4C Matura-342.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals("Olek jest na potwierdzonych zdjęciach w bibliotece.", response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals("GRAPH_FACT", response.sources().get(0).type());
+        assertFalse(response.uncertain());
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
+        assertTrue(promptCaptor.getValue().contains("zdjęcia na których jest Olek"));
+        assertTrue(promptCaptor.getValue().contains("Oryginalne brzmienie użytkownika: a olek?"));
+        verify(chatMemoryService).replaceLastAiMessage(eq(chatId),
+                eq("Olek jest na potwierdzonych zdjęciach w bibliotece."));
+    }
+
+    @Test
+    void answerFacingQuestionPrefersStandaloneRetrievalQuery() {
+        QueryPlan plan = new QueryPlan("a olek?", List.of("Olek"), List.of(),
+                "zdjęcia na których jest Olek", "condition", false, false,
+                QueryPlan.RetrievalMode.HYBRID, "");
+        assertEquals("zdjęcia na których jest Olek", ChatInteractionService.answerFacingQuestion(plan));
+
+        QueryPlan same = new QueryPlan("co robi?", List.of(), List.of(),
+                "co robi?", "co robi osoba na zdjęciu", false, false,
+                QueryPlan.RetrievalMode.HYBRID, "");
+        assertEquals("co robi osoba na zdjęciu", ChatInteractionService.answerFacingQuestion(same));
+    }
+
+    @Test
+    void graphFactPreferredOverHybridForSamePath() {
+        String path = "dir://awdaw/shared.jpg";
+        QueryPlan plan = new QueryPlan("Gdzie jest Olek?", List.of("Olek"), List.of(),
+                "Gdzie jest Olek?", "", false, false, QueryPlan.RetrievalMode.HYBRID, "");
+        when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("- entity=Olek; file=" + path, List.of(path)));
+        Result<String> result = Result.<String>builder().content("Olek jest na potwierdzonych zdjęciach.").build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result))
+                .thenReturn(List.of(new SourceDto(path, "shared.jpg", 0.75, null, "IMAGE")));
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "shared.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(plan.question()));
+
+        assertEquals(1, response.sources().size());
+        assertEquals("GRAPH_FACT", response.sources().get(0).type());
+        assertEquals(1.0, response.sources().get(0).score());
+        assertEquals("CONFIRMED", response.evidence().get(0).matchStatus());
     }
 
     private static QueryPlan coPresencePlan(String question, List<String> entities,

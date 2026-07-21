@@ -177,4 +177,31 @@ class ChatMemoryServiceTest {
         // Assert
         verify(repository).deleteById(chatId);
     }
+
+    @Test
+    void replaceLastAiMessageSyncsGroundedAnswerForFollowUps() {
+        // Raw model greeting stored by LangChain; UI grounding rewrites to Polish presence.
+        ChatMemoryEntity entity = new ChatMemoryEntity();
+        entity.setChatId(chatId);
+        entity.setMessages(dev.langchain4j.data.message.ChatMessageSerializer.messagesToJson(List.of(
+                UserMessage.from("na których zdjęciach jest Piotrek?"),
+                AiMessage.from("Hello! How can I assist you today? 😊")
+        )));
+        when(repository.findById(chatId)).thenReturn(Optional.of(entity));
+
+        chatMemoryService.replaceLastAiMessage(chatId,
+                "Piotrek jest na potwierdzonych zdjęciach w bibliotece.");
+
+        ArgumentCaptor<ChatMemoryEntity> captor = ArgumentCaptor.forClass(ChatMemoryEntity.class);
+        verify(repository, atLeastOnce()).save(captor.capture());
+        ChatMemoryEntity saved = captor.getValue();
+        when(repository.findById(chatId)).thenReturn(Optional.of(saved));
+        List<ChatMessage> read = chatMemoryService.getMessages(chatId);
+
+        assertEquals(2, read.size());
+        assertEquals("na których zdjęciach jest Piotrek?", ((UserMessage) read.get(0)).singleText());
+        assertEquals("Piotrek jest na potwierdzonych zdjęciach w bibliotece.",
+                ((AiMessage) read.get(1)).text());
+        assertFalse(saved.getMessages().contains("Hello! How can I assist"));
+    }
 }

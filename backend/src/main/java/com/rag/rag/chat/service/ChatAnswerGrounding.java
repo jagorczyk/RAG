@@ -187,11 +187,101 @@ public final class ChatAnswerGrounding {
     }
 
     /**
+     * True when the model asks the user to clarify instead of using provided evidence.
+     * Answer shape only — not user-question wording (AGENTS.md).
+     */
+    public static boolean isClarificationSeekingNonAnswer(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+        String lower = answer.toLowerCase(Locale.ROOT);
+        return containsAny(lower,
+                "could you clarify",
+                "can you clarify",
+                "not entirely sure what you mean",
+                "i'm not entirely sure what you mean",
+                "i am not entirely sure what you mean",
+                "not sure what you mean",
+                "i'm not sure what you mean",
+                "i am not sure what you mean",
+                "what do you mean",
+                "provide more context",
+                "provide more information",
+                "are you referring to something specific",
+                "let me know so i can assist",
+                "let me know so i can help",
+                "nie jestem pewien, co masz na myśli",
+                "nie jestem pewien co masz na myśli",
+                "nie jestem pewna, co masz na myśli",
+                "nie jestem pewna co masz na myśli",
+                "nie wiem, co masz na myśli",
+                "nie wiem co masz na myśli",
+                "czy możesz doprecyzować",
+                "czy mozesz doprecyzowac",
+                "doprecyzuj proszę",
+                "doprecyzuj prosze",
+                "o co dokładnie pytasz",
+                "o co dokladnie pytasz",
+                "nie do końca rozumiem",
+                "nie do konca rozumiem",
+                "could you rephrase",
+                "can you rephrase");
+    }
+
+    /**
+     * True when the assistant reply is predominantly English assistant-style prose
+     * despite system instructions requiring Polish. Answer shape only.
+     */
+    public static boolean isEnglishAssistantNonAnswer(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+        String trimmed = answer.trim();
+        // Polish diacritics → treat as Polish (good answers may mix a proper name + PL).
+        if (trimmed.matches("(?s).*[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ].*")) {
+            return false;
+        }
+        String lower = trimmed.toLowerCase(Locale.ROOT);
+        // Common Polish stems / phrases without diacritics — keep such answers.
+        String padded = " " + lower + " ";
+        if (padded.contains(" jest ")
+                || padded.contains(" są ")
+                || padded.contains(" sa ")
+                || lower.contains("zdję")
+                || lower.contains("zdjec")
+                || lower.contains("potwierdz")
+                || lower.contains("bibliotece")
+                || lower.contains("znaleziono")
+                || lower.contains("dokumentach")
+                || lower.contains("osoba")
+                || lower.contains("osoby")) {
+            return false;
+        }
+        // Leading English assistant openers / hedging without Polish content.
+        return containsAny(lower,
+                "it seems like",
+                "it looks like",
+                "i'm not entirely sure",
+                "i am not entirely sure",
+                "i'm not sure",
+                "i am not sure",
+                "could you",
+                "can you clarify",
+                "let me know so i can",
+                "how can i assist",
+                "how can i help",
+                "feel free to",
+                "happy to help");
+    }
+
+    /**
      * True when the model answer must not be shown as-is despite certain evidence.
      */
     public static boolean shouldRewriteUngroundedAnswer(String modelAnswer, boolean entityScoped) {
         return isCapabilityDenial(modelAnswer)
                 || isEmptyOrGreetingNonAnswer(modelAnswer)
+                || isClarificationSeekingNonAnswer(modelAnswer)
+                || isEnglishAssistantNonAnswer(modelAnswer)
                 || (entityScoped && isGeneralKnowledgeEssay(modelAnswer));
     }
 
