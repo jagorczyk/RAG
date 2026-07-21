@@ -1,7 +1,10 @@
 package com.rag.rag.knowledge.graph;
 
+import com.fasterxml.jackson.core.util.DefaultIndenter;
+import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.rag.rag.folder.entity.FileEntity;
@@ -41,8 +44,35 @@ import java.util.UUID;
 public final class ImageEmbeddingDocumentBuilder {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** 2-space indent, LF newlines — readable in UI and logs. */
+    private static final ObjectWriter PRETTY = MAPPER.writer(readablePrettyPrinter());
 
     private ImageEmbeddingDocumentBuilder() {
+    }
+
+    private static DefaultPrettyPrinter readablePrettyPrinter() {
+        DefaultPrettyPrinter printer = new DefaultPrettyPrinter();
+        DefaultIndenter indenter = new DefaultIndenter("  ", "\n");
+        printer.indentObjectsWith(indenter);
+        printer.indentArraysWith(indenter);
+        return printer;
+    }
+
+    /** Pretty-print any JSON tree/text for display (also used by embeddings API). */
+    public static String formatReadable(String jsonOrText) {
+        if (jsonOrText == null || jsonOrText.isBlank()) {
+            return jsonOrText == null ? "" : jsonOrText;
+        }
+        String trimmed = jsonOrText.trim();
+        if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) {
+            return jsonOrText;
+        }
+        try {
+            JsonNode node = MAPPER.readTree(trimmed);
+            return PRETTY.writeValueAsString(node);
+        } catch (Exception e) {
+            return jsonOrText;
+        }
     }
 
     public static String build(FileEntity file, List<EntityMention> mentions, List<Fact> facts) {
@@ -92,9 +122,14 @@ public final class ImageEmbeddingDocumentBuilder {
         root.set("participants", participants);
 
         try {
-            return MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(root);
+            return PRETTY.writeValueAsString(root);
         } catch (Exception e) {
-            return root.toString();
+            // last resort: still try single-line JSON rather than Java object dump
+            try {
+                return MAPPER.writeValueAsString(root);
+            } catch (Exception ignored) {
+                return root.toString();
+            }
         }
     }
 

@@ -105,5 +105,17 @@ class ImageEmbeddingDocumentBuilderTest {
         assertTrue(olekNode.path("relations").size() >= 1);
         String relDump = olekNode.path("relations").toString();
         assertTrue(relDump.contains("Bartek") || relDump.contains("nóż"));
+        // Pretty-printed: multi-line, indented — human readable in the embeddings UI.
+        assertTrue(json.contains("\n"), "JSON should contain newlines");
+        assertTrue(json.contains("  "), "JSON should be indented");
+    }
+
+    @Test
+    void formatReadablePrettyPrintsCompactJson() {
+        String compact = "{\"type\":\"image_knowledge\",\"file\":\"x.jpg\",\"participants\":[]}";
+        String pretty = ImageEmbeddingDocumentBuilder.formatReadable(compact);
+        assertTrue(pretty.contains("\n"));
+        assertTrue(pretty.contains("\"type\""));
+        assertTrue(pretty.contains("image_knowledge"));
     }
 }

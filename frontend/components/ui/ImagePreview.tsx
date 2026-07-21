@@ -142,7 +142,14 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
               faces={annotatedFaces}
             />
           ) : (
-            <pre className="w-full max-w-3xl whitespace-pre-wrap text-[15px] leading-6 text-ink">
+            <pre
+              className={
+                preview.mimeType === "application/json" ||
+                preview.title?.includes("embedding")
+                  ? "w-full max-w-4xl overflow-x-auto whitespace-pre font-mono text-[13px] leading-5 text-ink"
+                  : "w-full max-w-3xl whitespace-pre-wrap text-[15px] leading-6 text-ink"
+              }
+            >
               {preview.content}
             </pre>
           )}

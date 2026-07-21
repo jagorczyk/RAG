@@ -387,7 +387,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
       setPreviewFile({
         kind: "text",
         title: `${data.title} — embeddingi (${data.chunkCount})`,
-        mimeType: "text/plain",
+        mimeType: "application/json",
         content: data.content,
       });
     } catch (error) {

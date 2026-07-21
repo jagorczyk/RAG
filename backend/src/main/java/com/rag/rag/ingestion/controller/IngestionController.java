@@ -299,6 +299,8 @@ public class IngestionController {
                 .filter(Objects::nonNull)
                 .map(String::trim)
                 .filter(chunk -> !chunk.isEmpty())
+                // Pretty-print JSON chunks so the embeddings modal is human-readable.
+                .map(com.rag.rag.knowledge.graph.ImageEmbeddingDocumentBuilder::formatReadable)
                 .reduce((a, b) -> a + "\n\n---\n\n" + b)
                 .orElse("Brak embeddingów dla tego pliku.");
 
