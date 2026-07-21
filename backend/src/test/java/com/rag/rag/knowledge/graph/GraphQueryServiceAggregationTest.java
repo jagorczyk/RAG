@@ -74,6 +74,9 @@ class GraphQueryServiceAggregationTest {
         EntityMention m1 = confirmed(igor, "dir://a.jpg");
         EntityMention m2 = confirmed(igor, "dir://b.jpg");
         when(mentionRepository.findByEntityId(igor.getId())).thenReturn(List.of(m1, m2));
+        when(mentionRepository.findByFilePath("dir://a.jpg")).thenReturn(List.of(m1));
+        when(mentionRepository.findByFilePath("dir://b.jpg")).thenReturn(List.of(m2));
+        when(factRepository.findByFilePath(anyString())).thenReturn(List.of());
 
         GraphEvidenceResult evidence = service.buildEvidence(
                 List.of("Igor"), List.of(), EntityMatchMode.ANY);
@@ -82,6 +85,8 @@ class GraphQueryServiceAggregationTest {
         assertEquals(2, evidence.certainPaths().size());
         assertTrue(evidence.certainPaths().containsAll(List.of("dir://a.jpg", "dir://b.jpg")));
         assertTrue(evidence.context().contains("entity=Igor"));
+        assertTrue(evidence.context().contains("=== Graf zdjęcia #1 ==="));
+        assertTrue(evidence.context().contains("=== Graf zdjęcia #2 ==="));
     }
 
     @Test
@@ -128,6 +133,8 @@ class GraphQueryServiceAggregationTest {
         assertTrue(evidence.certainPaths().contains("dir://pair.jpg"));
         assertTrue(evidence.context().contains("predicate=LEFT_OF"));
         assertTrue(evidence.context().contains("value=Anna"));
+        assertTrue(evidence.context().contains("=== Graf zdjęcia #1 ==="));
+        assertTrue(evidence.context().contains("=== Claimy grafu ===") || evidence.context().contains("LEFT_OF"));
     }
 
     @Test

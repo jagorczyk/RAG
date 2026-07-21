@@ -137,16 +137,18 @@ public class ChatInteractionService {
                     Pytanie użytkownika: %s
                     """.formatted(plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
         } else if (effectiveMode == QueryPlan.RetrievalMode.GRAPH && !graphContext.isBlank()) {
-            // People path: graph first; scoped hybrid may add clothing/action detail from embeddings.
+            // Full graph snapshot for relevant photos — model selects facts and answers.
             prompt = """
-                    [Kontekst grafu osób i relacji]
+                    [Pełny graf wiedzy dla wskazanych zdjęć]
                     %s
 
                     [Instrukcja odpowiedzi]
                     %s
                     %s
-                    Używaj kontekstu grafu oraz fragmentów retrieval dla tych samych plików — nie zgaduj.
-                    Gdy pytanie dotyczy wyglądu, ubioru lub czynności, cytuj te szczegóły z dowodów.
+                    Powyżej masz kompletny przepływ grafu (uczestnicy, visual_cues, obiekty, relacje,
+                    fakty, scena, claimy). Sam zdecyduj, które elementy odpowiadają na pytanie,
+                    i sformułuj naturalną odpowiedź po polsku. Nie zgaduj poza tym grafem.
+                    Fragmenty retrieval (jeśli są) traktuj jako uzupełnienie tych samych plików.
                     %s
                     Oryginalne brzmienie użytkownika: %s
 

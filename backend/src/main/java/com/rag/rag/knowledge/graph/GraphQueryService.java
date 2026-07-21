@@ -192,33 +192,54 @@ public class GraphQueryService {
         if (mode == EntityMatchMode.ALL_SAME_FILE && !validatedEntities.isEmpty()) {
             certainPaths.addAll(imagePathsForAllEntities(validatedEntities));
             if (!validatedScope.isEmpty()) certainPaths.retainAll(validatedScope);
-            for (String path : certainPaths) {
-                contexts.add("- współwystępowanie=" + String.join(", ", validatedEntities) + "; file=" + path);
-                String fileContext = buildFullContextForFile(path);
-                if (!fileContext.isBlank()) contexts.add(fileContext);
+            if (!certainPaths.isEmpty()) {
+                contexts.add("- współwystępowanie=" + String.join(", ", validatedEntities)
+                        + "; pliki=" + certainPaths.size());
             }
         } else {
-            Set<String> allowedPaths = validatedScope.isEmpty()
-                    ? Set.of()
-                    : new LinkedHashSet<>(validatedScope);
-            String entityContext = buildContextForEntities(validatedEntities, allowedPaths);
-            if (!entityContext.isBlank()) contexts.add(entityContext);
-            certainPaths.addAll(imagePathsForEntities(validatedEntities));
-            if (!validatedScope.isEmpty() && !validatedEntities.isEmpty()) {
-                certainPaths.retainAll(validatedScope);
+            if (!validatedEntities.isEmpty()) {
+                certainPaths.addAll(imagePathsForEntities(validatedEntities));
+                if (!validatedScope.isEmpty()) {
+                    certainPaths.retainAll(validatedScope);
+                }
             }
             for (String path : validatedScope) {
-                if (validatedEntities.isEmpty()) {
-                    String fileContext = buildFullContextForFile(path);
-                    if (!fileContext.isBlank()) contexts.add(fileContext);
+                if (validatedEntities.isEmpty() || hasCertainEvidenceForFile(path, validatedEntities)) {
+                    certainPaths.add(path);
                 }
-                if (hasCertainEvidenceForFile(path, validatedEntities)) certainPaths.add(path);
             }
         }
+
+        // Full per-photo graph snapshot — AI decides which nodes/edges answer the question.
+        int index = 1;
+        for (String path : certainPaths) {
+            if (index > 20) {
+                contexts.add("- (pominięto dalsze zdjęcia grafu; limit 20)");
+                break;
+            }
+            String fileContext = buildFullContextForFile(path);
+            if (!fileContext.isBlank()) {
+                contexts.add("=== Graf zdjęcia #" + index + " ===\n" + fileContext);
+            } else {
+                contexts.add("=== Graf zdjęcia #" + index + " ===\n- file=" + path + "\n");
+            }
+            index++;
+        }
+
         List<GroundedVisualClaim> claims = certainPaths.stream()
                 .flatMap(path -> certainClaimsForFile(path, validatedEntities).stream())
                 .distinct()
                 .toList();
+        if (!claims.isEmpty()) {
+            StringBuilder claimBlock = new StringBuilder("=== Claimy grafu ===\n");
+            for (GroundedVisualClaim claim : claims) {
+                if (claim == null || claim.statementPl() == null || claim.statementPl().isBlank()) {
+                    continue;
+                }
+                claimBlock.append("- ").append(claim.id()).append(": ").append(claim.statementPl()).append('\n');
+            }
+            contexts.add(claimBlock.toString().trim());
+        }
         return new GraphEvidenceResult(String.join("\n", contexts), List.copyOf(certainPaths), claims);
     }
 

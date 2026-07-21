@@ -234,8 +234,8 @@ class ChatInteractionServiceTest {
         verify(ingestionService).createGraphFactSourceDto(eq("dir://a.jpg"), any(), anyDouble());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
-        assertTrue(promptCaptor.getValue().contains("[Kontekst grafu osób i relacji]"));
-        assertTrue(promptCaptor.getValue().contains("ubiór") || promptCaptor.getValue().contains("1–3"));
+        assertTrue(promptCaptor.getValue().contains("[Pełny graf wiedzy dla wskazanych zdjęć]"));
+        assertTrue(promptCaptor.getValue().contains("Sam zdecyduj") || promptCaptor.getValue().contains("kompletny przepływ grafu"));
     }
 
     @Test
