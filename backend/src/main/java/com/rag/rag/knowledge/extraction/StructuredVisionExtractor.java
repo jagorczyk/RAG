@@ -81,17 +81,29 @@ public class StructuredVisionExtractor {
         if (text == null || text.isBlank()) {
             return new ExtractionResult(null, text, false);
         }
-        try {
-            String jsonContent = extractJsonObject(text);
-            VisionResultDto dto = objectMapper.readValue(jsonContent, VisionResultDto.class);
-            if (dto == null) {
-                return new ExtractionResult(null, text, false);
+        String jsonContent = extractJsonObject(text);
+        VisionResultDto dto = tryReadDto(jsonContent);
+        if (dto == null) {
+            String repaired = repairCommonVisionJsonErrors(jsonContent);
+            if (!repaired.equals(jsonContent)) {
+                log.info("Applied vision JSON repair (len {} → {})", jsonContent.length(), repaired.length());
+                dto = tryReadDto(repaired);
             }
-            // Accept even if entities empty but scene_summary present — still useful graph/embed text.
-            return new ExtractionResult(dto, text, true);
-        } catch (JsonProcessingException e) {
-            log.warn("Failed to parse vision response to JSON: {}", e.getMessage());
+        }
+        if (dto == null) {
+            log.warn("Failed to parse vision response to JSON (raw len={})", text.length());
             return new ExtractionResult(null, text, false);
+        }
+        // Accept even if entities empty but scene_summary present — still useful graph/embed text.
+        return new ExtractionResult(dto, text, true);
+    }
+
+    private VisionResultDto tryReadDto(String jsonContent) {
+        try {
+            return objectMapper.readValue(jsonContent, VisionResultDto.class);
+        } catch (JsonProcessingException e) {
+            log.debug("Vision JSON not yet parseable: {}", e.getMessage());
+            return null;
         }
     }
 
@@ -124,6 +136,30 @@ public class StructuredVisionExtractor {
             return jsonContent.substring(start, end + 1);
         }
         return jsonContent;
+    }
+
+    /**
+     * Models often close the entity object one field too early, e.g.
+     * {@code "nearby_text":["VW"]},"bbox":[...]} instead of
+     * {@code "nearby_text":["VW"],"bbox":[...]}.
+     * That yields invalid JSON and historically marked graph_projection FAILED
+     * even though vision_analysis_status stayed COMPLETED.
+     */
+    static String repairCommonVisionJsonErrors(String json) {
+        if (json == null || json.isBlank()) {
+            return json == null ? "" : json;
+        }
+        String fixed = json;
+        // `],"bbox":` wrongly written as `]},"bbox":` (object closed before bbox field).
+        fixed = fixed.replaceAll("(\\])\\s*\\}\\s*,\\s*\"bbox\"\\s*:", "$1,\"bbox\":");
+        // Same pattern for other late fields sometimes emitted after a premature close.
+        fixed = fixed.replaceAll(
+                "(\\])\\s*\\}\\s*,\\s*\"(face_anchor_id|visual_cues|nearby_objects|nearby_text|actions|objects)\"\\s*:",
+                "$1,\"$2\":");
+        // Trailing commas before } or ]
+        fixed = fixed.replaceAll(",\\s*}", "}");
+        fixed = fixed.replaceAll(",\\s*]", "]");
+        return fixed;
     }
 
     private String normalizeImageMimeType(String mimeType) {
