@@ -18,6 +18,8 @@ public class FactStatementRewriter {
 
     public static final String ACTION_APPEARANCE = "HAS_APPEARANCE";
     public static final String ACTION_RELATED_OBJECT = "RELATED_OBJECT";
+    /** Spatial proximity (nearby_objects) — not ownership / holding. */
+    public static final String ACTION_NEAR_OBJECT = "NEAR_OBJECT";
     public static final String ACTION_NEAR_TEXT = "NEAR_TEXT";
 
     private final FactRepository factRepository;
@@ -51,6 +53,7 @@ public class FactStatementRewriter {
         return switch (trimmed.toUpperCase(Locale.ROOT)) {
             case ACTION_APPEARANCE -> "ma";
             case ACTION_RELATED_OBJECT -> "ma przy sobie";
+            case ACTION_NEAR_OBJECT -> "obok";
             case ACTION_NEAR_TEXT -> "ma obok napis";
             case "LEFT_OF" -> "z lewej od";
             case "RIGHT_OF" -> "z prawej od";
@@ -104,17 +107,7 @@ public class FactStatementRewriter {
             } else {
                 value = fact.getObject();
             }
-            // Appearance / related-object: keep stored object, readable glue for action.
-            String actionForStatement = fact.getAction();
-            if (ACTION_APPEARANCE.equalsIgnoreCase(actionForStatement)) {
-                fact.setStatementPl(buildStatement(subject, ACTION_APPEARANCE, value));
-            } else if (ACTION_RELATED_OBJECT.equalsIgnoreCase(actionForStatement)) {
-                fact.setStatementPl(buildStatement(subject, ACTION_RELATED_OBJECT, value));
-            } else if (ACTION_NEAR_TEXT.equalsIgnoreCase(actionForStatement)) {
-                fact.setStatementPl(buildStatement(subject, ACTION_NEAR_TEXT, value));
-            } else {
-                fact.setStatementPl(buildStatement(subject, actionForStatement, value));
-            }
+            fact.setStatementPl(buildStatement(subject, fact.getAction(), value));
             factRepository.save(fact);
         }
     }

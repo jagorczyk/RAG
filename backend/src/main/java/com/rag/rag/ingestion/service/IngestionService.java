@@ -281,6 +281,7 @@ public class IngestionService {
                 fileOpt.ifPresent(file -> {
                     file.setImageScene(dto.getScene());
                     file.setImageSummary(dto.getSceneSummary());
+                    file.setSceneAttributes(writeSceneAttributes(dto));
                     file.setVisibleTexts(writeJson(dto.getVisibleTexts()));
                     file.setStructuredVisionContext(writeJson(dto));
                     fileRepository.save(file);
@@ -365,9 +366,13 @@ public class IngestionService {
                                 log.warn("Failed to serialize visual cues for mention '{}' in {}: {}", label, path, e.getMessage());
                             }
                         }
+                        List<String> heldObjects = p.getObjects() == null ? List.of() : p.getObjects().stream()
+                                .filter(v -> v != null && !v.isBlank()).map(String::trim).toList();
+                        List<String> nearbyObjects = p.getNearbyObjects() == null ? List.of() : p.getNearbyObjects().stream()
+                                .filter(v -> v != null && !v.isBlank()).map(String::trim).toList();
                         List<String> objects = new ArrayList<>();
-                        if (p.getObjects() != null) objects.addAll(p.getObjects());
-                        if (p.getNearbyObjects() != null) objects.addAll(p.getNearbyObjects());
+                        objects.addAll(heldObjects);
+                        objects.addAll(nearbyObjects);
                         if (!objects.isEmpty()) mention.setContextObjects(writeJson(objects));
                         List<String> nearbyText = new ArrayList<>();
                         if (p.getNearbyText() != null) nearbyText.addAll(p.getNearbyText());
@@ -442,11 +447,28 @@ public class IngestionService {
                         if (p.getActions() != null && !p.getActions().isEmpty()) {
                             canonicalText.append("Czynności: ").append(String.join(", ", p.getActions())).append(". ");
                         }
-                        if (!objects.isEmpty()) {
-                            canonicalText.append("Obiekty i otoczenie: ").append(String.join(", ", objects)).append(". ");
-                            for (String objectValue : objects) {
-                                factRepo.save(Fact.builder().mention(mention).action("RELATED_OBJECT")
-                                        .object(objectValue).statementPl(subjectStatement(mention, "ma przy sobie", objectValue))
+                        if (!heldObjects.isEmpty()) {
+                            canonicalText.append("Obiekty: ").append(String.join(", ", heldObjects)).append(". ");
+                            for (String objectValue : heldObjects) {
+                                factRepo.save(Fact.builder().mention(mention)
+                                        .action(com.rag.rag.knowledge.fact.FactStatementRewriter.ACTION_RELATED_OBJECT)
+                                        .object(objectValue)
+                                        .statementPl(subjectStatement(mention,
+                                                com.rag.rag.knowledge.fact.FactStatementRewriter.ACTION_RELATED_OBJECT,
+                                                objectValue))
+                                        .evidenceOrigin("VISION_STRUCTURED")
+                                        .filePath(path).confidence(new BigDecimal("0.850")).build());
+                            }
+                        }
+                        if (!nearbyObjects.isEmpty()) {
+                            canonicalText.append("Obiekty w pobliżu: ").append(String.join(", ", nearbyObjects)).append(". ");
+                            for (String objectValue : nearbyObjects) {
+                                factRepo.save(Fact.builder().mention(mention)
+                                        .action(com.rag.rag.knowledge.fact.FactStatementRewriter.ACTION_NEAR_OBJECT)
+                                        .object(objectValue)
+                                        .statementPl(subjectStatement(mention,
+                                                com.rag.rag.knowledge.fact.FactStatementRewriter.ACTION_NEAR_OBJECT,
+                                                objectValue))
                                         .evidenceOrigin("VISION_STRUCTURED")
                                         .filePath(path).confidence(new BigDecimal("0.850")).build());
                             }
@@ -657,6 +679,30 @@ public class IngestionService {
             log.warn("Unable to serialize image context: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** Open scene fields only — no closed domain dictionaries. */
+    private String writeSceneAttributes(VisionResultDto dto) {
+        if (dto == null) {
+            return null;
+        }
+        boolean hasBackground = dto.getBackground() != null && !dto.getBackground().isEmpty();
+        boolean hasSetting = dto.getSetting() != null && !dto.getSetting().isBlank();
+        boolean hasLighting = dto.getLighting() != null && !dto.getLighting().isBlank();
+        if (!hasBackground && !hasSetting && !hasLighting) {
+            return null;
+        }
+        java.util.Map<String, Object> attrs = new java.util.LinkedHashMap<>();
+        if (hasBackground) {
+            attrs.put("background", dto.getBackground());
+        }
+        if (hasSetting) {
+            attrs.put("setting", dto.getSetting().trim());
+        }
+        if (hasLighting) {
+            attrs.put("lighting", dto.getLighting().trim());
+        }
+        return writeJson(attrs);
     }
 
     private String subjectStatement(EntityMention mention, String predicate, String value) {

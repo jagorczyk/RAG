@@ -7,6 +7,7 @@ import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.fact.Fact;
+import com.rag.rag.knowledge.fact.FactStatementRewriter;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FactRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
@@ -78,11 +79,57 @@ public class GraphQueryService {
         List<String> result = new ArrayList<>();
         for (String requested : requestedNames) {
             if (requested == null || requested.isBlank()) continue;
-            people.stream().map(KnowledgeEntity::getDisplayName)
-                    .filter(name -> name.equalsIgnoreCase(requested.trim()))
-                    .findFirst().ifPresent(result::add);
+            String match = resolvePersonDisplayName(requested.trim(), people);
+            if (match != null) {
+                result.add(match);
+            }
         }
         return result.stream().distinct().toList();
+    }
+
+    /**
+     * Resolve Polish name variants (Olka→Olek) and aliases from free text tokens.
+     * Used when the planner returns empty entities or only declined forms.
+     */
+    @Transactional(readOnly = true)
+    public List<String> resolveEntityNamesFromText(String text) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        List<KnowledgeEntity> people = ownedEntities().stream()
+                .filter(this::isUsablePersonEntity)
+                .toList();
+        if (people.isEmpty()) {
+            return List.of();
+        }
+        LinkedHashSet<String> found = new LinkedHashSet<>();
+        for (String token : PolishNameMatcher.extractEntityTokens(text)) {
+            String match = resolvePersonDisplayName(token, people);
+            if (match != null) {
+                found.add(match);
+            }
+        }
+        return List.copyOf(found);
+    }
+
+    private String resolvePersonDisplayName(String requested, List<KnowledgeEntity> people) {
+        if (requested == null || requested.isBlank() || people == null) {
+            return null;
+        }
+        String needle = requested.trim();
+        for (KnowledgeEntity entity : people) {
+            String name = entity.getDisplayName();
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            if (name.equalsIgnoreCase(needle)) {
+                return name;
+            }
+            if (PolishNameMatcher.namesMatch(needle, name)) {
+                return name;
+            }
+        }
+        return null;
     }
 
     @Transactional(readOnly = true)
@@ -424,15 +471,24 @@ public class GraphQueryService {
     private GroundedVisualClaim toClaim(Fact fact) {
         EntityMention mention = fact.getMention();
         String entity = mention.getEntity().getDisplayName();
-        String value = fact.getTargetMention() != null && fact.getTargetMention().getEntity() != null
-                ? fact.getTargetMention().getEntity().getDisplayName()
-                : fact.getObject();
+        String value = fact.getObject();
+        if (fact.getTargetMention() != null) {
+            EntityMention target = fact.getTargetMention();
+            if (isCertainMention(target) && target.getEntity() != null
+                    && target.getEntity().getDisplayName() != null
+                    && !identityResolutionService.isGenericPersonLabel(target.getEntity().getDisplayName())) {
+                value = target.getEntity().getDisplayName();
+            } else {
+                value = "nierozpoznana osoba";
+            }
+        }
         String statement = fact.getStatementPl();
-        if (statement == null || statement.isBlank()
-                || (mention.getVisionLabel() != null && statement.toLowerCase(Locale.ROOT)
-                .startsWith(mention.getVisionLabel().toLowerCase(Locale.ROOT)))) {
-            statement = entity + " " + fact.getAction()
-                    + (value == null || value.isBlank() ? "" : " " + value) + ".";
+        boolean stalePlaceholder = mention.getVisionLabel() != null && statement != null
+                && statement.toLowerCase(Locale.ROOT).startsWith(mention.getVisionLabel().toLowerCase(Locale.ROOT));
+        boolean hasPerson1Leak = statement != null && statement.toLowerCase(Locale.ROOT).contains("person ");
+        if (statement == null || statement.isBlank() || stalePlaceholder || hasPerson1Leak
+                || (fact.getTargetMention() != null && !isCertainMention(fact.getTargetMention()))) {
+            statement = FactStatementRewriter.buildStatement(entity, fact.getAction(), value);
         }
         return new GroundedVisualClaim("F-" + fact.getId(), mention.getId(), entity,
                 fact.getAction(), value, statement, fact.getFilePath(), fact.getConfidence(),
@@ -525,8 +581,39 @@ public class GraphQueryService {
         if (file.getImageScene() != null && !file.getImageScene().isBlank()) {
             context.append("Scena: ").append(file.getImageScene().trim()).append('\n');
         }
+        appendSceneAttributes(context, file.getSceneAttributes());
         if (file.getImageSummary() != null && !file.getImageSummary().isBlank()) {
             context.append("Podsumowanie: ").append(file.getImageSummary().trim()).append('\n');
+        }
+    }
+
+    private void appendSceneAttributes(StringBuilder context, String sceneAttributesJson) {
+        if (sceneAttributesJson == null || sceneAttributesJson.isBlank()) {
+            return;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode root =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(sceneAttributesJson);
+            if (root.has("setting") && !root.get("setting").asText("").isBlank()) {
+                context.append("Otoczenie: ").append(root.get("setting").asText().trim()).append('\n');
+            }
+            if (root.has("lighting") && !root.get("lighting").asText("").isBlank()) {
+                context.append("Oświetlenie: ").append(root.get("lighting").asText().trim()).append('\n');
+            }
+            if (root.has("background") && root.get("background").isArray()) {
+                List<String> bg = new ArrayList<>();
+                root.get("background").forEach(n -> {
+                    String v = n.asText("").trim();
+                    if (!v.isBlank()) {
+                        bg.add(v);
+                    }
+                });
+                if (!bg.isEmpty()) {
+                    context.append("Tło: ").append(String.join(", ", bg)).append('\n');
+                }
+            }
+        } catch (Exception ignored) {
+            // Malformed JSON must not break graph dump.
         }
     }
 
@@ -548,14 +635,7 @@ public class GraphQueryService {
         if (action == null) {
             return "";
         }
-        return switch (action.toUpperCase(Locale.ROOT)) {
-            case "RELATED_OBJECT" -> "ma przy sobie";
-            case "NEAR_TEXT" -> "ma obok napis";
-            case "HAS_APPEARANCE" -> "wygląda:";
-            case "LEFT_OF" -> "z lewej od";
-            case "RIGHT_OF" -> "z prawej od";
-            default -> action;
-        };
+        return FactStatementRewriter.readableAction(action);
     }
 
     private static String ensureSentence(String value) {
@@ -605,12 +685,15 @@ public class GraphQueryService {
         return mentionEvidencePolicy.isCertain(mention);
     }
 
+    /**
+     * Subject must be certain. Target may be uncertain (partial identity): kept as
+     * „nierozpoznana osoba” so spatial layout still answers questions.
+     */
     private boolean isCertainFact(Fact fact) {
         return fact != null
                 && fact.getConfidence() != null
                 && fact.getConfidence().compareTo(BigDecimal.valueOf(minFactConfidence)) >= 0
-                && isCertainMention(fact.getMention())
-                && (fact.getTargetMention() == null || isCertainMention(fact.getTargetMention()));
+                && isCertainMention(fact.getMention());
     }
 
     /** Humans only — animals/objects are not GRAPH entity targets (AGENTS.md). */

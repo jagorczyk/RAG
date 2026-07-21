@@ -106,6 +106,7 @@ public class CanonicalEmbeddingRefreshService {
         document.metadata().put("filename", fileName);
         document.metadata().put("source_type", "IMAGE");
         document.metadata().put("document_id", folderIdFromPath(path));
+        if (file.getOwnerId() != null) document.metadata().put("owner_id", file.getOwnerId().toString());
 
         jdbcTemplate.update(DELETE_EMBEDDINGS_SQL, path);
         embeddingStoreIngestor.ingest(document);
@@ -124,6 +125,9 @@ public class CanonicalEmbeddingRefreshService {
             }
             if (file.getImageSummary() != null && !file.getImageSummary().isBlank()) {
                 canonical.append("Kontekst sceny: ").append(file.getImageSummary()).append(". ");
+            }
+            if (file.getSceneAttributes() != null && !file.getSceneAttributes().isBlank()) {
+                canonical.append("Atrybuty sceny: ").append(file.getSceneAttributes()).append(". ");
             }
             String fileName = file.getFileName() != null ? file.getFileName() : fileNameFromPath(file.getPath());
             if (fileName != null && !fileName.isBlank()) {

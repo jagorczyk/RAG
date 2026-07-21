@@ -56,6 +56,11 @@ public class FileEntity {
     @Column(columnDefinition = "text")
     private String imageSummary;
 
+    /** JSON: open scene attributes {background, setting, lighting} — no domain enums. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "scene_attributes", columnDefinition = "jsonb")
+    private String sceneAttributes;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String visibleTexts;
@@ -64,4 +69,10 @@ public class FileEntity {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private String structuredVisionContext;
+
+    @Column(name = "graph_projection_version", length = 64)
+    private String graphProjectionVersion;
+
+    @Column(name = "graph_projection_status", length = 32)
+    private String graphProjectionStatus;
 }

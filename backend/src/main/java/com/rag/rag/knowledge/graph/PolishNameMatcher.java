@@ -114,4 +114,33 @@ public final class PolishNameMatcher {
                 .filter(token -> !isStopWord(token))
                 .toList();
     }
+
+    /**
+     * True when {@code requested} is the same person name as {@code displayName}
+     * allowing Polish case/diminutive variants (Olka↔Olek, Piotrka↔Piotrek).
+     */
+    public static boolean namesMatch(String requested, String displayName) {
+        if (requested == null || displayName == null) {
+            return false;
+        }
+        String a = requested.trim().toLowerCase(Locale.ROOT);
+        String b = displayName.trim().toLowerCase(Locale.ROOT);
+        if (a.isEmpty() || b.isEmpty()) {
+            return false;
+        }
+        if (a.equals(b)) {
+            return true;
+        }
+        Set<String> left = generateVariants(a);
+        Set<String> right = generateVariants(b);
+        if (left.isEmpty() || right.isEmpty()) {
+            return false;
+        }
+        for (String v : left) {
+            if (right.contains(v)) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

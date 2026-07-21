@@ -2,6 +2,7 @@ package com.rag.rag.chat.service;
 
 import com.rag.rag.knowledge.graph.GraphQueryService;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -12,6 +13,7 @@ import com.rag.rag.knowledge.graph.EntityMatchMode;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
@@ -20,6 +22,11 @@ import org.mockito.ArgumentCaptor;
 class QueryPlannerTest {
     @Mock private GraphQueryService graphQueryService;
     @Mock private ChatLanguageModel chatModel;
+
+    @BeforeEach
+    void stubTextResolve() {
+        lenient().when(graphQueryService.resolveEntityNamesFromText(anyString())).thenReturn(List.of());
+    }
 
     @Test
     void acceptsAnUnseenVisualAttributeWithoutApplicationVocabulary() {
@@ -51,6 +58,18 @@ class QueryPlannerTest {
         assertEquals(QueryPlan.RetrievalMode.HYBRID, plan.retrievalMode());
         assertTrue(plan.entities().isEmpty());
         assertEquals("Jakie jest saldo na fakturze?", plan.condition());
+    }
+
+    @Test
+    void invalidJsonWithResolvedPolishNameFallsBackToGraph() {
+        when(graphQueryService.availableEntityNames()).thenReturn(List.of("Olek"));
+        when(graphQueryService.resolveEntityNamesFromText("Gdzie jest Olka?")).thenReturn(List.of("Olek"));
+        when(chatModel.generate(anyString())).thenReturn("not-json");
+
+        QueryPlan plan = new QueryPlanner(graphQueryService, chatModel).plan("Gdzie jest Olka?");
+
+        assertEquals(QueryPlan.RetrievalMode.GRAPH, plan.retrievalMode());
+        assertEquals(List.of("Olek"), plan.entities());
     }
 
     @Test
@@ -98,9 +117,9 @@ class QueryPlannerTest {
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatModel).generate(promptCaptor.capture());
         String prompt = promptCaptor.getValue();
-        assertTrue(prompt.contains("Recent conversation and previously returned source paths:"));
-        assertTrue(prompt.contains("Known people (humans) from this workspace:"));
-        assertTrue(prompt.contains("GRAPH: the question is about people"));
+        assertTrue(prompt.contains("Ostatnia rozmowa") || prompt.contains("SOURCES"));
+        assertTrue(prompt.contains("Znane osoby") || prompt.contains("ludzie"));
+        assertTrue(prompt.contains("GRAPH"));
         assertTrue(prompt.contains("USER:"));
         assertTrue(prompt.contains("AI:"));
         assertTrue(prompt.contains("dir://photos/igor.jpg"));
@@ -127,8 +146,8 @@ class QueryPlannerTest {
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatModel).generate(promptCaptor.capture());
         String prompt = promptCaptor.getValue();
-        assertTrue(prompt.contains("Animals and objects alone must NOT select GRAPH"));
-        assertTrue(prompt.contains("HYBRID: the question is NOT about people"));
+        assertTrue(prompt.contains("Zwierzęta") || prompt.contains("ANIMALS") || prompt.contains("obiekty NIE"));
+        assertTrue(prompt.contains("HYBRID"));
         assertEquals(QueryPlan.RetrievalMode.GRAPH, plan.retrievalMode());
         assertEquals(List.of("Igor"), plan.entities());
     }

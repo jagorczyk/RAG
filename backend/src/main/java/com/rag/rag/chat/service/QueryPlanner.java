@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -20,6 +21,8 @@ import java.util.Locale;
 @Slf4j
 @Component
 public class QueryPlanner {
+    private static final int MAX_KNOWN_PEOPLE_IN_PROMPT = 80;
+
     private final GraphQueryService graphQueryService;
     private final ChatLanguageModel chatModel;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -33,49 +36,48 @@ public class QueryPlanner {
     public QueryPlan plan(String question, String conversationContext) {
         String safeQuestion = question == null ? "" : question.trim();
         List<String> knownEntities = graphQueryService.availableEntityNames();
-        QueryPlan fallback = QueryPlan.fallback(safeQuestion, knownEntities);
+        QueryPlan fallback = enrichedFallback(safeQuestion, knownEntities);
         if (chatModel == null || safeQuestion.isBlank()) {
             return fallback;
         }
 
         try {
+            String knownForPrompt = knownEntities.size() <= MAX_KNOWN_PEOPLE_IN_PROMPT
+                    ? knownEntities.toString()
+                    : knownEntities.subList(0, MAX_KNOWN_PEOPLE_IN_PROMPT) + " … (+"
+                    + (knownEntities.size() - MAX_KNOWN_PEOPLE_IN_PROMPT) + ")";
             String response = chatModel.generate("""
-                    You are a context-aware retrieval planner for a photo/document RAG library. Return JSON only.
-                    Do not use a closed list of phrases, colours, clothes, actions or relation words in the app sense;
-                    choose a technical retrievalMode from meaning + known people + conversation.
-                    Preserve the user's meaning verbatim in condition.
+                    Jesteś planerem retrieval dla biblioteki zdjęć i dokumentów (GraphRAG). Zwróć wyłącznie JSON.
+                    Nie używaj zamkniętej listy fraz, kolorów, ubrań ani czynności w kodzie aplikacji —
+                    wybierz retrievalMode z znaczenia pytania, znanych osób i historii rozmowy.
+                    Zachowaj sens użytkownika w polu condition (po polsku).
 
-                    Retrieval modes (pick exactly one):
-                    - GRAPH: the question is about people (humans) — who they are, co-presence, relations,
-                      what they wear/do/look like when those details live in the knowledge graph or embeddings
-                      for those people. Fill entities with canonical human names when identifiable.
-                      Animals and objects alone must NOT select GRAPH.
-                    - HYBRID: the question is NOT about people (documents, scenes without identity, objects,
-                      general file facts). Default for non-person questions. Prefer HYBRID over DOCUMENT.
-                    - VISUAL_VALIDATION: answering requires validating appearance, clothing, pose, action,
-                      scene layout against the image when graph/embeddings are insufficient. Set
-                      visualCondition=true with this mode. Prefer GRAPH/HYBRID first when the library
-                      already stores visual_cues, clothing, hair or actions for the people/files.
-                    - DOCUMENT: rare; only when pure document retrieval is clearly enough. Prefer HYBRID.
+                    Tryby (dokładnie jeden):
+                    - GRAPH: pytanie o ludzi (kim są, współobecność, relacje, ubiór/czynności z grafu).
+                      entities = kanoniczne imiona z listy znanych osób (mianownik, np. Olek nie Olka).
+                      Zwierzęta i same obiekty NIE wybierają GRAPH.
+                    - HYBRID: pytanie NIE o tożsamość ludzi (dokumenty, scena, obiekty, tło). Domyślne dla non-person.
+                    - VISUAL_VALIDATION: trzeba zweryfikować wygląd/pozycję na obrazie, gdy graf/embeddingi nie wystarczą.
+                      Ustaw visualCondition=true. Preferuj GRAPH/HYBRID, gdy visual_cues/claimy już są w grafie.
+                    - DOCUMENT: rzadko; preferuj HYBRID.
 
-                    When the recent conversation lists SOURCES: paths, copy those exact paths into fileScope
-                    for follow-up questions about the same photo unless the user clearly switches topic or
-                    names a different @file. Empty entities + non-empty fileScope is valid for GRAPH:
-                    the graph loads confirmed human participants for those files.
-                    Use ambiguous true when the available references do not identify one interpretation.
-                    Known people (humans) from this workspace: %s
-                    Recent conversation and previously returned source paths: %s
-                    JSON schema:
-                    {"entities":["canonical human name"],"fileScope":["previously supplied exact path"],
-                    "retrievalQuery":"standalone semantic query resolved from the conversation",
-                    "condition":"full semantic constraint", "visualCondition":false,
+                    Gdy w historii jest SOURCES: ze ścieżkami, skopiuj te exact paths do fileScope przy follow-upach
+                    o tym samym zdjęciu (chyba że użytkownik zmienia temat lub podaje inny @plik).
+                    Puste entities + niepusty fileScope jest OK dla GRAPH (ładujemy uczestników pliku).
+                    ambiguous=true gdy odniesienia są niejednoznaczne.
+                    Znane osoby (ludzie) w workspace: %s
+                    Ostatnia rozmowa i ścieżki źródeł: %s
+                    Schema JSON:
+                    {"entities":["kanoniczne imię"],"fileScope":["dokładna ścieżka z historii"],
+                    "retrievalQuery":"samodzielne zapytanie semantyczne po polsku",
+                    "condition":"pełne ograniczenie semantyczne po polsku","visualCondition":false,
                     "ambiguous":false,"retrievalMode":"HYBRID","entityMatchMode":"ANY",
-                    "answerInstruction":"answer all requested appearance, clothing, action and relation details in Polish from evidence; never list files"}
-                    Use entityMatchMode ALL_SAME_FILE when the answer depends on co-presence of all selected
-                    people in one file; otherwise use ANY. This is a technical set operation.
-                    When ALL_SAME_FILE is chosen, use retrievalMode GRAPH so joint evidence is checked.
-                    User request: %s
-                    """.formatted(knownEntities, conversationContext == null ? "" : conversationContext, safeQuestion));
+                    "answerInstruction":"odpowiedz po polsku z dowodów: ubiór, czynności, relacje, scena; bez list plików"}
+                    entityMatchMode=ALL_SAME_FILE gdy odpowiedź wymaga współobecności wszystkich wybranych osób na jednym pliku;
+                    wtedy retrievalMode=GRAPH.
+                    Pytanie użytkownika: %s
+                    """.formatted(knownForPrompt,
+                    conversationContext == null ? "" : conversationContext, safeQuestion));
             return fromJson(safeQuestion, knownEntities, response, fallback);
         } catch (Exception e) {
             log.warn("Dynamic query planning failed; using hybrid fallback: {}", e.getMessage());
@@ -91,6 +93,15 @@ public class QueryPlanner {
         try {
             JsonNode root = objectMapper.readTree(extractJson(response));
             List<String> entities = graphQueryService.validateEntityNames(readStrings(root.path("entities")));
+            // Planner missed declined Polish names — resolve from question tokens.
+            if (entities.isEmpty()) {
+                entities = graphQueryService.resolveEntityNamesFromText(question);
+            } else {
+                // Merge any extra resolved names from the raw question (Olka + Piotrek).
+                LinkedHashSet<String> merged = new LinkedHashSet<>(entities);
+                merged.addAll(graphQueryService.resolveEntityNamesFromText(question));
+                entities = List.copyOf(merged);
+            }
             List<String> fileScope = graphQueryService.validateFilePaths(readStrings(root.path("fileScope")));
             QueryPlan.RetrievalMode mode = parseMode(root.path("retrievalMode").asText(""), fallback.retrievalMode());
             EntityMatchMode entityMatchMode = parseEntityMatchMode(root.path("entityMatchMode").asText(""));
@@ -102,6 +113,24 @@ public class QueryPlanner {
             log.warn("Dynamic query plan was not valid JSON; using hybrid fallback: {}", e.getMessage());
             return fallback;
         }
+    }
+
+    private QueryPlan enrichedFallback(String question, List<String> knownEntities) {
+        List<String> resolved = graphQueryService.resolveEntityNamesFromText(question);
+        if (resolved.isEmpty()) {
+            return QueryPlan.fallback(question, knownEntities);
+        }
+        return new QueryPlan(
+                question,
+                resolved,
+                List.of(),
+                question,
+                question,
+                false,
+                false,
+                QueryPlan.RetrievalMode.GRAPH,
+                EntityMatchMode.ANY,
+                "Odpowiedz po polsku z dowodów grafu: ubiór, czynności, relacje, scena; bez list plików.");
     }
 
     private List<String> readStrings(JsonNode node) {

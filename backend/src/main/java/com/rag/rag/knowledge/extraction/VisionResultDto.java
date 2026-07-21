@@ -13,6 +13,15 @@ public class VisionResultDto {
     @JsonProperty("scene_summary")
     private String sceneSummary;
 
+    /** Open free-text background elements (no domain dictionary). */
+    private List<String> background;
+
+    /** Open free-text setting / environment (e.g. wnętrze samochodu). */
+    private String setting;
+
+    /** Open free-text lighting description. */
+    private String lighting;
+
     @JsonProperty("visible_texts")
     private List<VisibleTextDto> visibleTexts;
 }
