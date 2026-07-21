@@ -9,6 +9,7 @@ import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.fact.Fact;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FactRepository;
+import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
 import com.rag.rag.knowledge.repository.KnowledgeEntityRepository;
 import com.rag.rag.knowledge.identity.IdentityResolutionService;
 import lombok.RequiredArgsConstructor;
@@ -33,17 +34,19 @@ import java.util.regex.Pattern;
  * interprets the wording of a user question; entities and file paths are
  * already validated planner output.
  *
- * <p>AGENTS.md principle 2: only certain (CONFIRMED, confidence ≥ threshold)
- * mentions and facts are exposed as graph evidence / sources.</p>
+ * <p>AGENTS.md: GRAPH path is for people ({@code PERSON}) and their relations;
+ * only certain (CONFIRMED, confidence ≥ threshold) mentions and facts are exposed.</p>
  */
 @Service
 @RequiredArgsConstructor
 public class GraphQueryService {
     private static final Pattern FILE_REFERENCE = Pattern.compile("@\\\"([^\\\"]+)\\\"|@([^\\s,\\]!?]+)");
+    private static final String PERSON_TYPE = "PERSON";
     private final KnowledgeEntityRepository entityRepository;
     private final EntityMentionRepository mentionRepository;
     private final FileRepository fileRepository;
     private final FactRepository factRepository;
+    private final FaceEmbeddingRepository faceEmbeddingRepository;
     private final MentionEvidencePolicy mentionEvidencePolicy;
     private final IdentityResolutionService identityResolutionService;
     private final CurrentUserService currentUserService;
@@ -51,13 +54,11 @@ public class GraphQueryService {
     @Value("${rag.graph.min-fact-confidence:0.75}")
     private double minFactConfidence = 0.75;
 
+    /** Canonical display names of certain human (PERSON) entities in the workspace. */
     @Transactional(readOnly = true)
     public List<String> availableEntityNames() {
         return ownedEntities().stream()
-                .filter(entity -> !"PERSON".equalsIgnoreCase(entity.getType())
-                        || !identityResolutionService.isGenericPersonLabel(entity.getDisplayName()))
-                .filter(entity -> mentionRepository.findByEntityId(entity.getId()).stream()
-                        .anyMatch(this::isCertainMention))
+                .filter(this::isUsablePersonEntity)
                 .map(KnowledgeEntity::getDisplayName)
                 .filter(name -> name != null && !name.isBlank())
                 .sorted(String.CASE_INSENSITIVE_ORDER)
@@ -67,11 +68,13 @@ public class GraphQueryService {
     @Transactional(readOnly = true)
     public List<String> validateEntityNames(List<String> requestedNames) {
         if (requestedNames == null || requestedNames.isEmpty()) return List.of();
-        List<KnowledgeEntity> entities = ownedEntities();
+        List<KnowledgeEntity> people = ownedEntities().stream()
+                .filter(this::isUsablePersonEntity)
+                .toList();
         List<String> result = new ArrayList<>();
         for (String requested : requestedNames) {
             if (requested == null || requested.isBlank()) continue;
-            entities.stream().map(KnowledgeEntity::getDisplayName)
+            people.stream().map(KnowledgeEntity::getDisplayName)
                     .filter(name -> name.equalsIgnoreCase(requested.trim()))
                     .findFirst().ifPresent(result::add);
         }
@@ -212,7 +215,11 @@ public class GraphQueryService {
                 if (hasCertainEvidenceForFile(path, validatedEntities)) certainPaths.add(path);
             }
         }
-        return new GraphEvidenceResult(String.join("\n", contexts), List.copyOf(certainPaths));
+        List<GroundedVisualClaim> claims = certainPaths.stream()
+                .flatMap(path -> certainClaimsForFile(path, validatedEntities).stream())
+                .distinct()
+                .toList();
+        return new GraphEvidenceResult(String.join("\n", contexts), List.copyOf(certainPaths), claims);
     }
 
     @Transactional(readOnly = true)
@@ -229,8 +236,8 @@ public class GraphQueryService {
     }
 
     /**
-     * Display names of certain (CONFIRMED) identity-linked participants on the given files.
-     * Skips generic vision labels (e.g. person 1). Order is stable, de-duplicated.
+     * Display names of certain (CONFIRMED) human participants on the given files.
+     * Skips non-PERSON entities and generic vision labels (e.g. person 1).
      */
     @Transactional(readOnly = true)
     public List<String> certainParticipantNamesForPaths(List<String> filePaths) {
@@ -244,6 +251,9 @@ public class GraphQueryService {
             }
             for (EntityMention mention : mentionRepository.findByFilePath(path)) {
                 if (!isCertainMention(mention) || mention.getEntity() == null) {
+                    continue;
+                }
+                if (!isPersonEntity(mention.getEntity())) {
                     continue;
                 }
                 String displayName = mention.getEntity().getDisplayName();
@@ -303,9 +313,11 @@ public class GraphQueryService {
         UUID ownerId = currentUserService.findUserId().orElse(null);
         if (ownerId == null || fileRepository.findByPathAndOwnerId(filePath, ownerId).isEmpty()) return "";
         StringBuilder context = new StringBuilder();
-        // Certain identity-linked mentions and facts only (principle 2).
+        // Certain identity-linked human mentions and facts only (AGENTS.md people path).
         List<EntityMention> mentions = mentionRepository.findByFilePath(filePath).stream()
-                .filter(this::isCertainMention).toList();
+                .filter(this::isCertainMention)
+                .filter(mention -> mention.getEntity() == null || isPersonEntity(mention.getEntity()))
+                .toList();
         for (EntityMention mention : mentions) appendMention(context, mention);
         for (Fact fact : getCertainFactsForFile(filePath)) appendFact(context, fact);
         // Observed structured vision (not identity claims) supports visual matching.
@@ -327,7 +339,63 @@ public class GraphQueryService {
                 .toList();
     }
 
+    /** Claim-level evidence: the fact and its subject identity must both be certain. */
+    @Transactional(readOnly = true)
+    public List<GroundedVisualClaim> certainClaimsForFile(String filePath, List<String> entityNames) {
+        if (filePath == null || filePath.isBlank()) return List.of();
+        List<String> requested = entityNames == null ? List.of() : entityNames;
+        return getCertainFactsForFile(filePath).stream()
+                .filter(fact -> fact.getMention() != null && fact.getMention().getEntity() != null)
+                .filter(fact -> requested.isEmpty() || requested.stream().anyMatch(name ->
+                        fact.getMention().getEntity().getDisplayName().equalsIgnoreCase(name)))
+                .map(this::toClaim)
+                .toList();
+    }
+
+    /** Certain named face anchors for a pixel-level verifier. */
+    @Transactional(readOnly = true)
+    public List<EntityVisualAnchor> certainEntityAnchorsForFile(String filePath, List<String> entityNames) {
+        if (faceEmbeddingRepository == null || filePath == null || filePath.isBlank()) return List.of();
+        List<String> requested = entityNames == null ? List.of() : entityNames;
+        return faceEmbeddingRepository.findByFilePath(filePath).stream()
+                .filter(embedding -> embedding.getMention() != null && isCertainMention(embedding.getMention()))
+                .filter(embedding -> embedding.getEntity() != null)
+                .filter(embedding -> requested.isEmpty() || requested.stream().anyMatch(name ->
+                        embedding.getEntity().getDisplayName().equalsIgnoreCase(name)))
+                .filter(embedding -> embedding.getBbox() != null && embedding.getBbox().length >= 4)
+                .map(embedding -> new EntityVisualAnchor(
+                        embedding.getMention().getId(),
+                        embedding.getEntity().getDisplayName(),
+                        embedding.getMention().getFaceAnchorId(),
+                        java.util.stream.IntStream.range(0, 4)
+                                .mapToObj(index -> embedding.getBbox()[index]).toList(),
+                        mentionEvidencePolicy.evidenceConfidence(embedding.getMention())))
+                .toList();
+    }
+
+    private GroundedVisualClaim toClaim(Fact fact) {
+        EntityMention mention = fact.getMention();
+        String entity = mention.getEntity().getDisplayName();
+        String value = fact.getTargetMention() != null && fact.getTargetMention().getEntity() != null
+                ? fact.getTargetMention().getEntity().getDisplayName()
+                : fact.getObject();
+        String statement = fact.getStatementPl();
+        if (statement == null || statement.isBlank()
+                || (mention.getVisionLabel() != null && statement.toLowerCase(Locale.ROOT)
+                .startsWith(mention.getVisionLabel().toLowerCase(Locale.ROOT)))) {
+            statement = entity + " " + fact.getAction()
+                    + (value == null || value.isBlank() ? "" : " " + value) + ".";
+        }
+        return new GroundedVisualClaim("F-" + fact.getId(), mention.getId(), entity,
+                fact.getAction(), value, statement, fact.getFilePath(), fact.getConfidence(),
+                fact.getEvidenceOrigin() == null ? "GRAPH_FACT" : fact.getEvidenceOrigin(),
+                mention.getFaceAnchorId());
+    }
+
     private void appendEntityContext(StringBuilder context, KnowledgeEntity entity, Set<String> allowedPaths) {
+        if (!isPersonEntity(entity)) {
+            return;
+        }
         for (EntityMention mention : mentionRepository.findByEntityId(entity.getId())) {
             if (!isCertainMention(mention)
                     || (allowedPaths != null && !allowedPaths.isEmpty()
@@ -387,6 +455,22 @@ public class GraphQueryService {
                 && fact.getConfidence().compareTo(BigDecimal.valueOf(minFactConfidence)) >= 0
                 && isCertainMention(fact.getMention())
                 && (fact.getTargetMention() == null || isCertainMention(fact.getTargetMention()));
+    }
+
+    /** Humans only — animals/objects are not GRAPH entity targets (AGENTS.md). */
+    private boolean isPersonEntity(KnowledgeEntity entity) {
+        return entity != null && PERSON_TYPE.equalsIgnoreCase(entity.getType());
+    }
+
+    private boolean isUsablePersonEntity(KnowledgeEntity entity) {
+        if (!isPersonEntity(entity)) {
+            return false;
+        }
+        if (identityResolutionService.isGenericPersonLabel(entity.getDisplayName())) {
+            return false;
+        }
+        return mentionRepository.findByEntityId(entity.getId()).stream()
+                .anyMatch(this::isCertainMention);
     }
 
     private boolean isImagePath(String path) {

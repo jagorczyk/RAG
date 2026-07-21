@@ -29,7 +29,11 @@ import java.util.UUID;
 import java.util.Comparator;
 import java.util.regex.Pattern;
 
-/** Executes model-produced query plans; it contains no semantic question routing. */
+/**
+ * Executes QueryPlanner output under AGENTS.md:
+ * VISUAL_VALIDATION → claim answers; GRAPH (people) / HYBRID → AI from evidence.
+ * No phrase-based question routing in this class.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -93,9 +97,7 @@ public class ChatInteractionService {
     }
 
     private MessageResponse processTextOrGraphPlan(UUID chatId, QueryPlan plan, String conversationContext) {
-        boolean needsGraph = plan.retrievalMode() != QueryPlan.RetrievalMode.DOCUMENT
-                || ChatRetrievalPolicy.requiresJointFileEvidence(plan);
-        GraphEvidenceResult graphEvidence = needsGraph
+        GraphEvidenceResult graphEvidence = ChatRetrievalPolicy.needsGraphEvidence(plan)
                 ? graphQueryService.buildEvidence(plan.entities(), plan.fileScope(), plan.entityMatchMode())
                 : new GraphEvidenceResult("", List.of());
         // Co-presence is a set operation on planner output: when ALL_SAME_FILE has no
@@ -115,14 +117,13 @@ public class ChatInteractionService {
         String recentTurns = compactConversationContext(conversationContext);
         // Always end with "Pytanie użytkownika:" so retrieval injection and chat-memory
         // normalization can recover the bare question (not the instruction blob).
-        // Prefer planner standalone retrievalQuery/condition so short follow-ups resolve.
         String prompt;
         if (graphMissFallback) {
-            // No certain graph rows — answer from hybrid document retrieval on the question.
+            // GRAPH without certain people evidence — hybrid only; refuse if retrieval empty.
             prompt = """
                     [Instrukcja odpowiedzi]
                     %s
-                    Graf wiedzy nie ma pewnych dowodów dla tego pytania; użyj wyłącznie kontekstu dokumentów z retrieval.
+                    Graf wiedzy nie ma pewnych dowodów o osobach dla tego pytania; użyj wyłącznie kontekstu dokumentów z retrieval.
                     Gdy brak fragmentów dokumentów, odpowiedz dokładnie: Nie znaleziono informacji w dokumentach.
                     Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
                     %s
@@ -130,6 +131,21 @@ public class ChatInteractionService {
 
                     Pytanie użytkownika: %s
                     """.formatted(plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
+        } else if (effectiveMode == QueryPlan.RetrievalMode.GRAPH && !graphContext.isBlank()) {
+            // People path: AI answers from graph people + relations only (no hybrid pollution).
+            prompt = """
+                    [Kontekst grafu osób i relacji]
+                    %s
+
+                    [Instrukcja odpowiedzi]
+                    %s
+                    Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+                    Używaj wyłącznie powyższego kontekstu grafu — nie zgaduj i nie dodawaj faktów spoza kontekstu.
+                    %s
+                    Oryginalne brzmienie użytkownika: %s
+
+                    Pytanie użytkownika: %s
+                    """.formatted(graphContext, plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
         } else if (graphContext.isBlank()) {
             prompt = """
                     [Instrukcja odpowiedzi]
@@ -157,8 +173,7 @@ public class ChatInteractionService {
                     """.formatted(graphContext, plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
         }
 
-        // Named-entity turns with certain graph paths: restrict hybrid RAG to those files
-        // (plus planner fileScope). Prevents off-person corpus chunks from polluting the prompt.
+        // Named people: restrict hybrid RAG to proven files. Pure GRAPH disables hybrid retrieval.
         List<String> retrievalScope = ChatRetrievalPolicy.retrievalScope(plan, graphEvidence);
         RetrievalPathScope.set(retrievalScope);
         RetrievalQueryContext.set(plan.retrievalQuery());
@@ -177,15 +192,12 @@ public class ChatInteractionService {
         }
         List<SourceDto> sources = mergeSources(result, plan, graphEvidence, effectiveMode);
         // Grounding uses post-filter sources (certain graph / allowed hybrid), not raw retrieval hits.
-        // Named-entity hybrid hits without certain graph paths never become sources and must not
-        // keep a free-form LLM answer (anti-hallucination, AGENTS.md principle 2).
         boolean noGrounding = ChatRetrievalPolicy.lacksGrounding(graphEvidence, !sources.isEmpty());
         if (noGrounding) {
             answer = "Nie znaleziono informacji w dokumentach.";
             sources = List.of();
         } else {
-            // Certain graph/sources win over capability refusals and ungrounded general knowledge.
-            // Named plan.entities → entity-scoped recovery only (not multi-file co-presence roster).
+            // GRAPH/HYBRID: keep AI prose; rewrite only capability refusals / ungrounded essays.
             boolean entityScoped = ChatRetrievalPolicy.hasNamedEntities(plan);
             List<String> recoveryNames;
             if (entityScoped) {
@@ -222,7 +234,9 @@ public class ChatInteractionService {
      *                      an AI turn so the caller can fall back to text/graph on the same plan.
      */
     private MessageResponse processVisualPlan(UUID chatId, QueryPlan plan, boolean persistDenial) {
-        List<VisualQueryMatch> matches = dynamicVisualMatcher.findEvidence(plan);
+        List<VisualQueryMatch> matches = dynamicVisualMatcher.findEvidence(plan).stream()
+                .filter(match -> match != null && match.claims() != null && !match.claims().isEmpty())
+                .toList();
         // Principle 2: only MATCH evidence becomes a source (matcher already filters).
         List<QueryEvidenceDto> evidence = matches.stream()
                 .map(match -> new QueryEvidenceDto(match.filePath(), match.confidence(), match.reasons(),
@@ -253,6 +267,14 @@ public class ChatInteractionService {
                 ? List.of()
                 : graphQueryService.certainParticipantNamesForPaths(matchPaths);
         String answer = verifiedVisualAnswerService.answer(plan.question(), matches, certainNames);
+        if (VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER.equals(answer)
+                || VerifiedVisualAnswerService.NO_VISUAL_EVIDENCE.equals(answer)) {
+            String denial = "Nie mam potwierdzonej informacji, która odpowiada na to pytanie.";
+            if (persistDenial) {
+                saveAiMessage(chatId, denial, List.of(), List.of(), "NO_EVIDENCE", true);
+            }
+            return new MessageResponse(denial, List.of(), true, List.of(), "NO_EVIDENCE");
+        }
         if (answer == null || answer.isBlank()) {
             answer = !certainNames.isEmpty()
                     ? ChatAnswerGrounding.formatParticipantRoster(certainNames)

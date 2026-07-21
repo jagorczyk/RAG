@@ -10,6 +10,7 @@ import com.rag.rag.ingestion.service.IngestionService;
 import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphQueryService;
 import com.rag.rag.knowledge.graph.GraphEvidenceResult;
+import com.rag.rag.knowledge.graph.GroundedVisualClaim;
 import com.rag.rag.knowledge.query.DynamicVisualMatcher;
 import com.rag.rag.knowledge.query.VisualMatchDecision;
 import com.rag.rag.knowledge.query.VisualQueryMatch;
@@ -140,8 +141,6 @@ class ChatInteractionServiceTest {
                 "Co jest na zdjęciu?", "", false, false, QueryPlan.RetrievalMode.HYBRID,
                 "Odpowiedz z dowodów.");
         when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
-        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
-                .thenReturn(new GraphEvidenceResult("", List.of()));
         Result<String> result = Result.<String>builder()
                 .content("Na zdjęciu widać plażę i palmy.") // hallucinated without retrieval
                 .build();
@@ -154,6 +153,7 @@ class ChatInteractionServiceTest {
         assertTrue(response.sources().isEmpty());
         assertTrue(response.uncertain());
         assertEquals("NO_EVIDENCE", response.answerKind());
+        verify(graphQueryService, never()).buildEvidence(anyList(), anyList(), any());
     }
 
     @Test
@@ -234,6 +234,9 @@ class ChatInteractionServiceTest {
         verify(ingestionService).createGraphFactSourceDto(eq("dir://a.jpg"), any(), anyDouble());
         // Pure GRAPH with evidence does not pull hybrid document sources
         verify(ingestionService, never()).getSources(any());
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
+        assertTrue(promptCaptor.getValue().contains("[Kontekst grafu osób i relacji]"));
     }
 
     @Test
@@ -244,7 +247,8 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
         VisualQueryMatch match = new VisualQueryMatch("dir://michal.jpg", BigDecimal.valueOf(0.91),
                 List.of("blond włosy"), VisualMatchDecision.Decision.MATCH, List.of(),
-                BigDecimal.valueOf(0.8), BigDecimal.valueOf(0.9));
+                BigDecimal.valueOf(0.8), BigDecimal.valueOf(0.9),
+                List.of(claim("Michał", "Michał ma blond włosy.", "dir://michal.jpg")));
         when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
         SourceDto source = new SourceDto("dir://michal.jpg", "michal.jpg", 0.8, null, "IMAGE");
         when(ingestionService.createSourceDto(anyString(), any(), anyDouble())).thenReturn(source);
@@ -489,7 +493,8 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
         VisualQueryMatch match = new VisualQueryMatch("dir://michal.jpg", BigDecimal.valueOf(0.91),
                 List.of("blond włosy"), VisualMatchDecision.Decision.MATCH, List.of(),
-                BigDecimal.valueOf(0.8), BigDecimal.valueOf(0.9));
+                BigDecimal.valueOf(0.8), BigDecimal.valueOf(0.9),
+                List.of(claim("Michał", "Michał ma blond włosy.", "dir://michal.jpg")));
         when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
         when(ingestionService.createSourceDto(eq("dir://michal.jpg"), any(), anyDouble()))
                 .thenReturn(new SourceDto("dir://michal.jpg", "michal.jpg", 0.8, null, "IMAGE"));
@@ -519,7 +524,8 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
         VisualQueryMatch match = new VisualQueryMatch("dir://action.jpg", BigDecimal.valueOf(0.88),
                 List.of("osoba biegnie"), VisualMatchDecision.Decision.MATCH, List.of(),
-                BigDecimal.valueOf(0.7), BigDecimal.valueOf(0.85));
+                BigDecimal.valueOf(0.7), BigDecimal.valueOf(0.85),
+                List.of(claim("osoba", "Osoba biegnie.", "dir://action.jpg")));
         when(dynamicVisualMatcher.findEvidence(plan)).thenReturn(List.of(match));
         when(ingestionService.createSourceDto(eq("dir://action.jpg"), any(), anyDouble()))
                 .thenReturn(new SourceDto("dir://action.jpg", "action.jpg", 0.7, null, "IMAGE"));
@@ -532,6 +538,35 @@ class ChatInteractionServiceTest {
         assertNotEquals("NO_EVIDENCE", response.answerKind());
         assertEquals(1, response.sources().size());
         assertEquals("dir://action.jpg", response.sources().get(0).path());
+    }
+
+    @Test
+    void piotrekActionUsesAnchoredClaimAndKeepsFilenameOnlyInSources() {
+        String path = "dir://awdaw/4C Matura-342.jpg";
+        String question = "a co robi Piotrek na zdjęciu @4C Matura-342.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Piotrek"), List.of(path), question,
+                question, true, false, QueryPlan.RetrievalMode.VISUAL_VALIDATION, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of(path));
+        GroundedVisualClaim grounded = claim("Piotrek",
+                "Piotrek stoi w szeregu i pozuje do zdjęcia, patrząc w stronę aparatu.", path);
+        VisualQueryMatch match = new VisualQueryMatch(path, BigDecimal.valueOf(0.96), List.of(),
+                VisualMatchDecision.Decision.MATCH, List.of(), BigDecimal.ONE, BigDecimal.ONE,
+                List.of(grounded));
+        when(dynamicVisualMatcher.findEvidence(any(QueryPlan.class))).thenReturn(List.of(match));
+        when(ingestionService.createSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "4C Matura-342.jpg", 1.0, null, "IMAGE"));
+        when(graphQueryService.certainParticipantNamesForPaths(List.of(path))).thenReturn(List.of("Piotrek"));
+        when(verifiedVisualAnswerService.answer(eq(question), anyList(), eq(List.of("Piotrek"))))
+                .thenReturn(grounded.statementPl());
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(grounded.statementPl(), response.response());
+        assertFalse(response.response().contains("4C Matura-342.jpg"));
+        assertEquals(1, response.sources().size());
+        assertEquals(path, response.sources().get(0).path());
+        assertFalse(response.uncertain());
     }
 
     @Test
@@ -670,8 +705,6 @@ class ChatInteractionServiceTest {
                 "Pytanie bez dowodów", "", false, false, QueryPlan.RetrievalMode.HYBRID,
                 "Odpowiedz z dowodów.");
         when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
-        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
-                .thenReturn(new GraphEvidenceResult("", List.of()));
         Result<String> result = Result.<String>builder()
                 .content("Nie mogę zobaczyć zdjęć.")
                 .build();
@@ -684,6 +717,7 @@ class ChatInteractionServiceTest {
         assertEquals("NO_EVIDENCE", response.answerKind());
         assertTrue(response.sources().isEmpty());
         assertTrue(response.uncertain());
+        verify(graphQueryService, never()).buildEvidence(anyList(), anyList(), any());
         // Roster path must not invent participants without certain evidence.
         verify(graphQueryService, never()).certainParticipantNamesForPaths(anyList());
     }
@@ -727,7 +761,8 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
         VisualQueryMatch match = new VisualQueryMatch(path, BigDecimal.valueOf(0.9),
                 List.of("scena potwierdzona"), VisualMatchDecision.Decision.MATCH, List.of(),
-                BigDecimal.ONE, BigDecimal.valueOf(0.9));
+                BigDecimal.ONE, BigDecimal.valueOf(0.9),
+                List.of(claim("", "Scena jest potwierdzona.", path)));
         when(dynamicVisualMatcher.findEvidence(any(QueryPlan.class))).thenReturn(List.of(match));
         when(ingestionService.createSourceDto(eq(path), any(), anyDouble()))
                 .thenReturn(new SourceDto(path, "4C Matura-342.jpg", 1.0, null, "IMAGE"));
@@ -821,5 +856,11 @@ class ChatInteractionServiceTest {
         return new QueryPlan(question, entities, List.of(), question, question, false, false,
                 mode, EntityMatchMode.ALL_SAME_FILE,
                 "Jedno krótkie zdanie po polsku; nie wymyślaj wspólnego zdjęcia bez dowodu.");
+    }
+
+    private static GroundedVisualClaim claim(String entity, String statement, String path) {
+        return new GroundedVisualClaim("T-" + UUID.randomUUID(), UUID.randomUUID(), entity,
+                "opisuje", "", statement, path, BigDecimal.valueOf(0.9),
+                "PIXEL_VERIFICATION", "face_1");
     }
 }

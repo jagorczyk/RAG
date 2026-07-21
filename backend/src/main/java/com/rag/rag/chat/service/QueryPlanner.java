@@ -14,9 +14,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Plans every request with the language model.  It deliberately has no
- * keyword, person-name, attribute or intent rules: the only finite set is
- * the technical retrieval capabilities exposed by the application.
+ * Plans every request with the language model (AGENTS.md variant A).
+ * No keyword / phrase / name lists in application code — only technical mode enums.
  */
 @Slf4j
 @Component
@@ -41,31 +40,39 @@ public class QueryPlanner {
 
         try {
             String response = chatModel.generate("""
-                    You are a context-aware retrieval planner for a RAG application. Return JSON only.
-                    Do not classify by a closed list of phrases, people, colours, clothes, actions or relations.
-                    Preserve the user's meaning verbatim in condition. Choose only technical retrievalMode values:
-                    DOCUMENT, GRAPH, HYBRID, VISUAL_VALIDATION.
-                    Set visualCondition true only when answering requires validating appearance, clothing,
-                    pose, action, scene layout or other image content not already stored as identity.
-                    Prefer GRAPH or HYBRID with visualCondition=false when the user asks who is in a photo,
-                    what people/animals are named, or for identities already confirmed in the knowledge graph.
+                    You are a context-aware retrieval planner for a photo/document RAG library. Return JSON only.
+                    Do not use a closed list of phrases, colours, clothes, actions or relation words in the app sense;
+                    choose a technical retrievalMode from meaning + known people + conversation.
+                    Preserve the user's meaning verbatim in condition.
+
+                    Retrieval modes (pick exactly one):
+                    - GRAPH: the question is about people (humans) — who they are, co-presence, relations between
+                      people on photos, what a named person is doing when identity/relations live in the graph.
+                      Fill entities with canonical human names from Known entities when identifiable.
+                      Animals and objects alone must NOT select GRAPH.
+                    - HYBRID: the question is NOT about people (documents, scenes without identity, objects,
+                      general file facts). Default for non-person questions. Prefer HYBRID over DOCUMENT.
+                    - VISUAL_VALIDATION: answering requires validating appearance, clothing, pose, action,
+                      scene layout or other image pixels not already stored as graph identity. Set
+                      visualCondition=true with this mode.
+                    - DOCUMENT: rare; only when pure document retrieval is clearly enough. Prefer HYBRID.
+
                     When the recent conversation lists SOURCES: paths, copy those exact paths into fileScope
                     for follow-up questions about the same photo unless the user clearly switches topic or
-                    names a different @file. Empty entities + non-empty fileScope is valid: the graph will
-                    load all confirmed participants for those files.
+                    names a different @file. Empty entities + non-empty fileScope is valid for GRAPH:
+                    the graph loads confirmed human participants for those files.
                     Use ambiguous true when the available references do not identify one interpretation.
-                    Known entities from this workspace: %s
+                    Known people (humans) from this workspace: %s
                     Recent conversation and previously returned source paths: %s
                     JSON schema:
-                    {"entities":["canonical name"],"fileScope":["previously supplied exact path"],
+                    {"entities":["canonical human name"],"fileScope":["previously supplied exact path"],
                     "retrievalQuery":"standalone semantic query resolved from the conversation",
                     "condition":"full semantic constraint", "visualCondition":false,
                     "ambiguous":false,"retrievalMode":"HYBRID","entityMatchMode":"ANY",
                     "answerInstruction":"answer requested details briefly in Polish; never list files"}
                     Use entityMatchMode ALL_SAME_FILE when the answer depends on co-presence of all selected
-                    entities in one file (e.g. whether there is a photo with every named person together);
-                    otherwise use ANY. This is a technical set operation, not a phrase classification.
-                    When ALL_SAME_FILE is chosen, prefer retrievalMode GRAPH or HYBRID so joint evidence is checked.
+                    people in one file; otherwise use ANY. This is a technical set operation.
+                    When ALL_SAME_FILE is chosen, use retrievalMode GRAPH so joint evidence is checked.
                     User request: %s
                     """.formatted(knownEntities, conversationContext == null ? "" : conversationContext, safeQuestion));
             return fromJson(safeQuestion, knownEntities, response, fallback);

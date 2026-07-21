@@ -8,12 +8,39 @@ import java.util.LinkedHashSet;
 import java.util.List;
 
 /**
- * Pure decisions for chat retrieval: joint-file denial, graph-miss → hybrid fallback,
- * certain-source gating, and no-grounding denial. No question-language routing (AGENTS.md).
+ * Pure decisions for chat retrieval under AGENTS.md:
+ * people → GRAPH evidence; non-person → HYBRID; visual → VISUAL_VALIDATION.
+ * No question-language routing — only planner fields and evidence sets.
  */
 public final class ChatRetrievalPolicy {
 
     private ChatRetrievalPolicy() {
+    }
+
+    /**
+     * Load person/relation graph evidence for this turn.
+     * GRAPH always; also when the planner named people, requires joint-file co-presence,
+     * or scoped files (load confirmed humans on those paths for grounding).
+     * Pure open HYBRID/DOCUMENT without entities or fileScope skips the graph.
+     */
+    public static boolean needsGraphEvidence(QueryPlan plan) {
+        if (plan == null) {
+            return false;
+        }
+        if (plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH) {
+            return true;
+        }
+        if (requiresJointFileEvidence(plan)) {
+            return true;
+        }
+        if (hasNamedEntities(plan)) {
+            return plan.retrievalMode() == QueryPlan.RetrievalMode.HYBRID
+                    || plan.retrievalMode() == QueryPlan.RetrievalMode.DOCUMENT;
+        }
+        if (plan.fileScope() != null && !plan.fileScope().isEmpty()) {
+            return plan.retrievalMode() == QueryPlan.RetrievalMode.HYBRID;
+        }
+        return false;
     }
 
     public static boolean requiresJointFileEvidence(QueryPlan plan) {
@@ -29,8 +56,8 @@ public final class ChatRetrievalPolicy {
     }
 
     /**
-     * GRAPH plan with no certain graph evidence (and not a joint-file denial) must still
-     * run document/hybrid retrieval for the answer turn.
+     * GRAPH plan with no certain graph evidence (and not a joint-file denial) falls back
+     * to hybrid document retrieval for the answer turn — still subject to source gating.
      */
     public static boolean shouldFallbackFromGraph(QueryPlan plan, GraphEvidenceResult evidence) {
         if (plan == null || plan.retrievalMode() != QueryPlan.RetrievalMode.GRAPH) {
@@ -51,7 +78,7 @@ public final class ChatRetrievalPolicy {
                 : plan.retrievalMode();
     }
 
-    /** True when the planner named at least one entity (person/animal scope for sources). */
+    /** True when the planner named at least one person (human) for source/evidence scope. */
     public static boolean hasNamedEntities(QueryPlan plan) {
         return plan != null && plan.entities() != null && !plan.entities().isEmpty();
     }

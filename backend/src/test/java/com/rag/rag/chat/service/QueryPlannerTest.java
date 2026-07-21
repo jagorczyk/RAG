@@ -99,6 +99,8 @@ class QueryPlannerTest {
         verify(chatModel).generate(promptCaptor.capture());
         String prompt = promptCaptor.getValue();
         assertTrue(prompt.contains("Recent conversation and previously returned source paths:"));
+        assertTrue(prompt.contains("Known people (humans) from this workspace:"));
+        assertTrue(prompt.contains("GRAPH: the question is about people"));
         assertTrue(prompt.contains("USER:"));
         assertTrue(prompt.contains("AI:"));
         assertTrue(prompt.contains("dir://photos/igor.jpg"));
@@ -107,5 +109,27 @@ class QueryPlannerTest {
         assertEquals(List.of("dir://photos/igor.jpg"), plan.fileScope());
         assertTrue(plan.retrievalQuery().contains("igor") || plan.retrievalQuery().contains("zdję"));
         assertEquals(QueryPlan.RetrievalMode.HYBRID, plan.retrievalMode());
+    }
+
+    @Test
+    void plannerPromptPrefersGraphForPeopleAndHybridOtherwise() {
+        when(graphQueryService.availableEntityNames()).thenReturn(List.of("Igor"));
+        when(graphQueryService.validateEntityNames(List.of("Igor"))).thenReturn(List.of("Igor"));
+        when(graphQueryService.validateFilePaths(List.of())).thenReturn(List.of());
+        when(chatModel.generate(anyString())).thenReturn("""
+                {"entities":["Igor"],"condition":"kim jest Igor na zdjęciach",
+                "visualCondition":false,"ambiguous":false,"retrievalMode":"GRAPH",
+                "answerInstruction":"Odpowiedz krótko."}
+                """);
+
+        QueryPlan plan = new QueryPlanner(graphQueryService, chatModel).plan("Kim jest Igor?");
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatModel).generate(promptCaptor.capture());
+        String prompt = promptCaptor.getValue();
+        assertTrue(prompt.contains("Animals and objects alone must NOT select GRAPH"));
+        assertTrue(prompt.contains("HYBRID: the question is NOT about people"));
+        assertEquals(QueryPlan.RetrievalMode.GRAPH, plan.retrievalMode());
+        assertEquals(List.of("Igor"), plan.entities());
     }
 }

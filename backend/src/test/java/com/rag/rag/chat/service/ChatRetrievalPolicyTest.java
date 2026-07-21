@@ -123,4 +123,27 @@ class ChatRetrievalPolicyTest {
                 QueryPlan.RetrievalMode.HYBRID, "instr");
         assertTrue(ChatRetrievalPolicy.shouldFallbackFromEmptyVisual(hybridVisual));
     }
+
+    @Test
+    void needsGraphEvidenceForGraphModeOrNamedPeopleOnHybrid() {
+        QueryPlan graph = new QueryPlan("q", List.of(), List.of(), "q", "", false, false,
+                QueryPlan.RetrievalMode.GRAPH, "instr");
+        assertTrue(ChatRetrievalPolicy.needsGraphEvidence(graph));
+
+        QueryPlan hybridPeople = new QueryPlan("q", List.of("Igor"), List.of(), "q", "", false, false,
+                QueryPlan.RetrievalMode.HYBRID, "instr");
+        assertTrue(ChatRetrievalPolicy.needsGraphEvidence(hybridPeople));
+
+        QueryPlan hybridDocs = new QueryPlan("q", List.of(), List.of(), "q", "", false, false,
+                QueryPlan.RetrievalMode.HYBRID, "instr");
+        assertFalse(ChatRetrievalPolicy.needsGraphEvidence(hybridDocs));
+
+        QueryPlan hybridScoped = new QueryPlan("q", List.of(), List.of("dir://a.jpg"), "q", "", false, false,
+                QueryPlan.RetrievalMode.HYBRID, "instr");
+        assertTrue(ChatRetrievalPolicy.needsGraphEvidence(hybridScoped));
+
+        QueryPlan documentOnly = new QueryPlan("q", List.of(), List.of(), "q", "", false, false,
+                QueryPlan.RetrievalMode.DOCUMENT, "instr");
+        assertFalse(ChatRetrievalPolicy.needsGraphEvidence(documentOnly));
+    }
 }
