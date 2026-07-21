@@ -765,6 +765,73 @@ class ChatInteractionServiceTest {
     }
 
     @Test
+    void freeformGraphPhotoProseSurvivesFullChatTurnWithoutRosterRewrite() {
+        // Acceptance: GRAPH with evidence keeps natural model prose (not "Na zdjęciu jest X.").
+        String question = "co wiesz o tym zdjęciu";
+        String path = "dir://photos/park.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Igor", "Anna"), List.of(path),
+                question, "", false, false, QueryPlan.RetrievalMode.GRAPH, "ignored stiff instruction");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of(path));
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "=== Zdjęcie 1 ===\nUczestnicy: Igor, Anna\nIgor: czerwona koszulka\nScena: park",
+                        List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Igor", "Anna", "Dawid"));
+        String freeform = "Igor i Anna siedzą na ławce w parku; Igor ma czerwoną koszulkę, Anna niebieską kurtkę.";
+        when(chatAiService.answer(eq(chatId), anyString()))
+                .thenReturn(Result.<String>builder().content(freeform).build());
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "park.jpg", 1.0, null, "GRAPH_FACT"));
+        lenient().when(ingestionService.formatEmbeddingContextForPaths(anyList())).thenReturn("");
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(freeform, response.response());
+        assertFalse(response.response().startsWith("Na zdjęciu jest"));
+        assertFalse(response.response().startsWith("Na zdjęciu są"));
+        assertFalse(response.response().contains("pojawia się na zdjęciach"));
+        assertFalse(response.response().contains("potwierdzonych"));
+        assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
+        assertEquals(1, response.sources().size());
+        verify(claimAnswerComposer, never()).answerFromClaims(anyString(), anyList(), anyList());
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
+        String prompt = promptCaptor.getValue();
+        assertTrue(prompt.contains("czerwona koszulka") || prompt.contains("park"));
+        assertFalse(prompt.toLowerCase().contains("pełne ograniczenie semantyczne"));
+        // Freeform style cue — not a second full compliance rulebook paste of ANSWER_INSTRUCTIONS.
+        assertFalse(prompt.contains("Jesteś asystentem dokumentów i grafu wiedzy"));
+        assertTrue(prompt.contains("naturalnie") || prompt.contains("swobodnie") || prompt.contains("Kontekst"));
+    }
+
+    @Test
+    void freeformHardFailureStillRewrittenOnGraphTurn() {
+        String question = "kto jest na zdjęciu";
+        String path = "dir://photos/x.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Igor"), List.of(path),
+                question, "", false, false, QueryPlan.RetrievalMode.GRAPH, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of(path));
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult("=== Zdjęcie 1 ===\nUczestnicy: Igor", List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Igor"));
+        when(chatAiService.answer(eq(chatId), anyString()))
+                .thenReturn(Result.<String>builder()
+                        .content("Nie mogę zobaczyć zdjęć ani obrazów.")
+                        .build());
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "x.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals("Na zdjęciu jest Igor.", response.response());
+        assertFalse(ChatAnswerGrounding.isCapabilityDenial(response.response()));
+    }
+
+    @Test
     void filePinnedInjectsEmbeddingIndexIntoPromptWhenFreeFormPathRuns() {
         // Live: user marks @photo; short query misses hybrid recall; LLM must still get image_knowledge JSON.
         String question = "co wiesz o @20230502_094428.jpg";

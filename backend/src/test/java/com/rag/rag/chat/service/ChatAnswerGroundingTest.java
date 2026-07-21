@@ -269,11 +269,39 @@ class ChatAnswerGroundingTest {
     void freeformPhotoProseIsNotRewrittenToRosterTemplate() {
         String freeform = "Na zdjęciu widać Igora w czerwonej koszulce obok Anny na ławce w parku.";
         assertTrue(ChatAnswerGrounding.isPhotoGroundedProse(freeform));
+        assertFalse(ChatAnswerGrounding.isHardFailureShape(freeform));
         String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
                 freeform, List.of("Igor", "Anna", "Dawid"), true, false);
         assertEquals(freeform, resolved);
         assertFalse(resolved.contains("potwierdzonych"));
-        assertFalse(resolved.contains("bibliotece"));
+        assertFalse(resolved.startsWith("Na zdjęciu jest "));
+    }
+
+    @Test
+    void freeformProseWithoutStockPhotoPhrasesIsStillKept() {
+        // Must not require "na zdjęciu" / "widać" to keep freeform — only hard failures rewrite.
+        String freeform = "Igor i Anna siedzą na ławce w parku; Igor ma czerwoną koszulkę, Anna niebieską kurtkę.";
+        assertFalse(ChatAnswerGrounding.isHardFailureShape(freeform));
+        assertFalse(ChatAnswerGrounding.shouldRewriteUngroundedAnswer(
+                freeform, false, List.of("Igor", "Anna", "Dawid")));
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                freeform, List.of("Igor", "Anna", "Dawid"), true, false);
+        assertEquals(freeform, resolved);
+        assertFalse(resolved.startsWith("Na zdjęciu jest"));
+        assertFalse(resolved.startsWith("Na zdjęciu są"));
+        assertFalse(resolved.contains("pojawia się na zdjęciach"));
+    }
+
+    @Test
+    void missingNamesDigressionAloneDoesNotRewriteFreeform() {
+        // Freeform: digression without hard failure shape must not become roster.
+        String digression = "Ważne jest, aby zachować spokój w tej sytuacji. "
+                + "Daj mi znać, a postaram się pomóc z tą sprawą.";
+        // Not a safety lecture (no police/dangerous knife framing) and not empty.
+        assertFalse(ChatAnswerGrounding.isHardFailureShape(digression));
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                digression, List.of("Olek", "Bartek"), true, false);
+        assertEquals(digression, resolved);
     }
 
     @Test

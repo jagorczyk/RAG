@@ -537,27 +537,34 @@ public final class ChatAnswerGrounding {
     }
 
     /**
-     * True when the model answer must not be shown as-is despite certain evidence.
+     * Hard failure shapes only (freeform branch). Missing names / mild digression /
+     * ordinary free-form photo prose must NOT force a roster template rewrite.
      */
-    public static boolean shouldRewriteUngroundedAnswer(String modelAnswer, boolean entityScoped) {
-        return shouldRewriteUngroundedAnswer(modelAnswer, entityScoped, List.of());
-    }
-
-    /**
-     * @param evidenceNames certain participant names from graph/sources; used to catch long digressions
-     *                      that never mention any of them (e.g. safety lecture on a knife photo).
-     */
-    public static boolean shouldRewriteUngroundedAnswer(
-            String modelAnswer, boolean entityScoped, List<String> evidenceNames) {
+    public static boolean isHardFailureShape(String modelAnswer) {
         return isCapabilityDenial(modelAnswer)
                 || isEmptyOrGreetingNonAnswer(modelAnswer)
                 || isClarificationSeekingNonAnswer(modelAnswer)
                 || isEnglishAssistantNonAnswer(modelAnswer)
                 || isSpeculativeHypothesisList(modelAnswer)
                 || isSafetyOrOfftopicLecture(modelAnswer)
-                || isAnswerMissingEvidenceNames(modelAnswer, evidenceNames)
-                // Etymology / encyclopedic essays never answer from photo evidence (scoped or not).
                 || isGeneralKnowledgeEssay(modelAnswer);
+    }
+
+    /**
+     * True when the model answer must not be shown as-is despite certain evidence.
+     * Freeform: only {@link #isHardFailureShape(String)} — not missing-names digression.
+     */
+    public static boolean shouldRewriteUngroundedAnswer(String modelAnswer, boolean entityScoped) {
+        return shouldRewriteUngroundedAnswer(modelAnswer, entityScoped, List.of());
+    }
+
+    /**
+     * @param evidenceNames unused on freeform branch (kept for call-site compatibility);
+     *                      missing-names digression no longer rewrites free-form answers.
+     */
+    public static boolean shouldRewriteUngroundedAnswer(
+            String modelAnswer, boolean entityScoped, List<String> evidenceNames) {
+        return isHardFailureShape(modelAnswer);
     }
 
     /**
@@ -574,12 +581,10 @@ public final class ChatAnswerGrounding {
     }
 
     /**
-     * Grounds model answers when certain evidence exists.
-     * <ul>
-     *   <li>Capability denials → entity-scoped presence (when {@code entityScoped}) or full roster</li>
-     *   <li>General-knowledge essays with named entities → entity-scoped presence / no-detail</li>
-     *   <li>Otherwise leaves the model answer unchanged</li>
-     * </ul>
+     * Freeform GraphRAG policy: <b>keep the model’s natural prose by default</b>.
+     * Rewrite only hard failure shapes (capability denial, greeting shell, English clarify,
+     * encyclopedic essay, speculative activity menu, safety lecture). Never rewrite ordinary
+     * free-form photo answers into “Na zdjęciu jest X.” merely for missing names or style.
      *
      * @param entityScoped when true, recovery names are plan entities only (not co-present people)
      */
@@ -591,73 +596,51 @@ public final class ChatAnswerGrounding {
         if (!hasCertainEvidenceOrSources) {
             return modelAnswer == null ? "" : modelAnswer;
         }
-        List<String> names = normalizeNames(recoveryNames);
-        // Free-form branch: keep natural photo prose. Only rewrite hard failure shapes
-        // (capability denial, greeting, essay, speculative menu, safety lecture).
-        if (isPhotoGroundedProse(modelAnswer)
-                && !isCapabilityDenial(modelAnswer)
-                && !isEmptyOrGreetingNonAnswer(modelAnswer)
-                && !isGeneralKnowledgeEssay(modelAnswer)
-                && !isSpeculativeHypothesisList(modelAnswer)
-                && !isSafetyOrOfftopicLecture(modelAnswer)
-                && !isClarificationSeekingNonAnswer(modelAnswer)
-                && !isEnglishAssistantNonAnswer(modelAnswer)) {
-            return modelAnswer;
+        if (!isHardFailureShape(modelAnswer)) {
+            return modelAnswer == null ? "" : modelAnswer;
         }
-        // Speculative multi-option menus never leave the system when evidence exists —
-        // prefer an explicit no-detail notice over inventing activities.
+        List<String> names = normalizeNames(recoveryNames);
+        // Speculative multi-option menus — never invent activities; explicit no-detail.
         if (isSpeculativeHypothesisList(modelAnswer)) {
             return GROUNDED_NO_DETAIL_FALLBACK;
         }
-        // Free encyclopedic / textbook essays: roster when we know who is on the photo,
-        // otherwise no-detail (never leave definition lectures in the UI).
+        // Encyclopedic / textbook essays: roster when we know who is on the photo, else no-detail.
         if (isGeneralKnowledgeEssay(modelAnswer)) {
-            if (!names.isEmpty()) {
-                if (entityScoped && names.size() == 1) {
-                    return formatEntityScopedPresence(names);
-                }
-                return formatParticipantRoster(names);
-            }
-            return GROUNDED_NO_DETAIL_FALLBACK;
-        }
-        if (!shouldRewriteUngroundedAnswer(modelAnswer, entityScoped, names)) {
-            return modelAnswer == null ? "" : modelAnswer;
-        }
-        // Safety / digression with a multi-person roster → answer who is on the photo, not presence template.
-        if (isSafetyOrOfftopicLecture(modelAnswer) || isAnswerMissingEvidenceNames(modelAnswer, names)) {
             if (names.isEmpty()) {
-                return GROUNDED_NO_ROSTER_FALLBACK;
+                return GROUNDED_NO_DETAIL_FALLBACK;
             }
-            if (!entityScoped || names.size() > 1) {
-                return formatParticipantRoster(names);
+            if (entityScoped && names.size() == 1) {
+                return formatEntityScopedPresence(names);
             }
-            return formatEntityScopedPresence(names);
+            return formatParticipantRoster(names);
         }
+        // Capability / greeting / clarify / English shell / safety lecture → recovery roster.
         if (names.isEmpty()) {
             return entityScoped ? GROUNDED_NO_DETAIL_FALLBACK : GROUNDED_NO_ROSTER_FALLBACK;
         }
-        if (entityScoped) {
+        if (entityScoped && names.size() == 1) {
             return formatEntityScopedPresence(names);
         }
         return formatParticipantRoster(names);
     }
 
     /**
-     * True when the answer already reads like a natural photo description (not a template /
-     * refusal / lecture). Free-form branch keeps such prose instead of rewriting to roster.
+     * True when the answer already reads like natural photo description prose (not a template
+     * / refusal / lecture). Used by tests and diagnostics; freeform keep-policy uses
+     * {@link #isHardFailureShape(String)} inverted.
      */
     public static boolean isPhotoGroundedProse(String answer) {
         if (answer == null || answer.isBlank()) {
             return false;
         }
-        String lower = answer.toLowerCase(Locale.ROOT);
-        if (isCapabilityDenial(answer) || isEmptyOrGreetingNonAnswer(answer)
-                || isGeneralKnowledgeEssay(answer) || isSpeculativeHypothesisList(answer)
-                || isSafetyOrOfftopicLecture(answer)) {
+        if (isHardFailureShape(answer)) {
             return false;
         }
+        String lower = answer.toLowerCase(Locale.ROOT);
         // Stiff recovery templates — not free-form photo prose.
         if (lower.contains("potwierdzonych zdjęciach w bibliotece")
+                || lower.contains("pojawia się na zdjęciach w twojej bibliotece")
+                || lower.contains("pojawiają się na zdjęciach w twojej bibliotece")
                 || lower.equals(GROUNDED_NO_ROSTER_FALLBACK.toLowerCase(Locale.ROOT))
                 || lower.equals(GROUNDED_NO_DETAIL_FALLBACK.toLowerCase(Locale.ROOT))) {
             return false;

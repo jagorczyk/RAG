@@ -60,12 +60,8 @@ public final class AnswerContentInjection {
         if (!graphContext.isEmpty()) {
             promptBuilder.append(graphContext).append("\n\n");
         }
-        // Style rules live in ChatService.ANSWER_INSTRUCTIONS — keep injection to document body only.
-        promptBuilder.append("Graf wiedzy (jeśli podany) ma pierwszeństwo przed fragmentami poniżej. ")
-                .append("Używaj wyłącznie dostarczonych dowodów. ")
-                .append("Odpowiedź po polsku, naturalna i swobodna — sformułuj własnymi słowami. ")
-                .append("Nie twórz list hipotez ani menu możliwości. ")
-                .append("Nie moralizuj o przedmiotach ze zdjęć (np. nóż) — opisz tylko to, co widać w dowodach. ")
+        // Minimal inject cue only — system message already sets freeform style (no second rulebook).
+        promptBuilder.append("Używaj wyłącznie dostarczonych dowodów; odpowiedź naturalna po polsku. ")
                 .append("Nie wypisuj ścieżek ani list źródeł.\n\n")
                 .append(SHORT_QUESTION_MARKER).append(" ").append(actualQuestion).append("\n\n")
                 .append(DOCUMENTS_HEADER).append("\n").append(contextJoined);

@@ -210,9 +210,8 @@ public class ChatInteractionService {
             answer = "Nie znaleziono informacji w dokumentach.";
             sources = List.of();
         } else {
-            // GRAPH/HYBRID: keep AI prose; rewrite only capability refusals / ungrounded essays.
-            // When the turn is scoped to specific photo(s) (fileScope or single certain path),
-            // recovery uses the full participant roster so "kto jest na zdjęciu Olka" includes co-present people.
+            // Freeform GraphRAG: keep model prose unless hard failure (denial/essay/speculative/safety).
+            // Recovery roster only for those failures — never for ordinary free-form photo answers.
             boolean preferPhotoRoster = (plan.fileScope() != null && !plan.fileScope().isEmpty())
                     || (graphEvidence.certainPaths() != null && graphEvidence.certainPaths().size() == 1);
             boolean entityScoped = ChatRetrievalPolicy.hasNamedEntities(plan) && !preferPhotoRoster;
@@ -534,12 +533,10 @@ public class ChatInteractionService {
     static String freeformAnswerStyle() {
         return """
                 [Jak odpowiadać]
-                Napisz naturalnie i swobodnie po polsku. Masz pełny kontekst — sam zdecyduj,
-                co jest istotne, i ułóż płynną wypowiedź (nie szablon, nie lista claimów,
-                nie „jest na potwierdzonych zdjęciach w bibliotece”).
-                Przy otwartych pytaniach możesz rozwinąć opis sceny, osób, wyglądu i czynności.
-                Tylko fakty z kontekstu; bez spekulacji i bez esejów encyklopedycznych.
-                Bez nazw plików, score i list źródeł w treści.
+                Odpowiedz naturalnie i swobodnie po polsku na podstawie kontekstu poniżej.
+                Ułóż własną płynną wypowiedź — nie kopiuj claimów, nie pisz raportu ani listy.
+                Rozwiń opis, gdy pytanie jest otwarte. Tylko fakty z kontekstu.
+                Bez spekulacji, esejów encyklopedycznych, nazw plików i score.
                 """;
     }
 
