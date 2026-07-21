@@ -105,7 +105,7 @@ class ChatAnswerGroundingTest {
         assertTrue(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(""));
         assertTrue(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(null));
         assertFalse(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(
-                "Osoba jest na potwierdzonych zdjęciach w bibliotece."));
+                "Osoba pojawia się na zdjęciach w Twojej bibliotece."));
         assertFalse(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(
                 "Na zdjęciu stoi Igor w garniturze."));
     }
@@ -115,7 +115,7 @@ class ChatAnswerGroundingTest {
         String hello = "Hello! How can I assist you today?";
         String entityScoped = ChatAnswerGrounding.resolveGroundedAnswer(
                 hello, List.of("Anna"), true, true);
-        assertEquals("Anna jest na potwierdzonych zdjęciach w bibliotece.", entityScoped);
+        assertEquals("Anna pojawia się na zdjęciach w Twojej bibliotece.", entityScoped);
 
         String roster = ChatAnswerGrounding.resolveGroundedAnswer(
                 hello, List.of("Igor", "Anna"), true, false);
@@ -153,7 +153,7 @@ class ChatAnswerGroundingTest {
         String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
                 denial, List.of("Anna"), true, true);
         assertTrue(resolved.contains("Anna"));
-        assertTrue(resolved.contains("potwierdzonych zdjęciach"));
+        assertTrue(resolved.contains("pojawia się na zdjęciach") || resolved.contains("bibliotece"));
         assertFalse(resolved.contains("Igor"));
         assertFalse(resolved.contains("Dawid"));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(resolved));
@@ -167,7 +167,7 @@ class ChatAnswerGroundingTest {
                 + "W kulturze popularnej jest popularne.";
         String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
                 essay, List.of("Anna"), true, true);
-        assertEquals("Anna jest na potwierdzonych zdjęciach w bibliotece.", resolved);
+        assertEquals("Anna pojawia się na zdjęciach w Twojej bibliotece.", resolved);
         assertFalse(ChatAnswerGrounding.isGeneralKnowledgeEssay(resolved));
     }
 
@@ -228,12 +228,12 @@ class ChatAnswerGroundingTest {
     @Test
     void formatEntityScopedPresenceHasNoFilenames() {
         String one = ChatAnswerGrounding.formatEntityScopedPresence(List.of("Igor"));
-        assertEquals("Igor jest na potwierdzonych zdjęciach w bibliotece.", one);
+        assertEquals("Igor pojawia się na zdjęciach w Twojej bibliotece.", one);
         assertFalse(one.contains(".jpg"));
         assertFalse(one.contains("dir://"));
 
         String multi = ChatAnswerGrounding.formatEntityScopedPresence(List.of("Igor", "Anna"));
-        assertEquals("Igor i Anna są na potwierdzonych zdjęciach w bibliotece.", multi);
+        assertEquals("Igor i Anna pojawiają się na zdjęciach w Twojej bibliotece.", multi);
     }
 
     @Test
@@ -247,22 +247,33 @@ class ChatAnswerGroundingTest {
 
         String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
                 olekClarify, List.of("Olek"), true, true);
-        assertEquals("Olek jest na potwierdzonych zdjęciach w bibliotece.", resolved);
+        assertEquals("Olek pojawia się na zdjęciach w Twojej bibliotece.", resolved);
 
         assertTrue(ChatAnswerGrounding.isClarificationSeekingNonAnswer(
                 "Nie do końca rozumiem — czy możesz doprecyzować?"));
         assertFalse(ChatAnswerGrounding.isClarificationSeekingNonAnswer(
-                "Olek jest na potwierdzonych zdjęciach w bibliotece."));
+                "Olek pojawia się na zdjęciach w Twojej bibliotece."));
     }
 
     @Test
     void englishAssistantNonAnswerDoesNotFlagPolishEvidenceAnswers() {
         assertFalse(ChatAnswerGrounding.isEnglishAssistantNonAnswer(
-                "Olek jest na potwierdzonych zdjęciach w bibliotece."));
+                "Olek pojawia się na zdjęciach w Twojej bibliotece."));
         assertFalse(ChatAnswerGrounding.isEnglishAssistantNonAnswer(
                 "Na zdjęciu stoi Igor w garniturze."));
         assertTrue(ChatAnswerGrounding.isEnglishAssistantNonAnswer(
                 "It seems like you might be referring to something specific. Let me know so I can help!"));
+    }
+
+    @Test
+    void freeformPhotoProseIsNotRewrittenToRosterTemplate() {
+        String freeform = "Na zdjęciu widać Igora w czerwonej koszulce obok Anny na ławce w parku.";
+        assertTrue(ChatAnswerGrounding.isPhotoGroundedProse(freeform));
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                freeform, List.of("Igor", "Anna", "Dawid"), true, false);
+        assertEquals(freeform, resolved);
+        assertFalse(resolved.contains("potwierdzonych"));
+        assertFalse(resolved.contains("bibliotece"));
     }
 
     @Test

@@ -143,63 +143,45 @@ public class ChatInteractionService {
         String questionForModel = answerFacingQuestion(plan);
         String originalQuestion = plan.question() == null ? "" : plan.question().trim();
         String recentTurns = compactConversationContext(conversationContext);
-        String answerStyle = """
-                Odpowiedź po polsku: naturalna i swobodna, zwykle kilka zwięzłych zdań
-                (możesz rozwinąć, gdy pytanie jest otwarte — np. „co wiesz o…”, „opisz…”).
-                Masz pełny przepływ grafu i/lub indeksu wiedzy o wskazanym zdjęciu: sam wybierz
-                istotne fakty i sformułuj płynną wypowiedź (nie kopiuj claimów dosłownie jak listy).
-                Gdy użytkownik pyta o wskazane zdjęcie (@plik), opisz je z dostarczonego kontekstu
-                (scena, uczestnicy, wygląd, ubiór, czynności) — nie odsyłaj pytania z powrotem.
-                Wykorzystaj z kontekstu wszystko, o co pyta użytkownik: ubiór, kolory, włosy,
-                wygląd, czynności, relacje przestrzenne, scenę — bez zgadywania poza dowodami.
-                Zakaz esejów encyklopedycznych, definicji pojęć i wiedzy spoza dowodów.
-                Bez list hipotez („może na przykład… 1. 2. 3.”) i bez prośby o więcej szczegółów.
-                Bez pewności, score i listy plików.
-                """;
+        // Free-form: soft style cue only — do not re-impose stiff planner answerInstruction templates.
+        String answerStyle = freeformAnswerStyle();
 
         String prompt;
         if (graphMissFallback && graphContext.isBlank()) {
             // GRAPH without certain people evidence — hybrid only; refuse if retrieval empty.
             prompt = """
-                    [Instrukcja odpowiedzi]
                     %s
-                    Graf wiedzy nie ma pewnych dowodów o osobach dla tego pytania; użyj wyłącznie kontekstu dokumentów z retrieval.
-                    Gdy brak fragmentów dokumentów, odpowiedz dokładnie: Nie znaleziono informacji w dokumentach.
+                    Graf nie ma pewnych dowodów o osobach; użyj wyłącznie fragmentów z retrieval.
+                    Gdy brak fragmentów: Nie znaleziono informacji w dokumentach.
                     %s
-                    %s
-                    Oryginalne brzmienie użytkownika: %s
+                    Użytkownik powiedział: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
+                    """.formatted(answerStyle, recentTurns, originalQuestion, questionForModel);
         } else if (!graphContext.isBlank()) {
-            // Full graph + forced index dump — model selects facts and formulates.
+            // Full graph + forced index dump — model selects facts and formulates freely.
             prompt = """
-                    [Pełny opis wskazanych zdjęć — graf i indeks wiedzy]
+                    [Kontekst zdjęć — graf i indeks wiedzy]
                     %s
 
-                    [Instrukcja odpowiedzi]
                     %s
+                    Masz pełny przepływ dowodów. Sam wybierz, co odpowiada na pytanie, i napisz
+                    naturalną, swobodną odpowiedź po polsku — nie listę claimów, nie raport.
+                    Nie zgaduj poza tym kontekstem.
                     %s
-                    Powyżej masz kompletny przepływ (uczestnicy, visual_cues, obiekty, relacje,
-                    fakty, scena, indeks image_knowledge). Sam zdecyduj, które elementy odpowiadają
-                    na pytanie, i sformułuj naturalną, swobodną odpowiedź po polsku. Nie zgaduj poza
-                    tym kontekstem. Fragmenty retrieval (jeśli są) traktuj jako uzupełnienie.
-                    %s
-                    Oryginalne brzmienie użytkownika: %s
+                    Użytkownik powiedział: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(graphContext, plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
+                    """.formatted(graphContext, answerStyle, recentTurns, originalQuestion, questionForModel);
         } else {
             prompt = """
-                    [Instrukcja odpowiedzi]
-                    %s
                     %s
                     Używaj wyłącznie fragmentów dokumentów z retrieval — nie zgaduj.
                     %s
-                    Oryginalne brzmienie użytkownika: %s
+                    Użytkownik powiedział: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
+                    """.formatted(answerStyle, recentTurns, originalQuestion, questionForModel);
         }
 
         // Named people / fileScope: restrict hybrid to proven files. Keep scoped hybrid on GRAPH
@@ -363,7 +345,14 @@ public class ChatInteractionService {
         List<String> certainNames = matchPaths.isEmpty()
                 ? List.of()
                 : graphQueryService.certainParticipantNamesForPaths(matchPaths);
-        String answer = verifiedVisualAnswerService.answer(plan.question(), matches, certainNames);
+        // Free-form branch: formulate from visual claims with the answer LLM (not rigid claim join).
+        String answer = freeformAnswerFromVisualMatches(chatId, plan, matches, certainNames);
+        if (answer == null || answer.isBlank()
+                || VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER.equals(answer)
+                || VerifiedVisualAnswerService.NO_VISUAL_EVIDENCE.equals(answer)) {
+            // Fallback to immutable claim prose if free-form model blanked.
+            answer = verifiedVisualAnswerService.answer(plan.question(), matches, certainNames);
+        }
         if (VerifiedVisualAnswerService.MATCH_FALLBACK_ANSWER.equals(answer)
                 || VerifiedVisualAnswerService.NO_VISUAL_EVIDENCE.equals(answer)) {
             String denial = "Nie mam potwierdzonej informacji, która odpowiada na to pytanie.";
@@ -492,13 +481,66 @@ public class ChatInteractionService {
         String raw = plan.question() == null ? "" : plan.question().trim();
         String retrieval = plan.retrievalQuery() == null ? "" : plan.retrievalQuery().trim();
         String condition = plan.condition() == null ? "" : plan.condition().trim();
-        if (!retrieval.isBlank() && !retrieval.equalsIgnoreCase(raw)) {
+        // Free-form: prefer the user's own wording for full questions. Only expand short
+        // follow-ups (e.g. "a olek?") via retrieval/condition — never meta planner noise.
+        boolean shortFollowUp = raw.length() > 0 && raw.length() <= 24
+                && !raw.contains("@")
+                && raw.split("\\s+").length <= 4;
+        if (shortFollowUp
+                && !retrieval.isBlank()
+                && !retrieval.equalsIgnoreCase(raw)
+                && !isMetaPlannerPhrase(retrieval)) {
             return retrieval;
         }
-        if (!condition.isBlank() && !condition.equalsIgnoreCase(raw)) {
+        if (shortFollowUp
+                && !condition.isBlank()
+                && !condition.equalsIgnoreCase(raw)
+                && !isMetaPlannerPhrase(condition)) {
+            return condition;
+        }
+        if (!raw.isBlank()) {
+            return raw;
+        }
+        if (!retrieval.isBlank() && !isMetaPlannerPhrase(retrieval)) {
+            return retrieval;
+        }
+        if (!condition.isBlank() && !isMetaPlannerPhrase(condition)) {
             return condition;
         }
         return raw;
+    }
+
+    /**
+     * Planner schema used to put technical examples into {@code condition} (e.g. old
+     * "pełne ograniczenie semantyczne") — those must never become the answer-facing question.
+     */
+    static boolean isMetaPlannerPhrase(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String lower = text.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("ograniczenie semantyczne")
+                || lower.contains("semantic constraint")
+                || lower.contains("answerinstruction")
+                || lower.contains("retrievalmode")
+                || lower.contains("visualcondition")
+                || lower.contains("entitymatchmode")
+                || lower.startsWith("odpowiedz po polsku z dowodów")
+                || lower.startsWith("odpowiedz po polsku z dowodow")
+                || (lower.contains("bez list plików") && lower.length() < 120)
+                || (lower.contains("bez list plikow") && lower.length() < 120);
+    }
+
+    static String freeformAnswerStyle() {
+        return """
+                [Jak odpowiadać]
+                Napisz naturalnie i swobodnie po polsku. Masz pełny kontekst — sam zdecyduj,
+                co jest istotne, i ułóż płynną wypowiedź (nie szablon, nie lista claimów,
+                nie „jest na potwierdzonych zdjęciach w bibliotece”).
+                Przy otwartych pytaniach możesz rozwinąć opis sceny, osób, wyglądu i czynności.
+                Tylko fakty z kontekstu; bez spekulacji i bez esejów encyklopedycznych.
+                Bez nazw plików, score i list źródeł w treści.
+                """;
     }
 
     /**
@@ -558,14 +600,75 @@ public class ChatInteractionService {
     }
 
     private String answerPrompt(String context) {
-        return ChatService.ANSWER_INSTRUCTIONS + """
+        // SystemMessage already carries ANSWER_INSTRUCTIONS — do not re-paste the full rulebook
+        // into the user turn (that made the model answer like a compliance checklist).
+        return freeformAnswerStyle() + "\n" + context;
+    }
 
-                [Styl odpowiedzi]
-                Odpowiadaj naturalnie i swobodnie po polsku. Podaj żądane szczegóły z dowodów
-                (ubiór, wygląd, czynności, relacje, scena). Sam ułóż płynną wypowiedź z pełnego
-                kontekstu. Bez pewności i listy plików.
+    /**
+     * Free-form visual answer: claim statements are evidence context, not the final prose.
+     */
+    private String freeformAnswerFromVisualMatches(
+            UUID chatId, QueryPlan plan, List<VisualQueryMatch> matches, List<String> certainNames) {
+        if (chatAiService == null || chatId == null || matches == null || matches.isEmpty()) {
+            return null;
+        }
+        StringBuilder evidence = new StringBuilder();
+        for (VisualQueryMatch match : matches) {
+            if (match == null) {
+                continue;
+            }
+            if (match.filePath() != null && !match.filePath().isBlank()) {
+                evidence.append("Plik: ").append(fileName(match.filePath())).append('\n');
+            }
+            if (match.claims() != null) {
+                for (var claim : match.claims()) {
+                    if (claim != null && claim.statementPl() != null && !claim.statementPl().isBlank()) {
+                        evidence.append("- ").append(claim.statementPl().trim()).append('\n');
+                    }
+                }
+            }
+            if (match.reasons() != null) {
+                for (String reason : match.reasons()) {
+                    if (reason != null && !reason.isBlank()) {
+                        evidence.append("- ").append(reason.trim()).append('\n');
+                    }
+                }
+            }
+        }
+        if (evidence.isEmpty()) {
+            return null;
+        }
+        if (certainNames != null && !certainNames.isEmpty()) {
+            evidence.append("Uczestnicy: ").append(String.join(", ", certainNames)).append('\n');
+        }
+        String question = answerFacingQuestion(plan);
+        String prompt = """
+                [Dowody wizualne MATCH]
+                %s
 
-                """ + context;
+                %s
+                Napisz naturalną odpowiedź na pytanie wyłącznie z powyższych dowodów.
+
+                Pytanie użytkownika: %s
+                """.formatted(evidence.toString().trim(), freeformAnswerStyle(), question);
+        List<String> scope = matches.stream()
+                .map(VisualQueryMatch::filePath)
+                .filter(path -> path != null && !path.isBlank())
+                .distinct()
+                .toList();
+        RetrievalPathScope.set(scope);
+        RetrievalQueryContext.set(retrievalQueryForPlan(plan));
+        try {
+            Result<String> result = chatAiService.answer(chatId, answerPrompt(prompt));
+            return result == null ? null : result.content();
+        } catch (Exception e) {
+            log.warn("Free-form visual answer failed: {}", e.getMessage());
+            return null;
+        } finally {
+            RetrievalPathScope.clear();
+            RetrievalQueryContext.clear();
+        }
     }
 
     private String removeTechnicalReferences(String answer, List<SourceDto> sources) {

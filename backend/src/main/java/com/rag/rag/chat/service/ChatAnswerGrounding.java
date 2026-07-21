@@ -592,6 +592,18 @@ public final class ChatAnswerGrounding {
             return modelAnswer == null ? "" : modelAnswer;
         }
         List<String> names = normalizeNames(recoveryNames);
+        // Free-form branch: keep natural photo prose. Only rewrite hard failure shapes
+        // (capability denial, greeting, essay, speculative menu, safety lecture).
+        if (isPhotoGroundedProse(modelAnswer)
+                && !isCapabilityDenial(modelAnswer)
+                && !isEmptyOrGreetingNonAnswer(modelAnswer)
+                && !isGeneralKnowledgeEssay(modelAnswer)
+                && !isSpeculativeHypothesisList(modelAnswer)
+                && !isSafetyOrOfftopicLecture(modelAnswer)
+                && !isClarificationSeekingNonAnswer(modelAnswer)
+                && !isEnglishAssistantNonAnswer(modelAnswer)) {
+            return modelAnswer;
+        }
         // Speculative multi-option menus never leave the system when evidence exists —
         // prefer an explicit no-detail notice over inventing activities.
         if (isSpeculativeHypothesisList(modelAnswer)) {
@@ -631,8 +643,55 @@ public final class ChatAnswerGrounding {
     }
 
     /**
+     * True when the answer already reads like a natural photo description (not a template /
+     * refusal / lecture). Free-form branch keeps such prose instead of rewriting to roster.
+     */
+    public static boolean isPhotoGroundedProse(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+        String lower = answer.toLowerCase(Locale.ROOT);
+        if (isCapabilityDenial(answer) || isEmptyOrGreetingNonAnswer(answer)
+                || isGeneralKnowledgeEssay(answer) || isSpeculativeHypothesisList(answer)
+                || isSafetyOrOfftopicLecture(answer)) {
+            return false;
+        }
+        // Stiff recovery templates — not free-form photo prose.
+        if (lower.contains("potwierdzonych zdjęciach w bibliotece")
+                || lower.equals(GROUNDED_NO_ROSTER_FALLBACK.toLowerCase(Locale.ROOT))
+                || lower.equals(GROUNDED_NO_DETAIL_FALLBACK.toLowerCase(Locale.ROOT))) {
+            return false;
+        }
+        return containsAny(lower,
+                "na zdjęciu",
+                "na zdjeciu",
+                "widać",
+                "widac",
+                "stoi ",
+                "siedzi ",
+                "ubrany",
+                "ubrana",
+                "koszul",
+                "spodni",
+                "włos",
+                "wlos",
+                "obok ",
+                "scena",
+                "tło",
+                "tlo",
+                "uśmiech",
+                "usmiech",
+                "trzyma ",
+                "idzie ",
+                "patrzy ",
+                "pozuje");
+    }
+
+    /**
      * Short Polish presence statement for named entities with certain graph/file evidence.
      * No filenames in prose (sources list carries paths).
+     * Soft phrasing — free-form branch avoids bureaucratic "potwierdzonych w bibliotece" tone
+     * when this is only a last-resort recovery after a model failure.
      */
     public static String formatEntityScopedPresence(List<String> entityNames) {
         List<String> names = normalizeNames(entityNames);
@@ -640,15 +699,15 @@ public final class ChatAnswerGrounding {
             return GROUNDED_NO_DETAIL_FALLBACK;
         }
         if (names.size() == 1) {
-            return names.get(0) + " jest na potwierdzonych zdjęciach w bibliotece.";
+            return names.get(0) + " pojawia się na zdjęciach w Twojej bibliotece.";
         }
         if (names.size() == 2) {
             return names.get(0) + " i " + names.get(1)
-                    + " są na potwierdzonych zdjęciach w bibliotece.";
+                    + " pojawiają się na zdjęciach w Twojej bibliotece.";
         }
         String head = String.join(", ", names.subList(0, names.size() - 1));
         return head + " i " + names.get(names.size() - 1)
-                + " są na potwierdzonych zdjęciach w bibliotece.";
+                + " pojawiają się na zdjęciach w Twojej bibliotece.";
     }
 
     /** Polish one-sentence roster of certain participant display names. */

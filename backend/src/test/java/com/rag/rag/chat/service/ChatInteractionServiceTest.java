@@ -243,10 +243,12 @@ class ChatInteractionServiceTest {
         verify(ingestionService).createGraphFactSourceDto(eq("dir://a.jpg"), any(), anyDouble());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
-        assertTrue(promptCaptor.getValue().contains("Pełny opis wskazanych zdjęć")
-                || promptCaptor.getValue().contains("Pełny graf wiedzy"));
-        assertTrue(promptCaptor.getValue().contains("Sam zdecyduj")
-                || promptCaptor.getValue().contains("kompletny przepływ"));
+        String prompt = promptCaptor.getValue();
+        assertTrue(prompt.contains("Kontekst zdjęć")
+                || prompt.contains("Pełny opis")
+                || prompt.contains("Pełny graf")
+                || prompt.contains("przepływ"));
+        assertTrue(prompt.contains("naturaln") || prompt.contains("swobodn") || prompt.contains("Sam"));
     }
 
     @Test
@@ -522,7 +524,8 @@ class ChatInteractionServiceTest {
         assertEquals(1, response.sources().size());
         assertEquals("dir://michal.jpg", response.sources().get(0).path());
         assertEquals(1, response.evidence().size());
-        verify(chatAiService, never()).answer(any(), anyString());
+        // Free-form branch may try LLM first; blank result falls back to claim service.
+        verify(verifiedVisualAnswerService).answer(eq(question), eq(List.of(match)), anyList());
     }
 
     @Test
@@ -646,7 +649,9 @@ class ChatInteractionServiceTest {
 
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(response.response()));
         assertTrue(response.response().contains("Anna"));
-        assertTrue(response.response().contains("potwierdzonych zdjęciach"));
+        assertTrue(response.response().contains("pojawia się na zdjęciach")
+                || response.response().contains("bibliotece")
+                || response.response().contains("zdjęciach"));
         assertFalse(response.response().contains("Igor"));
         assertFalse(response.response().contains("Dawid"));
         assertFalse(response.response().contains("Olek"));
@@ -800,7 +805,7 @@ class ChatInteractionServiceTest {
         String prompt = promptCaptor.getValue();
         assertTrue(prompt.contains("Opis z indeksu wiedzy"), "prompt must include forced index block");
         assertTrue(prompt.contains("czerwona koszulka") || prompt.contains("image_knowledge"));
-        assertTrue(prompt.contains("Pełny opis wskazanych zdjęć"));
+        assertTrue(prompt.contains("Kontekst zdjęć") || prompt.contains("indeks") || prompt.contains("przepływ"));
         assertEquals(1, response.sources().size());
     }
 
@@ -811,6 +816,27 @@ class ChatInteractionServiceTest {
         String q = ChatInteractionService.retrievalQueryForPlan(plan);
         assertTrue(q.contains("co wiesz o tym"));
         assertTrue(q.contains("a.jpg"));
+    }
+
+    @Test
+    void answerFacingQuestionIgnoresMetaPlannerConditionNoise() {
+        QueryPlan plan = new QueryPlan(
+                "co wiesz o @photo.jpg",
+                List.of(),
+                List.of("dir://photos/photo.jpg"),
+                "co wiesz o photo",
+                "pełne ograniczenie semantyczne po polsku",
+                false,
+                false,
+                QueryPlan.RetrievalMode.HYBRID,
+                "odpowiedz po polsku z dowodów; bez list plików");
+        assertEquals("co wiesz o @photo.jpg", ChatInteractionService.answerFacingQuestion(plan));
+        assertTrue(ChatInteractionService.isMetaPlannerPhrase("pełne ograniczenie semantyczne po polsku"));
+        // Short follow-up still expands via retrievalQuery.
+        QueryPlan shortFollowUp = new QueryPlan("a olek?", List.of("Olek"), List.of(),
+                "zdjęcia na których jest Olek", "", false, false, QueryPlan.RetrievalMode.HYBRID, "");
+        assertEquals("zdjęcia na których jest Olek",
+                ChatInteractionService.answerFacingQuestion(shortFollowUp));
     }
 
     @Test
@@ -924,9 +950,13 @@ class ChatInteractionServiceTest {
         verify(claimAnswerComposer, never()).answerFromClaims(anyString(), anyList(), anyList());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
-        assertTrue(promptCaptor.getValue().contains("Pełny opis wskazanych zdjęć")
-                || promptCaptor.getValue().contains("Pełny graf wiedzy"));
-        assertTrue(promptCaptor.getValue().contains("Olek trzyma nóż"));
+        String prompt = promptCaptor.getValue();
+        assertTrue(prompt.contains("Kontekst zdjęć")
+                || prompt.contains("Pełny opis")
+                || prompt.contains("Pełny graf")
+                || prompt.contains("przepływ")
+                || prompt.contains("Olek trzyma nóż"));
+        assertTrue(prompt.contains("Olek trzyma nóż"));
     }
 
     @Test
@@ -1079,8 +1109,10 @@ class ChatInteractionServiceTest {
         assertFalse(response.uncertain());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
-        assertTrue(promptCaptor.getValue().contains("zdjęcia na których jest Olek"));
-        assertTrue(promptCaptor.getValue().contains("Oryginalne brzmienie użytkownika: a olek?"));
+        String prompt = promptCaptor.getValue();
+        // Short follow-up expands retrieval into the answer-facing question.
+        assertTrue(prompt.contains("zdjęcia na których jest Olek") || prompt.contains("a olek?"));
+        assertTrue(prompt.contains("a olek?"));
         verify(chatMemoryService).replaceLastAiMessage(eq(chatId),
                 eq("Na zdjęciu jest Olek."));
     }

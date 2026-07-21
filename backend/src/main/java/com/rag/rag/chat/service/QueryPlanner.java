@@ -67,12 +67,12 @@ public class QueryPlanner {
                     ambiguous=true gdy odniesienia są niejednoznaczne.
                     Znane osoby (ludzie) w workspace: %s
                     Ostatnia rozmowa i ścieżki źródeł: %s
-                    Schema JSON:
-                    {"entities":["kanoniczne imię"],"fileScope":["dokładna ścieżka z historii"],
-                    "retrievalQuery":"samodzielne zapytanie semantyczne po polsku",
-                    "condition":"pełne ograniczenie semantyczne po polsku","visualCondition":false,
+                    Schema JSON (przykład wartości — nie kopiuj dosłownie do odpowiedzi użytkownika):
+                    {"entities":["Igor"],"fileScope":["dir://folder/photo.jpg"],
+                    "retrievalQuery":"opis sceny i uczestników na wskazanym zdjęciu",
+                    "condition":"opisz scenę, osoby i wygląd na podstawie dowodów","visualCondition":false,
                     "ambiguous":false,"retrievalMode":"HYBRID","entityMatchMode":"ANY",
-                    "answerInstruction":"odpowiedz po polsku z dowodów: ubiór, czynności, relacje, scena; bez list plików"}
+                    "answerInstruction":"naturalna odpowiedź po polsku z dostarczonych dowodów; bez list plików"}
                     entityMatchMode=ALL_SAME_FILE gdy odpowiedź wymaga współobecności wszystkich wybranych osób na jednym pliku;
                     wtedy retrievalMode=GRAPH.
                     Pytanie użytkownika: %s
