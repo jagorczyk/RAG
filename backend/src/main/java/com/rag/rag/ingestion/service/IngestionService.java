@@ -394,15 +394,38 @@ public class IngestionService {
                         
                         if (p.getActions() != null) {
                             for (String action : p.getActions()) {
+                                if (action == null || action.isBlank()) {
+                                    continue;
+                                }
                                 Fact fact = Fact.builder()
                                     .mention(mention)
-                                    .action(action)
-                                    .statementPl(subjectStatement(mention, action, null))
+                                    .action(action.trim())
+                                    .statementPl(subjectStatement(mention, action.trim(), null))
                                     .evidenceOrigin("VISION_STRUCTURED")
                                     .filePath(path)
                                     .confidence(new BigDecimal("0.900"))
                                     .build();
                                 factRepo.save(fact);
+                            }
+                        }
+                        // Appearance cues as first-class claims (clothing/hair) — answerable without free LLM JSON parsing.
+                        if (p.getVisualCues() != null) {
+                            for (String cue : p.getVisualCues()) {
+                                if (cue == null || cue.isBlank()) {
+                                    continue;
+                                }
+                                String cueValue = cue.trim();
+                                factRepo.save(Fact.builder()
+                                        .mention(mention)
+                                        .action(com.rag.rag.knowledge.fact.FactStatementRewriter.ACTION_APPEARANCE)
+                                        .object(cueValue)
+                                        .statementPl(subjectStatement(mention,
+                                                com.rag.rag.knowledge.fact.FactStatementRewriter.ACTION_APPEARANCE,
+                                                cueValue))
+                                        .evidenceOrigin("VISION_STRUCTURED")
+                                        .filePath(path)
+                                        .confidence(new BigDecimal("0.850"))
+                                        .build());
                             }
                         }
 
@@ -439,6 +462,7 @@ public class IngestionService {
                         }
                         if (p.getVisualCues() != null && !p.getVisualCues().isEmpty()) {
                             canonicalText.append("Wygląd: ").append(String.join(", ", p.getVisualCues())).append(". ");
+                            // Claim rows already store each cue; keep embed text for hybrid recall.
                         }
                         if (p.getBbox() != null && !p.getBbox().isEmpty()) {
                             canonicalText.append("Położenie bbox: ").append(p.getBbox()).append(". ");
@@ -636,13 +660,10 @@ public class IngestionService {
     }
 
     private String subjectStatement(EntityMention mention, String predicate, String value) {
-        String subject = mention != null && mention.getEntity() != null
-                ? mention.getEntity().getDisplayName()
-                : mention != null ? mention.getLabel() : "uczestnik";
-        StringBuilder statement = new StringBuilder(subject == null ? "uczestnik" : subject.trim());
-        if (predicate != null && !predicate.isBlank()) statement.append(' ').append(predicate.trim());
-        if (value != null && !value.isBlank()) statement.append(' ').append(value.trim());
-        return statement.append('.').toString();
+        return com.rag.rag.knowledge.fact.FactStatementRewriter.buildStatement(
+                com.rag.rag.knowledge.fact.FactStatementRewriter.displayName(mention),
+                predicate,
+                value);
     }
 
     private EntityMention findMentionByBbox(List<EntityMention> mentions, List<Float> target,

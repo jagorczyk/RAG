@@ -53,6 +53,7 @@ public class ChatInteractionService {
     private final DynamicVisualMatcher dynamicVisualMatcher;
     private final QueryPlanner queryPlanner;
     private final VerifiedVisualAnswerService verifiedVisualAnswerService;
+    private final ClaimAnswerComposer claimAnswerComposer;
 
     /** Cap sources shown in UI / stored on the AI turn (GRAPH can otherwise dump all entity photos). */
     @Value("${rag.answer.max-sources:3}")
@@ -116,6 +117,18 @@ public class ChatInteractionService {
 
         boolean graphMissFallback = ChatRetrievalPolicy.shouldFallbackFromGraph(plan, graphEvidence);
         QueryPlan.RetrievalMode effectiveMode = ChatRetrievalPolicy.effectiveRetrievalMode(plan, graphEvidence);
+
+        // Evidence-first GRAPH: select immutable claims (same as visual) before free-form LLM.
+        if (!graphMissFallback
+                && effectiveMode == QueryPlan.RetrievalMode.GRAPH
+                && claimAnswerComposer != null
+                && graphEvidence.claims() != null
+                && !graphEvidence.claims().isEmpty()) {
+            MessageResponse claimResponse = tryClaimGraphAnswer(chatId, plan, graphEvidence, effectiveMode);
+            if (claimResponse != null) {
+                return claimResponse;
+            }
+        }
 
         String graphContext = graphEvidence.context();
         String questionForModel = answerFacingQuestion(plan);
@@ -245,6 +258,68 @@ public class ChatInteractionService {
                 || noGrounding
                 || sources.isEmpty();
         String answerKind = noGrounding ? "NO_EVIDENCE" : effectiveMode.name();
+        saveAiMessage(chatId, cleaned, sources, sourceEvidence, answerKind, uncertain);
+        return new MessageResponse(cleaned, sources, uncertain, sourceEvidence, answerKind);
+    }
+
+    /**
+     * GRAPH claim path: LLM only picks claim IDs; answer prose is immutable statementPl.
+     * @return null when no grounded claim prose — caller continues with free-form LLM
+     */
+    private MessageResponse tryClaimGraphAnswer(
+            UUID chatId, QueryPlan plan, GraphEvidenceResult graphEvidence,
+            QueryPlan.RetrievalMode effectiveMode) {
+        String questionForModel = answerFacingQuestion(plan);
+        ClaimAnswerComposer.ClaimAnswerResult claimResult = claimAnswerComposer.answerFromClaims(
+                questionForModel, graphEvidence.claims(), plan.entities());
+        if (!claimResult.hasGroundedProse()) {
+            // Free-form LLM + grounding remains the fallback (PR1 safety/roster detectors apply).
+            return null;
+        }
+        List<String> preferredPaths = !claimResult.usedFilePaths().isEmpty()
+                ? claimResult.usedFilePaths()
+                : graphEvidence.certainPaths();
+        return finishGroundedGraphAnswer(chatId, plan, graphEvidence, effectiveMode,
+                claimResult.answer(), preferredPaths);
+    }
+
+    private MessageResponse finishGroundedGraphAnswer(
+            UUID chatId, QueryPlan plan, GraphEvidenceResult graphEvidence,
+            QueryPlan.RetrievalMode effectiveMode, String answer, List<String> preferredPaths) {
+        Map<String, SourceDto> unique = new LinkedHashMap<>();
+        List<String> fileScope = plan.fileScope();
+        List<String> paths = preferredPaths == null ? List.of() : preferredPaths;
+        for (String path : paths) {
+            if (path == null || path.isBlank()) {
+                continue;
+            }
+            if (!RetrievalPathScope.pathInScope(path, fileScope)) {
+                continue;
+            }
+            putSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0), true);
+        }
+        // Fall back to all certain graph paths if preferred set was empty/filtered out.
+        if (unique.isEmpty()) {
+            for (String path : graphEvidence.certainPaths()) {
+                if (RetrievalPathScope.pathInScope(path, fileScope)) {
+                    putSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0), true);
+                }
+            }
+        }
+        List<SourceDto> sources = limitSources(List.copyOf(unique.values()));
+        String cleaned = removeTechnicalReferences(answer, sources);
+        if (cleaned == null || cleaned.isBlank()) {
+            cleaned = ClaimAnswerComposer.EMPTY_FALLBACK;
+        }
+        syncGroundedAnswerToMemory(chatId, cleaned);
+        List<QueryEvidenceDto> sourceEvidence = sources.stream()
+                .map(source -> new QueryEvidenceDto(source.path(),
+                        java.math.BigDecimal.valueOf(source.score() == null ? 0.0 : source.score()),
+                        List.of("Potwierdzony fakt z grafu wiedzy."),
+                        "CONFIRMED"))
+                .toList();
+        boolean uncertain = plan.ambiguous() || sources.isEmpty();
+        String answerKind = sources.isEmpty() ? "NO_EVIDENCE" : effectiveMode.name();
         saveAiMessage(chatId, cleaned, sources, sourceEvidence, answerKind, uncertain);
         return new MessageResponse(cleaned, sources, uncertain, sourceEvidence, answerKind);
     }

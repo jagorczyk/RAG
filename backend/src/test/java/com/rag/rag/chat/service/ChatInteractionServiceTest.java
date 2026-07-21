@@ -47,6 +47,7 @@ class ChatInteractionServiceTest {
     @Mock private DynamicVisualMatcher dynamicVisualMatcher;
     @Mock private QueryPlanner queryPlanner;
     @Mock private VerifiedVisualAnswerService verifiedVisualAnswerService;
+    @Mock private ClaimAnswerComposer claimAnswerComposer;
     @InjectMocks private ChatInteractionService service;
     private UUID chatId;
 
@@ -59,6 +60,11 @@ class ChatInteractionServiceTest {
                 .thenReturn(new GraphEvidenceResult("", List.of()));
         lenient().when(graphQueryService.certainParticipantNamesForPaths(anyList()))
                 .thenReturn(List.of());
+        // Default: claim path not used (empty result) so free-form GRAPH tests keep working.
+        lenient().when(claimAnswerComposer.answerFromClaims(anyString(), anyList(), anyList()))
+                .thenReturn(ClaimAnswerComposer.ClaimAnswerResult.empty());
+        lenient().when(claimAnswerComposer.answerFromClaims(anyString(), anyList()))
+                .thenReturn(ClaimAnswerComposer.ClaimAnswerResult.empty());
     }
 
     @Test
@@ -743,6 +749,36 @@ class ChatInteractionServiceTest {
         assertEquals(path, response.sources().get(0).path());
         assertEquals("GRAPH_FACT", response.sources().get(0).type());
         assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
+    }
+
+    @Test
+    void graphClaimSelectAnswersWithoutFreeFormLlm() {
+        String question = "Co trzyma Olek?";
+        String path = "dir://witaj/20230424_145146.jpg";
+        GroundedVisualClaim claim = new GroundedVisualClaim(
+                "F-1", UUID.randomUUID(), "Olek", "trzyma nóż", "",
+                "Olek trzyma nóż.", path, BigDecimal.valueOf(0.9), "VISION_STRUCTURED", "face_1");
+        QueryPlan plan = new QueryPlan(question, List.of("Olek"), List.of(path),
+                question, "", false, false, QueryPlan.RetrievalMode.GRAPH, "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "=== Zdjęcie 1 ===\nUczestnicy: Olek, Bartek",
+                        List.of(path),
+                        List.of(claim)));
+        when(claimAnswerComposer.answerFromClaims(anyString(), anyList(), anyList()))
+                .thenReturn(new ClaimAnswerComposer.ClaimAnswerResult(
+                        "Olek trzyma nóż.", List.of("F-1"), List.of(path), true));
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "20230424_145146.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals("Olek trzyma nóż.", response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals(path, response.sources().get(0).path());
+        assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
+        verify(chatAiService, never()).answer(any(), anyString());
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.rag.rag.core.cache.IdentityMatchCacheService;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.*;
 import com.rag.rag.knowledge.fact.Fact;
+import com.rag.rag.knowledge.fact.FactStatementRewriter;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FactRepository;
@@ -45,6 +46,7 @@ public class IdentityResolutionService {
     private final IdentitySuggestionRepository suggestionRepository;
     private final FaceEmbeddingRepository faceEmbeddingRepository;
     private final FactRepository factRepository;
+    private final FactStatementRewriter factStatementRewriter;
     private final FileRepository fileRepository;
     private final CurrentUserService currentUserService;
     private final ChatLanguageModel chatModel;
@@ -82,6 +84,7 @@ public class IdentityResolutionService {
             IdentitySuggestionRepository suggestionRepository,
             FaceEmbeddingRepository faceEmbeddingRepository,
             FactRepository factRepository,
+            FactStatementRewriter factStatementRewriter,
             FileRepository fileRepository,
             CurrentUserService currentUserService,
             @Qualifier("chatLanguageModel") ChatLanguageModel chatModel,
@@ -94,6 +97,7 @@ public class IdentityResolutionService {
         this.suggestionRepository = suggestionRepository;
         this.faceEmbeddingRepository = faceEmbeddingRepository;
         this.factRepository = factRepository;
+        this.factStatementRewriter = factStatementRewriter;
         this.fileRepository = fileRepository;
         this.currentUserService = currentUserService;
         this.chatModel = chatModel;
@@ -522,6 +526,10 @@ public class IdentityResolutionService {
         if (mention.getId() != null) {
             faceEmbeddingRepository.relinkByMentionId(mention.getId(), entity);
         }
+        // Canonical names on claim statements as soon as identity is attached (face/user/tag).
+        if (status == MentionStatus.CONFIRMED && factStatementRewriter != null) {
+            factStatementRewriter.rewriteFactsForMention(mention);
+        }
     }
 
     @Transactional
@@ -603,6 +611,9 @@ public class IdentityResolutionService {
             mentionRepository.save(mention);
             syncFactObjectLabelsForMention(mention, label, oldLabel);
         }
+        if (factStatementRewriter != null) {
+            factStatementRewriter.rewriteFactsForMention(mention);
+        }
         if (mention.getEntity() != null) {
             removeGenericAliases(mention.getEntity());
         }
@@ -637,6 +648,9 @@ public class IdentityResolutionService {
                 mentionRepository.save(mention);
             }
             syncFactObjectLabelsForMention(mention, newName, oldName);
+            if (factStatementRewriter != null) {
+                factStatementRewriter.rewriteFactsForMention(mention);
+            }
         }
         // Catch facts that still point at this entity via targetMention after reassignment/merge.
         for (Fact fact : factRepository.findAllWithMentionAndEntity()) {
@@ -645,6 +659,9 @@ public class IdentityResolutionService {
                     && entityId.equals(fact.getTargetMention().getEntity().getId())) {
                 fact.setObject(newName);
                 factRepository.save(fact);
+                if (factStatementRewriter != null && fact.getTargetMention() != null) {
+                    factStatementRewriter.rewriteFactsForMention(fact.getTargetMention());
+                }
             }
         }
     }
@@ -750,6 +767,9 @@ public class IdentityResolutionService {
         linkMention(managedMention, managedEntity, MentionStatus.CONFIRMED,
                 IdentityEvidenceSource.FACE_MATCH, identityConfidence, identityMargin);
         addAliasIfMissing(managedEntity, visionLabel);
+        if (managedEntity.getId() != null) {
+            refreshDocumentEmbeddingsForEntity(managedEntity.getId());
+        }
     }
 
     public void confirmFaceMatch(EntityMention mention, KnowledgeEntity matchedEntity, String visionLabel) {

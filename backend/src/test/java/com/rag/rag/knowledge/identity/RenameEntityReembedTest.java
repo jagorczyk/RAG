@@ -84,7 +84,9 @@ class RenameEntityReembedTest {
 
         identityService = new IdentityResolutionService(
                 entityRepository, aliasRepository, mentionRepository, suggestionRepository,
-                faceEmbeddingRepository, factRepository, fileRepository, currentUserService,
+                faceEmbeddingRepository, factRepository,
+                mock(com.rag.rag.knowledge.fact.FactStatementRewriter.class),
+                fileRepository, currentUserService,
                 chatModel, identityMatchCacheService, provider);
         ReflectionTestUtils.setField(identityService, "llmMatcherEnabled", false);
 
