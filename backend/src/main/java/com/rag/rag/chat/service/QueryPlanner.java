@@ -46,15 +46,16 @@ public class QueryPlanner {
                     Preserve the user's meaning verbatim in condition.
 
                     Retrieval modes (pick exactly one):
-                    - GRAPH: the question is about people (humans) — who they are, co-presence, relations between
-                      people on photos, what a named person is doing when identity/relations live in the graph.
-                      Fill entities with canonical human names from Known entities when identifiable.
+                    - GRAPH: the question is about people (humans) — who they are, co-presence, relations,
+                      what they wear/do/look like when those details live in the knowledge graph or embeddings
+                      for those people. Fill entities with canonical human names when identifiable.
                       Animals and objects alone must NOT select GRAPH.
                     - HYBRID: the question is NOT about people (documents, scenes without identity, objects,
                       general file facts). Default for non-person questions. Prefer HYBRID over DOCUMENT.
                     - VISUAL_VALIDATION: answering requires validating appearance, clothing, pose, action,
-                      scene layout or other image pixels not already stored as graph identity. Set
-                      visualCondition=true with this mode.
+                      scene layout against the image when graph/embeddings are insufficient. Set
+                      visualCondition=true with this mode. Prefer GRAPH/HYBRID first when the library
+                      already stores visual_cues, clothing, hair or actions for the people/files.
                     - DOCUMENT: rare; only when pure document retrieval is clearly enough. Prefer HYBRID.
 
                     When the recent conversation lists SOURCES: paths, copy those exact paths into fileScope
@@ -69,7 +70,7 @@ public class QueryPlanner {
                     "retrievalQuery":"standalone semantic query resolved from the conversation",
                     "condition":"full semantic constraint", "visualCondition":false,
                     "ambiguous":false,"retrievalMode":"HYBRID","entityMatchMode":"ANY",
-                    "answerInstruction":"answer requested details briefly in Polish; never list files"}
+                    "answerInstruction":"answer all requested appearance, clothing, action and relation details in Polish from evidence; never list files"}
                     Use entityMatchMode ALL_SAME_FILE when the answer depends on co-presence of all selected
                     people in one file; otherwise use ANY. This is a technical set operation.
                     When ALL_SAME_FILE is chosen, use retrievalMode GRAPH so joint evidence is checked.

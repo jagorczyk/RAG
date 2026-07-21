@@ -115,8 +115,13 @@ public class ChatInteractionService {
         String questionForModel = answerFacingQuestion(plan);
         String originalQuestion = plan.question() == null ? "" : plan.question().trim();
         String recentTurns = compactConversationContext(conversationContext);
-        // Always end with "Pytanie użytkownika:" so retrieval injection and chat-memory
-        // normalization can recover the bare question (not the instruction blob).
+        String answerStyle = """
+                Odpowiedź po polsku: konkretna, naturalna, zwykle 1–3 zdania.
+                Wykorzystaj z kontekstu wszystko, o co pyta użytkownik: ubiór, kolory, włosy,
+                wygląd, czynności, relacje przestrzenne, scenę — bez zgadywania poza dowodami.
+                Bez pewności, score i listy plików.
+                """;
+
         String prompt;
         if (graphMissFallback) {
             // GRAPH without certain people evidence — hybrid only; refuse if retrieval empty.
@@ -125,38 +130,39 @@ public class ChatInteractionService {
                     %s
                     Graf wiedzy nie ma pewnych dowodów o osobach dla tego pytania; użyj wyłącznie kontekstu dokumentów z retrieval.
                     Gdy brak fragmentów dokumentów, odpowiedz dokładnie: Nie znaleziono informacji w dokumentach.
-                    Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+                    %s
                     %s
                     Oryginalne brzmienie użytkownika: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
+                    """.formatted(plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
         } else if (effectiveMode == QueryPlan.RetrievalMode.GRAPH && !graphContext.isBlank()) {
-            // People path: AI answers from graph people + relations only (no hybrid pollution).
+            // People path: graph first; scoped hybrid may add clothing/action detail from embeddings.
             prompt = """
                     [Kontekst grafu osób i relacji]
                     %s
 
                     [Instrukcja odpowiedzi]
                     %s
-                    Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
-                    Używaj wyłącznie powyższego kontekstu grafu — nie zgaduj i nie dodawaj faktów spoza kontekstu.
+                    %s
+                    Używaj kontekstu grafu oraz fragmentów retrieval dla tych samych plików — nie zgaduj.
+                    Gdy pytanie dotyczy wyglądu, ubioru lub czynności, cytuj te szczegóły z dowodów.
                     %s
                     Oryginalne brzmienie użytkownika: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(graphContext, plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
+                    """.formatted(graphContext, plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
         } else if (graphContext.isBlank()) {
             prompt = """
                     [Instrukcja odpowiedzi]
                     %s
-                    Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+                    %s
                     Używaj wyłącznie fragmentów dokumentów z retrieval — nie zgaduj.
                     %s
                     Oryginalne brzmienie użytkownika: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
+                    """.formatted(plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
         } else {
             prompt = """
                     [Kontekst zweryfikowany]
@@ -164,20 +170,21 @@ public class ChatInteractionService {
 
                     [Instrukcja odpowiedzi]
                     %s
-                    Odpowiedź: jedno krótkie zdanie po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+                    %s
                     Używaj wyłącznie powyższego kontekstu i fragmentów dokumentów z retrieval — nie zgaduj.
                     %s
                     Oryginalne brzmienie użytkownika: %s
 
                     Pytanie użytkownika: %s
-                    """.formatted(graphContext, plan.answerInstruction(), recentTurns, originalQuestion, questionForModel);
+                    """.formatted(graphContext, plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
         }
 
-        // Named people: restrict hybrid RAG to proven files. Pure GRAPH disables hybrid retrieval.
+        // Named people / fileScope: restrict hybrid to proven files. Keep scoped hybrid on GRAPH
+        // so appearance/clothing details from embeddings can answer open questions.
         List<String> retrievalScope = ChatRetrievalPolicy.retrievalScope(plan, graphEvidence);
         RetrievalPathScope.set(retrievalScope);
         RetrievalQueryContext.set(plan.retrievalQuery());
-        RetrievalQueryContext.setDisabled(effectiveMode == QueryPlan.RetrievalMode.GRAPH);
+        RetrievalQueryContext.setDisabled(false);
         Result<String> result;
         try {
             result = chatAiService.answer(chatId, answerPrompt(prompt));
@@ -316,7 +323,7 @@ public class ChatInteractionService {
             return List.copyOf(unique.values());
         }
 
-        // Graph facts first so CONFIRMED paths win labels over hybrid RETRIEVED for same path.
+        // Graph facts first; then scoped hybrid hits (also for GRAPH — clothing/actions in embeddings).
         if (mode != QueryPlan.RetrievalMode.DOCUMENT) {
             for (String path : graphEvidence.certainPaths()) {
                 if (RetrievalPathScope.pathInScope(path, fileScope)) {
@@ -325,7 +332,7 @@ public class ChatInteractionService {
             }
         }
 
-        if (mode != QueryPlan.RetrievalMode.GRAPH && result != null) {
+        if (result != null) {
             for (SourceDto source : ingestionService.getSources(result)) {
                 if (source == null || !RetrievalPathScope.pathInScope(source.path(), fileScope)) {
                     continue;
@@ -405,7 +412,8 @@ public class ChatInteractionService {
         return ChatService.ANSWER_INSTRUCTIONS + """
 
                 [Styl odpowiedzi]
-                Jedno lub dwa krótkie zdania po polsku. Podaj żądane szczegóły; bez pewności i listy plików.
+                Odpowiadaj naturalnie po polsku (1–3 zdania). Podaj żądane szczegóły z dowodów
+                (ubiór, wygląd, czynności, relacje, scena). Bez pewności i listy plików.
 
                 """ + context;
     }

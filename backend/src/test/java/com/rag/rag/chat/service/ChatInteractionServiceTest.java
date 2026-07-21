@@ -232,11 +232,10 @@ class ChatInteractionServiceTest {
         assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
         assertEquals(1, response.sources().size());
         verify(ingestionService).createGraphFactSourceDto(eq("dir://a.jpg"), any(), anyDouble());
-        // Pure GRAPH with evidence does not pull hybrid document sources
-        verify(ingestionService, never()).getSources(any());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
         assertTrue(promptCaptor.getValue().contains("[Kontekst grafu osób i relacji]"));
+        assertTrue(promptCaptor.getValue().contains("ubiór") || promptCaptor.getValue().contains("1–3"));
     }
 
     @Test

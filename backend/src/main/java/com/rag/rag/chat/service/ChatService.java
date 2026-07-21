@@ -37,9 +37,12 @@ public interface ChatService {
             niezwiązanej z dostarczonymi dowodami.
             Gdy brakuje istotnych informacji, odpowiedz dokładnie:
             "Nie znaleziono informacji w dokumentach."
-            Odpowiedź ma być krótka i zwięzła: zwykle jedno zdanie, najwyżej dwa.
-            Odpowiadaj konkretnie na szczegół, o który pyta użytkownik, w tym czynność,
-            wygląd lub scenę, jeżeli tego dotyczy pytanie. Nie dodawaj nieproszonych opisów.
+            Odpowiedź ma być konkretna i naturalna: zwykle 1–3 zdania.
+            Gdy pytanie dotyczy ubioru, kolorów, włosów, wyglądu, czynności lub sceny,
+            podaj te szczegóły wprost z dostarczonych dowodów (graf, visual_cues, fragmenty).
+            Nie ograniczaj się do samego stwierdzenia obecności osoby, jeśli w kontekście
+            są bogatsze szczegóły odpowiadające na pytanie.
+            Nie dodawaj nieproszonych dygresji i nie zgaduj poza dowodami.
             Nie pisz o pewności, score ani „na podstawie dowodów”.
             Nie umieszczaj nazw plików, ścieżek, identyfikatorów ani list źródeł w treści.
             """;
