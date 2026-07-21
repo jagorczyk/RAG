@@ -20,6 +20,17 @@ public interface FileRepository extends JpaRepository<FileEntity, Long> {
 
     List<FileEntity> findAllByOwnerId(UUID ownerId);
 
+    @Query("""
+            SELECT f FROM FileEntity f
+            WHERE LOWER(f.fileType) LIKE 'image/%'
+              AND NOT (
+                    f.graphProjectionVersion = :version
+                AND f.graphProjectionStatus IN ('CURRENT', 'FAILED')
+              )
+            ORDER BY f.id
+            """)
+    List<FileEntity> findImagesWithStaleGraphProjection(@Param("version") String version);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT f FROM FileEntity f WHERE f.path = :path")
     Optional<FileEntity> findByPathForUpdate(@Param("path") String path);

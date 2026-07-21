@@ -530,6 +530,10 @@ public class IngestionService {
                 if (fileOpt.isPresent()) {
                     FileEntity f = fileOpt.get();
                     f.setIngestionStatus(IngestionStatus.NEEDS_REVIEW);
+                    // Mark this analyzer version as attempted so startup repair does not loop forever
+                    // when the model returns unparseable JSON (embeddings still store raw text).
+                    f.setGraphProjectionVersion(visionAnalyzerVersion);
+                    f.setGraphProjectionStatus("FAILED");
                     fileRepository.save(f);
                 }
                 return Document.from(result.rawText() != null ? result.rawText() : "Brak opisu obrazu.");
