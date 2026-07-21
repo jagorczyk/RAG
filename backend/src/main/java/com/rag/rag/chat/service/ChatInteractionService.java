@@ -119,6 +119,7 @@ public class ChatInteractionService {
                 Odpowiedź po polsku: konkretna, naturalna, zwykle 1–3 zdania.
                 Wykorzystaj z kontekstu wszystko, o co pyta użytkownik: ubiór, kolory, włosy,
                 wygląd, czynności, relacje przestrzenne, scenę — bez zgadywania poza dowodami.
+                Bez list hipotez („może na przykład… 1. 2. 3.”) i bez prośby o więcej szczegółów.
                 Bez pewności, score i listy plików.
                 """;
 

@@ -2,6 +2,7 @@ package com.rag.rag.core.config;
 
 import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.core.rerank.LlmDocumentReranker;
+import com.rag.rag.core.retrieval.AnswerContentInjection;
 import com.rag.rag.core.retrieval.HybridRetrievalMerger;
 import com.rag.rag.core.retrieval.LexicalEmbeddingSearch;
 import com.rag.rag.core.retrieval.RetrievalPathScope;
@@ -89,7 +90,7 @@ public class RetrievalConfiguration {
 
             String cleanQuery = RetrievalQueryContext.get();
             if (cleanQuery.isBlank()) {
-                cleanQuery = extractRetrievalQuery(queryText);
+                cleanQuery = AnswerContentInjection.extractRetrievalQuery(queryText);
             }
             if (cleanQuery.isEmpty()) {
                 cleanQuery = queryText;
@@ -222,119 +223,22 @@ public class RetrievalConfiguration {
     @Bean
     public RetrievalAugmentor retrievalAugmentor(ContentRetriever contentRetriever) {
         ContentInjector contentInjector = (contents, query) -> {
-            logger.info("CONTENT INJECTOR RECEIVED CONTENTS COUNT: {}", contents.size());
-            String userQuestion = query.singleText();
-            if (userQuestion == null || userQuestion.trim().isEmpty()) {
-                userQuestion = "Pytanie";
+            logger.info("CONTENT INJECTOR RECEIVED CONTENTS COUNT: {}", contents == null ? 0 : contents.size());
+            UserMessage injected = AnswerContentInjection.inject(contents, query.singleText(), maxSegmentChars);
+            String finalPrompt = injected.singleText();
+            logger.info("FINAL PROMPT LENGTH: {}", finalPrompt == null ? 0 : finalPrompt.length());
+            if (contents != null && !contents.isEmpty()
+                    && !AnswerContentInjection.containsDocumentSegments(finalPrompt)) {
+                logger.warn("CONTENT INJECTOR: retrieval returned {} segment(s) but Dokumenty block missing",
+                        contents.size());
             }
-
-            String graphContext = extractGraphContext(userQuestion);
-            String actualQuestion = extractUserQuestion(userQuestion);
-
-            if (contents.isEmpty()) {
-                if (!graphContext.isEmpty()) {
-                    return UserMessage.from(graphContext + "\n\nPytanie użytkownika: " + actualQuestion);
-                }
-                // No document chunks and no graph block in the query — refuse instead of free-form.
-                return UserMessage.from("""
-                        Brak fragmentów dokumentów w indeksie dla tego pytania.
-                        Odpowiedz dokładnie jednym zdaniem: Nie znaleziono informacji w dokumentach.
-                        Nie zgaduj i nie używaj wiedzy spoza systemu.
-
-                        Pytanie użytkownika: %s
-                        """.formatted(actualQuestion));
-            }
-
-            String contextJoined = contents.stream()
-                    .map(content -> {
-                        TextSegment segment = content.textSegment();
-                        String filename = segment.metadata().getString("filename");
-                        String folderName = segment.metadata().getString("document_id");
-
-                        String text = segment.text();
-                        if (text.length() > maxSegmentChars) {
-                            text = text.substring(0, maxSegmentChars) + "...";
-                        }
-
-                        return String.format("[Folder: %s, Plik: %s]\n%s",
-                                folderName != null ? folderName : "nieznany",
-                                filename != null ? filename : "nieznany",
-                                text);
-                    })
-                    .collect(Collectors.joining("\n---\n"));
-
-            StringBuilder promptBuilder = new StringBuilder();
-            if (!graphContext.isEmpty()) {
-                promptBuilder.append(graphContext).append("\n\n");
-            }
-            promptBuilder.append("Odpowiedz po polsku jedną krótką zdaniami (max 1–2 zdania). ")
-                    .append("Graf wiedzy (jeśli podany) jest źródłem prawdy dla osób i relacji. ")
-                    .append("Gdy pytanie ma dwie części, odpowiedz na obie krótko. ")
-                    .append("Używaj wyłącznie dostarczonych dowodów. ")
-                    .append("Nie opisuj wyglądu, ubrań, włosów ani sceny, jeśli pytanie prosi tylko o wskazanie zdjęć. ")
-                    .append("Nie pisz o pewności ani „na podstawie dowodów”. ")
-                    .append("Nie wypisuj nazw plików, ścieżek ani list źródeł — źródła są w UI.\n\n")
-                    .append("Pytanie: ").append(actualQuestion).append("\n\n")
-                    .append("Dokumenty:\n").append(contextJoined);
-
-            String finalPrompt = promptBuilder.toString();
-
-            logger.info("FINAL PROMPT LENGTH: {}", finalPrompt.length());
-            return UserMessage.from(finalPrompt);
+            return injected;
         };
 
         return DefaultRetrievalAugmentor.builder()
                 .contentRetriever(contentRetriever)
                 .contentInjector(contentInjector)
                 .build();
-    }
-
-    private static String extractUserQuestion(String queryText) {
-        if (queryText == null) {
-            return "";
-        }
-        // Prefer the last marker so nested instruction blocks cannot hide the real question.
-        int marker = queryText.lastIndexOf("Pytanie użytkownika:");
-        if (marker >= 0) {
-            String after = queryText.substring(marker + "Pytanie użytkownika:".length()).trim();
-            int docs = after.indexOf("\nDokumenty:");
-            if (docs >= 0) {
-                after = after.substring(0, docs).trim();
-            }
-            if (!after.isBlank()) {
-                return after;
-            }
-        }
-        int shortMarker = queryText.lastIndexOf("Pytanie:");
-        if (shortMarker >= 0) {
-            String after = queryText.substring(shortMarker + "Pytanie:".length()).trim();
-            int docs = after.indexOf("\nDokumenty:");
-            if (docs < 0) {
-                docs = after.indexOf("\n\nDokumenty:");
-            }
-            if (docs >= 0) {
-                after = after.substring(0, docs).trim();
-            }
-            if (!after.isBlank()
-                    && !after.contains("Jesteś asystentem dokumentów")
-                    && !after.contains("[Styl odpowiedzi]")) {
-                return after;
-            }
-        }
-        return queryText.trim();
-    }
-
-    private static String extractGraphContext(String queryText) {
-        if (queryText == null || !queryText.contains("Pytanie użytkownika:")) {
-            return "";
-        }
-        int marker = queryText.lastIndexOf("Pytanie użytkownika:");
-        return queryText.substring(0, marker).trim();
-    }
-
-    private static String extractRetrievalQuery(String queryText) {
-        String question = extractUserQuestion(queryText);
-        return question.replaceAll("@[^\\s,\\]]+", "").trim();
     }
 
     private static double score(String value) {

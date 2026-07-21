@@ -699,6 +699,46 @@ class ChatInteractionServiceTest {
     }
 
     @Test
+    void speculativeOlekHypothesisListWithGoodSourcesIsRewrittenWithoutDroppingSources() {
+        // Live failure: sources (GRAPH_FACT paths) correct, model invents activity menu.
+        String question = "Co robi Olek na zdjęciu?";
+        String path = "dir://photos/olek.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Olek"), List.of(),
+                question, "", false, false, QueryPlan.RetrievalMode.GRAPH,
+                "Odpowiedz z grafu i fragmentów.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "=== Graf zdjęcia #1 ===\n- entity=Olek; visual_cues=[\"koszulka\"]; file=" + path,
+                        List.of(path)));
+        String speculative = """
+                Na zdjęciu Olek może robić różne rzeczy, w zależności od kontekstu. Może na przykład:
+
+                1. Pozować – uśmiechać się, robić miny lub przybierać różne pozy.
+                2. Wykonywać jakąś aktywność – np. grać w piłkę, jeździć na rowerze, czytać książkę.
+                3. Przebywać w określonym miejscu – np. na plaży, w górach, na imprezie.
+                4. Interagować z innymi – rozmawiać, śmiać się lub bawić się z przyjaciółmi.
+                5. Być uchwycony w naturalnej chwili – np. podczas jedzenia, spaceru czy odpoczynku.
+
+                Jeśli masz więcej szczegółów na temat zdjęcia, mogę spróbować bardziej precyzyjnie odpowiedzieć!
+                """;
+        Result<String> result = Result.<String>builder().content(speculative).build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "olek.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(ChatAnswerGrounding.GROUNDED_NO_DETAIL_FALLBACK, response.response());
+        assertFalse(response.response().toLowerCase().contains("pozować"));
+        assertFalse(response.response().toLowerCase().contains("może robić"));
+        assertEquals(1, response.sources().size());
+        assertEquals(path, response.sources().get(0).path());
+        assertEquals("GRAPH_FACT", response.sources().get(0).type());
+        assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
+    }
+
+    @Test
     void noCertainGraphOrSourcesStillUsesNoEvidenceDenial() {
         QueryPlan plan = new QueryPlan("Pytanie bez dowodów", List.of(), List.of(),
                 "Pytanie bez dowodów", "", false, false, QueryPlan.RetrievalMode.HYBRID,

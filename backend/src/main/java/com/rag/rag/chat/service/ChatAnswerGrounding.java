@@ -99,6 +99,14 @@ public final class ChatAnswerGrounding {
                 "więcej szczegółów na jego temat",
                 "wiecej szczegolow na jego temat",
                 "więcej szczegółów na jej temat",
+                "więcej szczegółów na temat zdjęcia",
+                "wiecej szczegolow na temat zdjecia",
+                "jeśli masz więcej szczegółów",
+                "jesli masz wiecej szczegolow",
+                "jeśli masz wiecej szczegółów",
+                "jesli masz więcej szczegółów",
+                "mogę spróbować bardziej precyzyjnie",
+                "moge sprobowac bardziej precyzyjnie",
                 "aby opisać zdjęcie",
                 "aby opisac zdjecie",
                 "żeby opisać zdjęcie",
@@ -301,6 +309,83 @@ public final class ChatAnswerGrounding {
     }
 
     /**
+     * True when the model invents a multi-option "what they might be doing" menu
+     * instead of answering from provided graph/embedding evidence.
+     * Answer shape only — no user-question phrase routing (AGENTS.md).
+     */
+    public static boolean isSpeculativeHypothesisList(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+        String lower = answer.toLowerCase(Locale.ROOT);
+
+        // Strong single signals from the known failure mode (Olek-style).
+        if (containsAny(lower,
+                "może robić różne rzeczy",
+                "moze robic rozne rzeczy",
+                "może robić rozne rzeczy",
+                "moze robić różne rzeczy",
+                "could be doing various things",
+                "might be doing various things",
+                "can be doing various things")) {
+            return true;
+        }
+
+        boolean hedging = containsAny(lower,
+                "w zależności od kontekstu",
+                "w zaleznosci od kontekstu",
+                "zależnie od kontekstu",
+                "zaleznie od kontekstu",
+                "depending on the context",
+                "depending on context",
+                "może na przykład",
+                "moze na przyklad",
+                "na przykład:",
+                "na przyklad:",
+                "for example:");
+        boolean numberedMenu = hasNumberedOptionMenu(lower);
+        boolean asksForMore = containsAny(lower,
+                "jeśli masz więcej szczegółów",
+                "jesli masz wiecej szczegolow",
+                "jeśli masz wiecej szczegółów",
+                "jesli masz więcej szczegółów",
+                "jeśli podasz więcej",
+                "jesli podasz wiecej",
+                "mogę spróbować bardziej precyzyjnie",
+                "moge sprobowac bardziej precyzyjnie",
+                "mogę bardziej precyzyjnie",
+                "moge bardziej precyzyjnie",
+                "if you have more details",
+                "if you provide more details",
+                "if you give me more details");
+        // Typical speculative activity catalogue (need several to avoid false positives).
+        int activityHits = 0;
+        if (containsAny(lower, "pozować", "pozowac", "posing")) {
+            activityHits++;
+        }
+        if (containsAny(lower, "grać w piłkę", "grac w pilke", "jeździć na rowerze", "jezdzic na rowerze")) {
+            activityHits++;
+        }
+        if (containsAny(lower, "na plaży", "na plazy", "w górach", "w gorach", "na imprezie")) {
+            activityHits++;
+        }
+        if (containsAny(lower, "interagować", "interagowac", "bawić się z", "bawic sie z")) {
+            activityHits++;
+        }
+        if (containsAny(lower, "uchwycony w naturalnej", "naturalnej chwili")) {
+            activityHits++;
+        }
+
+        if (hedging && (numberedMenu || asksForMore || activityHits >= 2)) {
+            return true;
+        }
+        if (numberedMenu && asksForMore) {
+            return true;
+        }
+        return numberedMenu && activityHits >= 3;
+    }
+
+    /**
      * True when the model answer must not be shown as-is despite certain evidence.
      */
     public static boolean shouldRewriteUngroundedAnswer(String modelAnswer, boolean entityScoped) {
@@ -308,6 +393,7 @@ public final class ChatAnswerGrounding {
                 || isEmptyOrGreetingNonAnswer(modelAnswer)
                 || isClarificationSeekingNonAnswer(modelAnswer)
                 || isEnglishAssistantNonAnswer(modelAnswer)
+                || isSpeculativeHypothesisList(modelAnswer)
                 || (entityScoped && isGeneralKnowledgeEssay(modelAnswer));
     }
 
@@ -341,6 +427,11 @@ public final class ChatAnswerGrounding {
             boolean entityScoped) {
         if (!hasCertainEvidenceOrSources) {
             return modelAnswer == null ? "" : modelAnswer;
+        }
+        // Speculative multi-option menus never leave the system when evidence exists —
+        // prefer an explicit no-detail notice over inventing activities.
+        if (isSpeculativeHypothesisList(modelAnswer)) {
+            return GROUNDED_NO_DETAIL_FALLBACK;
         }
         if (!shouldRewriteUngroundedAnswer(modelAnswer, entityScoped)) {
             return modelAnswer == null ? "" : modelAnswer;
@@ -433,5 +524,19 @@ public final class ChatAnswerGrounding {
             }
         }
         return false;
+    }
+
+    /** Numbered 1./2. (optionally 3.) option menu — common LLM hedge shape. */
+    private static boolean hasNumberedOptionMenu(String lower) {
+        if (lower == null || lower.isBlank()) {
+            return false;
+        }
+        boolean one = lower.contains("\n1.") || lower.contains("\n1)")
+                || lower.contains("1. ") || lower.contains("1) ");
+        boolean two = lower.contains("\n2.") || lower.contains("\n2)")
+                || lower.contains("2. ") || lower.contains("2) ");
+        boolean three = lower.contains("\n3.") || lower.contains("\n3)")
+                || lower.contains("3. ") || lower.contains("3) ");
+        return one && two && three;
     }
 }

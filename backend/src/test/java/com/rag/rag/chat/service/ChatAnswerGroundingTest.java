@@ -230,4 +230,48 @@ class ChatAnswerGroundingTest {
         assertTrue(ChatAnswerGrounding.isEnglishAssistantNonAnswer(
                 "It seems like you might be referring to something specific. Let me know so I can help!"));
     }
+
+    @Test
+    void detectsOlekStyleSpeculativeHypothesisList() {
+        String olek = """
+                Na zdjęciu Olek może robić różne rzeczy, w zależności od kontekstu. Może na przykład:
+
+                1. Pozować – uśmiechać się, robić miny lub przybierać różne pozy.
+                2. Wykonywać jakąś aktywność – np. grać w piłkę, jeździć na rowerze, czytać książkę.
+                3. Przebywać w określonym miejscu – np. na plaży, w górach, na imprezie.
+                4. Interagować z innymi – rozmawiać, śmiać się lub bawić się z przyjaciółmi.
+                5. Być uchwycony w naturalnej chwili – np. podczas jedzenia, spaceru czy odpoczynku.
+
+                Jeśli masz więcej szczegółów na temat zdjęcia, mogę spróbować bardziej precyzyjnie odpowiedzieć!
+                """;
+        assertTrue(ChatAnswerGrounding.isSpeculativeHypothesisList(olek));
+        assertTrue(ChatAnswerGrounding.shouldRewriteUngroundedAnswer(olek, true));
+        assertTrue(ChatAnswerGrounding.shouldRewriteUngroundedAnswer(olek, false));
+
+        String good = "Olek stoi w czerwonej koszulce obok Igora.";
+        assertFalse(ChatAnswerGrounding.isSpeculativeHypothesisList(good));
+        assertFalse(ChatAnswerGrounding.shouldRewriteUngroundedAnswer(good, true));
+    }
+
+    @Test
+    void speculativeHypothesisWithEvidenceBecomesNoDetailFallback() {
+        String olek = """
+                Na zdjęciu Olek może robić różne rzeczy, w zależności od kontekstu. Może na przykład:
+
+                1. Pozować – uśmiechać się, robić miny lub przybierać różne pozy.
+                2. Wykonywać jakąś aktywność – np. grać w piłkę, jeździć na rowerze, czytać książkę.
+                3. Przebywać w określonym miejscu – np. na plaży, w górach, na imprezie.
+
+                Jeśli masz więcej szczegółów na temat zdjęcia, mogę spróbować bardziej precyzyjnie odpowiedzieć!
+                """;
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                olek, List.of("Olek"), true, true);
+        assertEquals(ChatAnswerGrounding.GROUNDED_NO_DETAIL_FALLBACK, resolved);
+        assertFalse(resolved.toLowerCase().contains("pozować"));
+        assertFalse(resolved.toLowerCase().contains("może robić"));
+
+        // Without certain evidence, leave prose as-is (caller handles NO_EVIDENCE separately).
+        assertEquals(olek, ChatAnswerGrounding.resolveGroundedAnswer(
+                olek, List.of("Olek"), false, true));
+    }
 }
