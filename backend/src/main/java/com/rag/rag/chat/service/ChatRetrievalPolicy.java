@@ -46,18 +46,14 @@ public final class ChatRetrievalPolicy {
     }
 
     /**
-     * Prefer immutable claim prose over free-form LLM when the graph already has claim statements.
-     * GRAPH always; also scoped file turns (any mode) so open "co wiesz o @plik" cannot invent essays.
+     * Whether to short-circuit to immutable claim prose instead of free-form LLM.
+     * <p>On the free-form answers branch this is always {@code false}: the model receives
+     * the full graph dump and formulates natural Polish itself. Claim selection remains
+     * available for VISUAL_VALIDATION via {@code VerifiedVisualAnswerService}.
+     * Post-answer grounding still rewrites encyclopedic essays / capability denials.
      */
     public static boolean preferClaimAnswer(QueryPlan plan, GraphEvidenceResult evidence) {
-        if (plan == null || evidence == null
-                || evidence.claims() == null || evidence.claims().isEmpty()) {
-            return false;
-        }
-        if (plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH) {
-            return true;
-        }
-        return plan.fileScope() != null && !plan.fileScope().isEmpty();
+        return false;
     }
 
     public static boolean requiresJointFileEvidence(QueryPlan plan) {

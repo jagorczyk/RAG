@@ -755,8 +755,8 @@ class ChatInteractionServiceTest {
     }
 
     @Test
-    void fileScopedHybridWithClaimsUsesImmutableClaimProse() {
-        // Open @file on HYBRID must not free-form invent; claims win first.
+    void fileScopedHybridWithClaimsUsesFreeFormLlmFromFullGraph() {
+        // Free-form branch: claims are in the graph dump; LLM formulates, not claim composer.
         String question = "co wiesz o @scene.jpg";
         String path = "dir://photos/scene.jpg";
         GroundedVisualClaim claim = new GroundedVisualClaim(
@@ -768,19 +768,22 @@ class ChatInteractionServiceTest {
         when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of(path));
         when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
                 .thenReturn(new GraphEvidenceResult(
-                        "=== Zdjęcie 1 ===\nUczestnicy: Igor",
+                        "=== Zdjęcie 1 ===\nUczestnicy: Igor\nIgor: czarna koszulka",
                         List.of(path),
                         List.of(claim)));
-        when(claimAnswerComposer.answerFromClaims(anyString(), anyList(), anyList()))
-                .thenReturn(new ClaimAnswerComposer.ClaimAnswerResult(
-                        "Igor ma czarną koszulkę.", List.of("F-1"), List.of(path), true));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Igor"));
+        String freeform = "Na zdjęciu widać Igora w czarnej koszulce.";
+        when(chatAiService.answer(eq(chatId), anyString()))
+                .thenReturn(Result.<String>builder().content(freeform).build());
         when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
                 .thenReturn(new SourceDto(path, "scene.jpg", 1.0, null, "GRAPH_FACT"));
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
 
-        assertEquals("Igor ma czarną koszulkę.", response.response());
-        verify(chatAiService, never()).answer(any(), anyString());
+        assertEquals(freeform, response.response());
+        verify(chatAiService).answer(eq(chatId), anyString());
+        verify(claimAnswerComposer, never()).answerFromClaims(anyString(), anyList(), anyList());
         assertEquals(1, response.sources().size());
         assertEquals(path, response.sources().get(0).path());
     }
@@ -828,7 +831,8 @@ class ChatInteractionServiceTest {
     }
 
     @Test
-    void graphClaimSelectAnswersWithoutFreeFormLlm() {
+    void graphPathUsesFreeFormLlmWithFullGraphEvenWhenClaimsExist() {
+        // Free-form branch: GRAPH with claims still goes to answer LLM (full dump in prompt).
         String question = "Co trzyma Olek?";
         String path = "dir://witaj/20230424_145146.jpg";
         GroundedVisualClaim claim = new GroundedVisualClaim(
@@ -839,22 +843,29 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
         when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
                 .thenReturn(new GraphEvidenceResult(
-                        "=== Zdjęcie 1 ===\nUczestnicy: Olek, Bartek",
+                        "=== Zdjęcie 1 ===\nUczestnicy: Olek, Bartek\nOlek trzyma nóż",
                         List.of(path),
                         List.of(claim)));
-        when(claimAnswerComposer.answerFromClaims(anyString(), anyList(), anyList()))
-                .thenReturn(new ClaimAnswerComposer.ClaimAnswerResult(
-                        "Olek trzyma nóż.", List.of("F-1"), List.of(path), true));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Olek", "Bartek"));
+        String freeform = "Olek trzyma nóż; obok niego jest Bartek.";
+        when(chatAiService.answer(eq(chatId), anyString()))
+                .thenReturn(Result.<String>builder().content(freeform).build());
         when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
                 .thenReturn(new SourceDto(path, "20230424_145146.jpg", 1.0, null, "GRAPH_FACT"));
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
 
-        assertEquals("Olek trzyma nóż.", response.response());
+        assertEquals(freeform, response.response());
         assertEquals(1, response.sources().size());
         assertEquals(path, response.sources().get(0).path());
         assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
-        verify(chatAiService, never()).answer(any(), anyString());
+        verify(chatAiService).answer(eq(chatId), anyString());
+        verify(claimAnswerComposer, never()).answerFromClaims(anyString(), anyList(), anyList());
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
+        assertTrue(promptCaptor.getValue().contains("Pełny graf wiedzy"));
+        assertTrue(promptCaptor.getValue().contains("Olek trzyma nóż"));
     }
 
     @Test

@@ -44,11 +44,14 @@ public interface ChatService {
             napisz krótko, że brak potwierdzonych szczegółów — bez hipotez.
             Gdy brakuje istotnych informacji, odpowiedz dokładnie:
             "Nie znaleziono informacji w dokumentach."
-            Odpowiedź ma być konkretna i naturalna: zwykle 1–3 zdania.
+            Odpowiedź ma być konkretna i naturalna: zwykle kilka zwięzłych zdań; przy
+            otwartych pytaniach możesz rozwinąć opis, o ile każdy szczegół pochodzi z dowodów.
             Gdy pytanie dotyczy ubioru, kolorów, włosów, wyglądu, czynności lub sceny,
             podaj te szczegóły wprost z dostarczonych dowodów (graf, visual_cues, fragmenty).
             Nie ograniczaj się do samego stwierdzenia obecności osoby, jeśli w kontekście
             są bogatsze szczegóły odpowiadające na pytanie.
+            Formułuj wypowiedź własnymi słowami na podstawie pełnego przepływu dowodów —
+            nie cytuj mechanicznie claimów ani JSON; łącz fakty w spójną odpowiedź.
             Nie dodawaj nieproszonych dygresji i nie zgaduj poza dowodami.
             Nie moralizuj o bezpieczeństwie, policji ani „projektach artystycznych” —
             jeśli w dowodach widać przedmiot lub czynność, opisz to krótko z grafu.

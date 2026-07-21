@@ -152,25 +152,25 @@ class ChatRetrievalPolicyTest {
     }
 
     @Test
-    void preferClaimAnswerForGraphOrFileScopedClaims() {
+    void preferClaimAnswerDisabledOnFreeformBranch() {
+        // Free-form branch: full graph → LLM formulates; claim short-circuit off.
         GraphEvidenceResult withClaims = new GraphEvidenceResult(
                 "ctx", List.of("dir://a.jpg"),
                 List.of(new com.rag.rag.knowledge.graph.GroundedVisualClaim(
                         "F-1", null, "Igor", "stoi", "", "Igor stoi.", "dir://a.jpg",
                         java.math.BigDecimal.ONE, "VISION", "face_1")));
-        GraphEvidenceResult emptyClaims = new GraphEvidenceResult("ctx", List.of("dir://a.jpg"));
 
         QueryPlan graph = new QueryPlan("q", List.of("Igor"), List.of(), "q", "", false, false,
                 QueryPlan.RetrievalMode.GRAPH, "instr");
-        assertTrue(ChatRetrievalPolicy.preferClaimAnswer(graph, withClaims));
-        assertFalse(ChatRetrievalPolicy.preferClaimAnswer(graph, emptyClaims));
+        assertFalse(ChatRetrievalPolicy.preferClaimAnswer(graph, withClaims));
 
         QueryPlan hybridScoped = new QueryPlan("q", List.of(), List.of("dir://a.jpg"), "q", "", false, false,
                 QueryPlan.RetrievalMode.HYBRID, "instr");
-        assertTrue(ChatRetrievalPolicy.preferClaimAnswer(hybridScoped, withClaims));
+        assertFalse(ChatRetrievalPolicy.preferClaimAnswer(hybridScoped, withClaims));
 
         QueryPlan hybridOpen = new QueryPlan("q", List.of(), List.of(), "q", "", false, false,
                 QueryPlan.RetrievalMode.HYBRID, "instr");
         assertFalse(ChatRetrievalPolicy.preferClaimAnswer(hybridOpen, withClaims));
+        assertFalse(ChatRetrievalPolicy.preferClaimAnswer(null, null));
     }
 }

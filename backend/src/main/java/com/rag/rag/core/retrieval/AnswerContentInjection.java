@@ -63,7 +63,7 @@ public final class AnswerContentInjection {
         // Style rules live in ChatService.ANSWER_INSTRUCTIONS — keep injection to document body only.
         promptBuilder.append("Graf wiedzy (jeśli podany) ma pierwszeństwo przed fragmentami poniżej. ")
                 .append("Używaj wyłącznie dostarczonych dowodów. ")
-                .append("Odpowiedź po polsku, konkretna, zwykle 1–3 zdania. ")
+                .append("Odpowiedź po polsku, naturalna i swobodna — sformułuj własnymi słowami. ")
                 .append("Nie twórz list hipotez ani menu możliwości. ")
                 .append("Nie moralizuj o przedmiotach ze zdjęć (np. nóż) — opisz tylko to, co widać w dowodach. ")
                 .append("Nie wypisuj ścieżek ani list źródeł.\n\n")

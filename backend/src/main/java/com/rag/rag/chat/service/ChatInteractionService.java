@@ -33,7 +33,8 @@ import java.util.regex.Pattern;
 
 /**
  * Executes QueryPlanner output under AGENTS.md:
- * VISUAL_VALIDATION → claim answers; GRAPH (people) / HYBRID → AI from evidence.
+ * VISUAL_VALIDATION → claim answers; GRAPH (people) / HYBRID → free-form AI from
+ * the full graph dump (claims are context, not the answer prose on freeform branch).
  * No phrase-based question routing in this class.
  */
 @Slf4j
@@ -118,22 +119,19 @@ public class ChatInteractionService {
         boolean graphMissFallback = ChatRetrievalPolicy.shouldFallbackFromGraph(plan, graphEvidence);
         QueryPlan.RetrievalMode effectiveMode = ChatRetrievalPolicy.effectiveRetrievalMode(plan, graphEvidence);
 
-        // Evidence-first: immutable claims before free-form LLM (GRAPH, or any mode with fileScope).
-        if (!graphMissFallback
-                && claimAnswerComposer != null
-                && ChatRetrievalPolicy.preferClaimAnswer(plan, graphEvidence)) {
-            MessageResponse claimResponse = tryClaimGraphAnswer(chatId, plan, graphEvidence, effectiveMode);
-            if (claimResponse != null) {
-                return claimResponse;
-            }
-        }
+        // Free-form path: full graph dump (when present) goes to the answer LLM, which
+        // formulates natural Polish. Immutable claim short-circuit is disabled on this branch
+        // (preferClaimAnswer → false). Post-answer grounding still blocks essays/denials.
 
         String graphContext = graphEvidence.context();
         String questionForModel = answerFacingQuestion(plan);
         String originalQuestion = plan.question() == null ? "" : plan.question().trim();
         String recentTurns = compactConversationContext(conversationContext);
         String answerStyle = """
-                Odpowiedź po polsku: konkretna, naturalna, zwykle 1–3 zdania.
+                Odpowiedź po polsku: naturalna i swobodna, zwykle kilka zwięzłych zdań
+                (możesz rozwinąć, gdy pytanie jest otwarte — np. „co wiesz o…”, „opisz…”).
+                Masz pełny przepływ grafu/retrieval: sam wybierz istotne fakty i sformułuj
+                płynną wypowiedź (nie kopiuj claimów dosłownie jak listy, tylko gdy pasuje).
                 Wykorzystaj z kontekstu wszystko, o co pyta użytkownik: ubiór, kolory, włosy,
                 wygląd, czynności, relacje przestrzenne, scenę — bez zgadywania poza dowodami.
                 Zakaz esejów encyklopedycznych, definicji pojęć i wiedzy spoza dowodów.
@@ -155,8 +153,8 @@ public class ChatInteractionService {
 
                     Pytanie użytkownika: %s
                     """.formatted(plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
-        } else if (effectiveMode == QueryPlan.RetrievalMode.GRAPH && !graphContext.isBlank()) {
-            // Full graph snapshot for relevant photos — model selects facts and answers.
+        } else if (!graphContext.isBlank()) {
+            // Full graph snapshot for any mode with evidence — model selects facts and formulates.
             prompt = """
                     [Pełny graf wiedzy dla wskazanych zdjęć]
                     %s
@@ -166,14 +164,14 @@ public class ChatInteractionService {
                     %s
                     Powyżej masz kompletny przepływ grafu (uczestnicy, visual_cues, obiekty, relacje,
                     fakty, scena, claimy). Sam zdecyduj, które elementy odpowiadają na pytanie,
-                    i sformułuj naturalną odpowiedź po polsku. Nie zgaduj poza tym grafem.
+                    i sformułuj naturalną, swobodną odpowiedź po polsku. Nie zgaduj poza tym grafem.
                     Fragmenty retrieval (jeśli są) traktuj jako uzupełnienie tych samych plików.
                     %s
                     Oryginalne brzmienie użytkownika: %s
 
                     Pytanie użytkownika: %s
                     """.formatted(graphContext, plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
-        } else if (graphContext.isBlank()) {
+        } else {
             prompt = """
                     [Instrukcja odpowiedzi]
                     %s
@@ -184,20 +182,6 @@ public class ChatInteractionService {
 
                     Pytanie użytkownika: %s
                     """.formatted(plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
-        } else {
-            prompt = """
-                    [Kontekst zweryfikowany]
-                    %s
-
-                    [Instrukcja odpowiedzi]
-                    %s
-                    %s
-                    Używaj wyłącznie powyższego kontekstu i fragmentów dokumentów z retrieval — nie zgaduj.
-                    %s
-                    Oryginalne brzmienie użytkownika: %s
-
-                    Pytanie użytkownika: %s
-                    """.formatted(graphContext, plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
         }
 
         // Named people / fileScope: restrict hybrid to proven files. Keep scoped hybrid on GRAPH
@@ -525,8 +509,9 @@ public class ChatInteractionService {
         return ChatService.ANSWER_INSTRUCTIONS + """
 
                 [Styl odpowiedzi]
-                Odpowiadaj naturalnie po polsku (1–3 zdania). Podaj żądane szczegóły z dowodów
-                (ubiór, wygląd, czynności, relacje, scena). Bez pewności i listy plików.
+                Odpowiadaj naturalnie i swobodnie po polsku. Podaj żądane szczegóły z dowodów
+                (ubiór, wygląd, czynności, relacje, scena). Sam ułóż płynną wypowiedź z pełnego
+                kontekstu. Bez pewności i listy plików.
 
                 """ + context;
     }
