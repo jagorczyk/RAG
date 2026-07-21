@@ -21,6 +21,7 @@ public record QueryPlan(
         String answerInstruction
 ) {
     public enum RetrievalMode { DOCUMENT, GRAPH, HYBRID, VISUAL_VALIDATION }
+    public enum VisualExecutionMode { FILE_QA, ENTITY_SUMMARY, VISUAL_SEARCH }
 
     public QueryPlan {
         question = question == null ? "" : question;
@@ -53,6 +54,19 @@ public record QueryPlan(
     public static QueryPlan fallback(String question, List<String> entities) {
         return new QueryPlan(question, List.of(), List.of(), question, question, false, false,
                 RetrievalMode.HYBRID, EntityMatchMode.ANY,
-                "One short Polish sentence only; do not describe appearance or list files.");
+                "Answer requested details briefly in Polish; do not list files.");
+    }
+
+    /** Applies a server-resolved technical file scope without asking the planner to reproduce paths. */
+    public QueryPlan withFileScope(List<String> resolvedFileScope) {
+        return new QueryPlan(question, entities, resolvedFileScope, retrievalQuery, condition,
+                visualCondition, ambiguous, retrievalMode, entityMatchMode, answerInstruction);
+    }
+
+    /** Technical visual operation selected only from resolved plan fields, never question phrases. */
+    public VisualExecutionMode visualExecutionMode() {
+        if (!fileScope.isEmpty()) return VisualExecutionMode.FILE_QA;
+        if (!entities.isEmpty()) return VisualExecutionMode.ENTITY_SUMMARY;
+        return VisualExecutionMode.VISUAL_SEARCH;
     }
 }

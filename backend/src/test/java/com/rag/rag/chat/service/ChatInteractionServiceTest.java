@@ -65,6 +65,9 @@ class ChatInteractionServiceTest {
                 .thenReturn(ClaimAnswerComposer.ClaimAnswerResult.empty());
         lenient().when(claimAnswerComposer.answerFromClaims(anyString(), anyList()))
                 .thenReturn(ClaimAnswerComposer.ClaimAnswerResult.empty());
+        // Default: no forced index block unless a test stubs it.
+        lenient().when(ingestionService.formatEmbeddingContextForPaths(anyList())).thenReturn("");
+        lenient().when(ingestionService.embeddingTextsForPaths(anyList())).thenReturn(List.of());
     }
 
     @Test
@@ -240,8 +243,10 @@ class ChatInteractionServiceTest {
         verify(ingestionService).createGraphFactSourceDto(eq("dir://a.jpg"), any(), anyDouble());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
-        assertTrue(promptCaptor.getValue().contains("[Pełny graf wiedzy dla wskazanych zdjęć]"));
-        assertTrue(promptCaptor.getValue().contains("Sam zdecyduj") || promptCaptor.getValue().contains("kompletny przepływ grafu"));
+        assertTrue(promptCaptor.getValue().contains("Pełny opis wskazanych zdjęć")
+                || promptCaptor.getValue().contains("Pełny graf wiedzy"));
+        assertTrue(promptCaptor.getValue().contains("Sam zdecyduj")
+                || promptCaptor.getValue().contains("kompletny przepływ"));
     }
 
     @Test
@@ -755,6 +760,60 @@ class ChatInteractionServiceTest {
     }
 
     @Test
+    void filePinnedInjectsEmbeddingIndexIntoPromptWhenFreeFormPathRuns() {
+        // Live: user marks @photo; short query misses hybrid recall; LLM must still get image_knowledge JSON.
+        String question = "co wiesz o @20230502_094428.jpg";
+        String path = "dir://photos/20230502_094428.jpg";
+        String indexJson = """
+                {
+                  "type": "image_knowledge",
+                  "file": "20230502_094428.jpg",
+                  "path": "dir://photos/20230502_094428.jpg",
+                  "scene": { "summary": "dwie osoby w parku przy ławce" },
+                  "participants": [{ "name": "Igor", "appearance": ["czerwona koszulka"] }]
+                }
+                """;
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(path),
+                question, "", false, false, QueryPlan.RetrievalMode.HYBRID,
+                "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.resolveExplicitFileScope(question)).thenReturn(List.of(path));
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "=== Zdjęcie 1 ===\n(brak szczegółów grafu dla tego pliku)",
+                        List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Igor"));
+        when(ingestionService.formatEmbeddingContextForPaths(eq(List.of(path))))
+                .thenReturn("=== Opis z indeksu wiedzy (zdjęcie 1) ===\n" + indexJson);
+        String freeform = "Na zdjęciu widać Igora w czerwonej koszulce w parku przy ławce.";
+        when(chatAiService.answer(eq(chatId), anyString()))
+                .thenReturn(Result.<String>builder().content(freeform).build());
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "20230502_094428.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(freeform, response.response());
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
+        String prompt = promptCaptor.getValue();
+        assertTrue(prompt.contains("Opis z indeksu wiedzy"), "prompt must include forced index block");
+        assertTrue(prompt.contains("czerwona koszulka") || prompt.contains("image_knowledge"));
+        assertTrue(prompt.contains("Pełny opis wskazanych zdjęć"));
+        assertEquals(1, response.sources().size());
+    }
+
+    @Test
+    void retrievalQueryForPlanAppendsFileNamesFromScope() {
+        QueryPlan plan = new QueryPlan("co wiesz o tym", List.of(), List.of("dir://photos/a.jpg"),
+                "co wiesz o tym", "", false, false, QueryPlan.RetrievalMode.HYBRID, "");
+        String q = ChatInteractionService.retrievalQueryForPlan(plan);
+        assertTrue(q.contains("co wiesz o tym"));
+        assertTrue(q.contains("a.jpg"));
+    }
+
+    @Test
     void fileScopedHybridWithClaimsUsesFreeFormLlmFromFullGraph() {
         // Free-form branch: claims are in the graph dump; LLM formulates, not claim composer.
         String question = "co wiesz o @scene.jpg";
@@ -773,6 +832,7 @@ class ChatInteractionServiceTest {
                         List.of(claim)));
         when(graphQueryService.certainParticipantNamesForPaths(anyList()))
                 .thenReturn(List.of("Igor"));
+        lenient().when(ingestionService.formatEmbeddingContextForPaths(anyList())).thenReturn("");
         String freeform = "Na zdjęciu widać Igora w czarnej koszulce.";
         when(chatAiService.answer(eq(chatId), anyString()))
                 .thenReturn(Result.<String>builder().content(freeform).build());
@@ -864,7 +924,8 @@ class ChatInteractionServiceTest {
         verify(claimAnswerComposer, never()).answerFromClaims(anyString(), anyList(), anyList());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
-        assertTrue(promptCaptor.getValue().contains("Pełny graf wiedzy"));
+        assertTrue(promptCaptor.getValue().contains("Pełny opis wskazanych zdjęć")
+                || promptCaptor.getValue().contains("Pełny graf wiedzy"));
         assertTrue(promptCaptor.getValue().contains("Olek trzyma nóż"));
     }
 

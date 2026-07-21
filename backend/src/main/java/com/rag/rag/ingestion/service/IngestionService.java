@@ -1250,6 +1250,59 @@ public class IngestionService {
         return new SourceDto(source.path(), source.fileName(), source.score(), source.base64(), "GRAPH_FACT");
     }
 
+    /**
+     * Loads stored embedding document text for the given library paths (exact match).
+     * Used when the user pins {@code @file} so the answer LLM always receives the image
+     * knowledge JSON even if vector/lexical retrieval would miss it for a short query.
+     */
+    public List<String> embeddingTextsForPaths(List<String> paths) {
+        if (paths == null || paths.isEmpty() || jdbcTemplate == null) {
+            return List.of();
+        }
+        List<String> texts = new ArrayList<>();
+        for (String path : paths) {
+            if (path == null || path.isBlank()) {
+                continue;
+            }
+            try {
+                List<String> chunks = jdbcTemplate.queryForList(
+                        "SELECT text FROM embeddings WHERE metadata->>'path' = ?",
+                        String.class,
+                        path.trim());
+                for (String chunk : chunks) {
+                    if (chunk == null || chunk.isBlank()) {
+                        continue;
+                    }
+                    texts.add(com.rag.rag.knowledge.graph.ImageEmbeddingDocumentBuilder
+                            .formatReadable(chunk.trim()));
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load embedding text for {}: {}", path, e.getMessage());
+            }
+        }
+        return List.copyOf(texts);
+    }
+
+    /**
+     * Human-readable block of embedding documents for forced prompt injection on fileScope turns.
+     */
+    public String formatEmbeddingContextForPaths(List<String> paths) {
+        List<String> texts = embeddingTextsForPaths(paths);
+        if (texts.isEmpty()) {
+            return "";
+        }
+        StringBuilder block = new StringBuilder();
+        int index = 1;
+        for (String text : texts) {
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            block.append("=== Opis z indeksu wiedzy (zdjęcie ").append(index++).append(") ===\n");
+            block.append(text.trim()).append('\n');
+        }
+        return block.toString().trim();
+    }
+
     public List<SourceDto> getSources(Result<String> result) {
         if (result.sources() == null) {
             return List.of();

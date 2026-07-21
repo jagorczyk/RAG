@@ -85,8 +85,9 @@ public class ChatInteractionService {
             saveAiMessage(chatId, denial, List.of(), List.of(), "NO_EVIDENCE", true);
             return new MessageResponse(denial, List.of(), true, List.of(), "NO_EVIDENCE");
         }
-        log.info("Dynamic query plan: mode={}, visual={}, entities={}, ambiguous={}",
-                plan.retrievalMode(), plan.visualCondition(), plan.entities(), plan.ambiguous());
+        log.info("Dynamic query plan: mode={}, visual={}, entities={}, ambiguous={}, fileScope={}",
+                plan.retrievalMode(), plan.visualCondition(), plan.entities(), plan.ambiguous(),
+                plan.fileScope());
 
         if (plan.visualCondition() && dynamicVisualMatcher != null) {
             // Persist hard visual denial only when text/graph fallback is not allowed.
@@ -123,15 +124,32 @@ public class ChatInteractionService {
         // formulates natural Polish. Immutable claim short-circuit is disabled on this branch
         // (preferClaimAnswer → false). Post-answer grounding still blocks essays/denials.
 
-        String graphContext = graphEvidence.context();
+        String graphContext = graphEvidence.context() == null ? "" : graphEvidence.context();
+        // Pinned @file: always force-load embedding JSON for those paths. Short queries like
+        // "co wiesz o @x.jpg" often miss vector/lexical recall even when the index has a full photo dump.
+        List<String> fileScope = plan.fileScope() == null ? List.of() : plan.fileScope();
+        if (!fileScope.isEmpty() && ingestionService != null) {
+            String indexBlock = ingestionService.formatEmbeddingContextForPaths(fileScope);
+            if (indexBlock != null && !indexBlock.isBlank()) {
+                graphContext = graphContext.isBlank()
+                        ? indexBlock
+                        : graphContext + "\n\n" + indexBlock;
+                log.info("Injected embedding index block for {} fileScope path(s), chars={}",
+                        fileScope.size(), indexBlock.length());
+            } else {
+                log.warn("No embedding index text for fileScope paths={}", fileScope);
+            }
+        }
         String questionForModel = answerFacingQuestion(plan);
         String originalQuestion = plan.question() == null ? "" : plan.question().trim();
         String recentTurns = compactConversationContext(conversationContext);
         String answerStyle = """
                 Odpowiedź po polsku: naturalna i swobodna, zwykle kilka zwięzłych zdań
                 (możesz rozwinąć, gdy pytanie jest otwarte — np. „co wiesz o…”, „opisz…”).
-                Masz pełny przepływ grafu/retrieval: sam wybierz istotne fakty i sformułuj
-                płynną wypowiedź (nie kopiuj claimów dosłownie jak listy, tylko gdy pasuje).
+                Masz pełny przepływ grafu i/lub indeksu wiedzy o wskazanym zdjęciu: sam wybierz
+                istotne fakty i sformułuj płynną wypowiedź (nie kopiuj claimów dosłownie jak listy).
+                Gdy użytkownik pyta o wskazane zdjęcie (@plik), opisz je z dostarczonego kontekstu
+                (scena, uczestnicy, wygląd, ubiór, czynności) — nie odsyłaj pytania z powrotem.
                 Wykorzystaj z kontekstu wszystko, o co pyta użytkownik: ubiór, kolory, włosy,
                 wygląd, czynności, relacje przestrzenne, scenę — bez zgadywania poza dowodami.
                 Zakaz esejów encyklopedycznych, definicji pojęć i wiedzy spoza dowodów.
@@ -140,7 +158,7 @@ public class ChatInteractionService {
                 """;
 
         String prompt;
-        if (graphMissFallback) {
+        if (graphMissFallback && graphContext.isBlank()) {
             // GRAPH without certain people evidence — hybrid only; refuse if retrieval empty.
             prompt = """
                     [Instrukcja odpowiedzi]
@@ -154,18 +172,18 @@ public class ChatInteractionService {
                     Pytanie użytkownika: %s
                     """.formatted(plan.answerInstruction(), answerStyle, recentTurns, originalQuestion, questionForModel);
         } else if (!graphContext.isBlank()) {
-            // Full graph snapshot for any mode with evidence — model selects facts and formulates.
+            // Full graph + forced index dump — model selects facts and formulates.
             prompt = """
-                    [Pełny graf wiedzy dla wskazanych zdjęć]
+                    [Pełny opis wskazanych zdjęć — graf i indeks wiedzy]
                     %s
 
                     [Instrukcja odpowiedzi]
                     %s
                     %s
-                    Powyżej masz kompletny przepływ grafu (uczestnicy, visual_cues, obiekty, relacje,
-                    fakty, scena, claimy). Sam zdecyduj, które elementy odpowiadają na pytanie,
-                    i sformułuj naturalną, swobodną odpowiedź po polsku. Nie zgaduj poza tym grafem.
-                    Fragmenty retrieval (jeśli są) traktuj jako uzupełnienie tych samych plików.
+                    Powyżej masz kompletny przepływ (uczestnicy, visual_cues, obiekty, relacje,
+                    fakty, scena, indeks image_knowledge). Sam zdecyduj, które elementy odpowiadają
+                    na pytanie, i sformułuj naturalną, swobodną odpowiedź po polsku. Nie zgaduj poza
+                    tym kontekstem. Fragmenty retrieval (jeśli są) traktuj jako uzupełnienie.
                     %s
                     Oryginalne brzmienie użytkownika: %s
 
@@ -188,7 +206,8 @@ public class ChatInteractionService {
         // so appearance/clothing details from embeddings can answer open questions.
         List<String> retrievalScope = ChatRetrievalPolicy.retrievalScope(plan, graphEvidence);
         RetrievalPathScope.set(retrievalScope);
-        RetrievalQueryContext.set(plan.retrievalQuery());
+        // Include bare filenames in the retrieval query so lexical recall hits the pinned file.
+        RetrievalQueryContext.set(retrievalQueryForPlan(plan));
         RetrievalQueryContext.setDisabled(false);
         Result<String> result;
         try {
@@ -482,6 +501,39 @@ public class ChatInteractionService {
         return raw;
     }
 
+    /**
+     * Hybrid/vector query for this turn. Appends bare filenames from fileScope so lexical
+     * recall can hit the pinned photo even when the user question is only "co wiesz o @…".
+     */
+    static String retrievalQueryForPlan(QueryPlan plan) {
+        if (plan == null) {
+            return "";
+        }
+        String base = plan.retrievalQuery() == null || plan.retrievalQuery().isBlank()
+                ? (plan.question() == null ? "" : plan.question().trim())
+                : plan.retrievalQuery().trim();
+        if (plan.fileScope() == null || plan.fileScope().isEmpty()) {
+            return base;
+        }
+        StringBuilder extra = new StringBuilder();
+        for (String path : plan.fileScope()) {
+            if (path == null || path.isBlank()) {
+                continue;
+            }
+            String name = fileName(path);
+            if (name != null && !name.isBlank() && !base.toLowerCase().contains(name.toLowerCase())) {
+                if (!extra.isEmpty()) {
+                    extra.append(' ');
+                }
+                extra.append(name);
+            }
+        }
+        if (extra.isEmpty()) {
+            return base;
+        }
+        return base.isBlank() ? extra.toString() : base + " " + extra;
+    }
+
     /** Compact recent turns for the answer prompt (no phrase routing). */
     static String compactConversationContext(String conversationContext) {
         if (conversationContext == null || conversationContext.isBlank()) {
@@ -568,7 +620,10 @@ public class ChatInteractionService {
         return List.copyOf(paths.keySet());
     }
 
-    private String fileName(String path) {
+    private static String fileName(String path) {
+        if (path == null || path.isBlank()) {
+            return "";
+        }
         int separator = path.lastIndexOf('/');
         return separator >= 0 ? path.substring(separator + 1) : path;
     }
