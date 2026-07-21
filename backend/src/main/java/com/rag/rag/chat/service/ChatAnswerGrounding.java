@@ -309,6 +309,86 @@ public final class ChatAnswerGrounding {
     }
 
     /**
+     * True when the model moralizes / gives safety-policy advice instead of using photo evidence
+     * (e.g. knife → call the police). Answer shape only — not user-question routing.
+     */
+    public static boolean isSafetyOrOfftopicLecture(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+        String lower = answer.toLowerCase(Locale.ROOT);
+        boolean safetyAdvice = containsAny(lower,
+                "zachować ostrożność",
+                "zachowac ostroznosc",
+                "skontaktować się z odpowiednimi służbami",
+                "skontaktowac sie z odpowiednimi sluzbami",
+                "skontaktować się z policją",
+                "skontaktowac sie z policja",
+                "skontaktuj się z policją",
+                "skontaktuj sie z policja",
+                "zagrożenie dla czyjegoś bezpieczeństwa",
+                "zagrozenie dla czyjegos bezpieczenstwa",
+                "projekt artystyczny",
+                "sytuacja fikcyjna",
+                "używanie noża może być niebezpieczne",
+                "uzywanie noza moze byc niebezpieczne",
+                "odpowiedzialność. używanie",
+                "odpowiedzialnosc. uzywanie",
+                "call the police",
+                "contact the authorities",
+                "safety first",
+                "can be dangerous");
+        boolean helpOffer = containsAny(lower,
+                "daj mi znać, a postaram się pomóc",
+                "daj mi znac, a postaram sie pomoc",
+                "jeśli masz konkretne pytanie",
+                "jesli masz konkretne pytanie",
+                "if you have a specific question",
+                "let me know so i can help");
+        // Long moralizing lecture without photo grounding shape.
+        boolean longLecture = answer.trim().length() > 280
+                && containsAny(lower, "ostrożność", "ostroznosc", "bezpieczeństw", "bezpieczenstw",
+                "policj", "służb", "sluzb", "niebezpieczn");
+        if (safetyAdvice) {
+            return true;
+        }
+        return longLecture && helpOffer;
+    }
+
+    /**
+     * True when certain participant names exist in evidence but the model answer names none of them
+     * and instead digresses. Avoids rewriting short grounded answers that paraphrase without names.
+     */
+    public static boolean isAnswerMissingEvidenceNames(String answer, List<String> evidenceNames) {
+        if (answer == null || answer.isBlank() || evidenceNames == null || evidenceNames.isEmpty()) {
+            return false;
+        }
+        // Only flag long digressions / lectures — short factual lines may omit names intentionally.
+        if (answer.trim().length() < 120) {
+            return false;
+        }
+        String lower = answer.toLowerCase(Locale.ROOT);
+        for (String name : evidenceNames) {
+            if (name != null && !name.isBlank() && lower.contains(name.trim().toLowerCase(Locale.ROOT))) {
+                return false;
+            }
+        }
+        // Digression markers: advice, meta-help, hypothetical framing.
+        return containsAny(lower,
+                "jeśli masz na myśli",
+                "jesli masz na mysli",
+                "ważne jest",
+                "wazne jest",
+                "postaram się pomóc",
+                "postaram sie pomoc",
+                "daj mi znać",
+                "daj mi znac",
+                "if you mean",
+                "it is important",
+                "feel free to");
+    }
+
+    /**
      * True when the model invents a multi-option "what they might be doing" menu
      * instead of answering from provided graph/embedding evidence.
      * Answer shape only — no user-question phrase routing (AGENTS.md).
@@ -389,12 +469,24 @@ public final class ChatAnswerGrounding {
      * True when the model answer must not be shown as-is despite certain evidence.
      */
     public static boolean shouldRewriteUngroundedAnswer(String modelAnswer, boolean entityScoped) {
+        return shouldRewriteUngroundedAnswer(modelAnswer, entityScoped, List.of());
+    }
+
+    /**
+     * @param evidenceNames certain participant names from graph/sources; used to catch long digressions
+     *                      that never mention any of them (e.g. safety lecture on a knife photo).
+     */
+    public static boolean shouldRewriteUngroundedAnswer(
+            String modelAnswer, boolean entityScoped, List<String> evidenceNames) {
         return isCapabilityDenial(modelAnswer)
                 || isEmptyOrGreetingNonAnswer(modelAnswer)
                 || isClarificationSeekingNonAnswer(modelAnswer)
                 || isEnglishAssistantNonAnswer(modelAnswer)
                 || isSpeculativeHypothesisList(modelAnswer)
-                || (entityScoped && isGeneralKnowledgeEssay(modelAnswer));
+                || isSafetyOrOfftopicLecture(modelAnswer)
+                || isAnswerMissingEvidenceNames(modelAnswer, evidenceNames)
+                // Etymology / encyclopedic essays never answer from photo evidence (scoped or not).
+                || isGeneralKnowledgeEssay(modelAnswer);
     }
 
     /**
@@ -433,10 +525,20 @@ public final class ChatAnswerGrounding {
         if (isSpeculativeHypothesisList(modelAnswer)) {
             return GROUNDED_NO_DETAIL_FALLBACK;
         }
-        if (!shouldRewriteUngroundedAnswer(modelAnswer, entityScoped)) {
+        List<String> names = normalizeNames(recoveryNames);
+        if (!shouldRewriteUngroundedAnswer(modelAnswer, entityScoped, names)) {
             return modelAnswer == null ? "" : modelAnswer;
         }
-        List<String> names = normalizeNames(recoveryNames);
+        // Safety / digression with a multi-person roster → answer who is on the photo, not presence template.
+        if (isSafetyOrOfftopicLecture(modelAnswer) || isAnswerMissingEvidenceNames(modelAnswer, names)) {
+            if (names.isEmpty()) {
+                return GROUNDED_NO_ROSTER_FALLBACK;
+            }
+            if (!entityScoped || names.size() > 1) {
+                return formatParticipantRoster(names);
+            }
+            return formatEntityScopedPresence(names);
+        }
         if (names.isEmpty()) {
             return entityScoped ? GROUNDED_NO_DETAIL_FALLBACK : GROUNDED_NO_ROSTER_FALLBACK;
         }

@@ -54,6 +54,7 @@ class GraphQueryServiceAggregationTest {
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(service, "minFactConfidence", 0.75);
+        ReflectionTestUtils.setField(service, "maxContextFiles", 5);
         igor = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Igor").type("PERSON").ownerId(ownerId).build();
         anna = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Anna").type("PERSON").ownerId(ownerId).build();
         lenient().when(currentUserService.findUserId()).thenReturn(Optional.of(ownerId));
@@ -63,6 +64,7 @@ class GraphQueryServiceAggregationTest {
         lenient().when(entityRepository.findFirstByDisplayNameIgnoreCaseAndOwnerId("Anna", ownerId))
                 .thenReturn(Optional.of(anna));
         lenient().when(mentionEvidencePolicy.isCertain(any(EntityMention.class))).thenReturn(true);
+        lenient().when(identityResolutionService.isGenericPersonLabel(anyString())).thenReturn(false);
         lenient().when(fileRepository.findByPath(anyString())).thenAnswer(inv -> Optional.of(
                 FileEntity.builder().path(inv.getArgument(0)).fileType("image/jpeg").ownerId(ownerId).build()));
         lenient().when(fileRepository.findByPathAndOwnerId(anyString(), any(UUID.class))).thenAnswer(inv -> Optional.of(
@@ -84,9 +86,11 @@ class GraphQueryServiceAggregationTest {
         assertTrue(evidence.hasEvidence());
         assertEquals(2, evidence.certainPaths().size());
         assertTrue(evidence.certainPaths().containsAll(List.of("dir://a.jpg", "dir://b.jpg")));
-        assertTrue(evidence.context().contains("entity=Igor"));
-        assertTrue(evidence.context().contains("=== Graf zdjęcia #1 ==="));
-        assertTrue(evidence.context().contains("=== Graf zdjęcia #2 ==="));
+        assertTrue(evidence.context().contains("Igor"));
+        assertTrue(evidence.context().contains("=== Zdjęcie 1 ==="));
+        assertTrue(evidence.context().contains("=== Zdjęcie 2 ==="));
+        assertFalse(evidence.context().contains("dir://a.jpg"));
+        assertFalse(evidence.context().contains("structured_vision="));
     }
 
     @Test
@@ -131,10 +135,15 @@ class GraphQueryServiceAggregationTest {
 
         assertTrue(evidence.hasEvidence());
         assertTrue(evidence.certainPaths().contains("dir://pair.jpg"));
-        assertTrue(evidence.context().contains("predicate=LEFT_OF"));
-        assertTrue(evidence.context().contains("value=Anna"));
-        assertTrue(evidence.context().contains("=== Graf zdjęcia #1 ==="));
-        assertTrue(evidence.context().contains("=== Claimy grafu ===") || evidence.context().contains("LEFT_OF"));
+        // Natural PL context — no machine entity=/predicate= dump, no file paths.
+        assertTrue(evidence.context().contains("Igor"));
+        assertTrue(evidence.context().contains("Anna"));
+        assertTrue(evidence.context().contains("z lewej od") || evidence.context().contains("LEFT_OF"));
+        assertTrue(evidence.context().contains("=== Zdjęcie 1 ==="));
+        assertTrue(evidence.context().contains("=== Claimy grafu ===")
+                || evidence.context().contains("z lewej od")
+                || evidence.context().contains("LEFT_OF"));
+        assertFalse(evidence.context().contains("dir://pair.jpg"));
     }
 
     @Test

@@ -54,6 +54,10 @@ public class GraphQueryService {
     @Value("${rag.graph.min-fact-confidence:0.75}")
     private double minFactConfidence = 0.75;
 
+    /** Max photo dumps injected into the answer prompt (sources capped separately). */
+    @Value("${rag.graph.max-context-files:5}")
+    private int maxContextFiles = 5;
+
     /** Canonical display names of certain human (PERSON) entities in the workspace. */
     @Transactional(readOnly = true)
     public List<String> availableEntityNames() {
@@ -210,23 +214,29 @@ public class GraphQueryService {
             }
         }
 
-        // Full per-photo graph snapshot — AI decides which nodes/edges answer the question.
+        // Per-photo graph snapshot in natural Polish — no paths/raw JSON in the answer prompt.
+        int contextLimit = Math.max(1, maxContextFiles);
         int index = 1;
+        int included = 0;
         for (String path : certainPaths) {
-            if (index > 20) {
-                contexts.add("- (pominięto dalsze zdjęcia grafu; limit 20)");
+            if (included >= contextLimit) {
+                int omitted = certainPaths.size() - included;
+                contexts.add("(pominięto " + omitted + " dalszych zdjęć w kontekście; limit " + contextLimit + ")");
                 break;
             }
             String fileContext = buildFullContextForFile(path);
             if (!fileContext.isBlank()) {
-                contexts.add("=== Graf zdjęcia #" + index + " ===\n" + fileContext);
+                contexts.add("=== Zdjęcie " + index + " ===\n" + fileContext);
             } else {
-                contexts.add("=== Graf zdjęcia #" + index + " ===\n- file=" + path + "\n");
+                contexts.add("=== Zdjęcie " + index + " ===\n(brak szczegółów grafu dla tego pliku)");
             }
             index++;
+            included++;
         }
 
-        List<GroundedVisualClaim> claims = certainPaths.stream()
+        // Claims only for files included in the prompt dump (keeps selection set focused).
+        List<String> claimPaths = certainPaths.stream().limit(contextLimit).toList();
+        List<GroundedVisualClaim> claims = claimPaths.stream()
                 .flatMap(path -> certainClaimsForFile(path, validatedEntities).stream())
                 .distinct()
                 .toList();
@@ -339,9 +349,26 @@ public class GraphQueryService {
                 .filter(this::isCertainMention)
                 .filter(mention -> mention.getEntity() == null || isPersonEntity(mention.getEntity()))
                 .toList();
-        for (EntityMention mention : mentions) appendMention(context, mention);
-        for (Fact fact : getCertainFactsForFile(filePath)) appendFact(context, fact);
-        // Observed structured vision (not identity claims) supports visual matching.
+        List<String> participantNames = mentions.stream()
+                .map(this::mentionDisplayName)
+                .filter(name -> name != null && !name.isBlank())
+                .filter(name -> !identityResolutionService.isGenericPersonLabel(name))
+                .distinct()
+                .toList();
+        if (!participantNames.isEmpty()) {
+            context.append("Uczestnicy: ").append(String.join(", ", participantNames)).append('\n');
+        }
+        for (EntityMention mention : mentions) {
+            appendMention(context, mention);
+        }
+        List<Fact> facts = getCertainFactsForFile(filePath);
+        if (!facts.isEmpty()) {
+            context.append("Fakty:\n");
+            for (Fact fact : facts) {
+                appendFact(context, fact);
+            }
+        }
+        // Scene/summary only — never dump raw structured_vision JSON (person 1 noise + token bloat).
         fileRepository.findByPath(filePath).ifPresent(file -> appendFileContext(context, file));
         return context.toString();
     }
@@ -433,36 +460,144 @@ public class GraphQueryService {
     }
 
     private void appendMention(StringBuilder context, EntityMention mention) {
-        String name = mention.getEntity() == null ? mention.getLabel() : mention.getEntity().getDisplayName();
-        context.append("- entity=").append(name).append("; confidence=")
-                .append(mention.getConfidence()).append("; file=").append(mention.getFilePath());
-        if (mention.getVisualCues() != null) context.append("; visual_cues=").append(mention.getVisualCues());
-        if (mention.getContextObjects() != null) context.append("; nearby_objects=").append(mention.getContextObjects());
-        if (mention.getNearbyText() != null) context.append("; nearby_text=").append(mention.getNearbyText());
-        context.append('\n');
+        String name = mentionDisplayName(mention);
+        if (name == null || name.isBlank()) {
+            return;
+        }
+        List<String> parts = new ArrayList<>();
+        appendJsonStringList(parts, mention.getVisualCues());
+        List<String> objects = new ArrayList<>();
+        appendJsonStringList(objects, mention.getContextObjects());
+        if (!objects.isEmpty()) {
+            parts.add("obiekty/otoczenie: " + String.join(", ", objects));
+        }
+        List<String> texts = new ArrayList<>();
+        appendJsonStringList(texts, mention.getNearbyText());
+        if (!texts.isEmpty()) {
+            parts.add("napisy: " + String.join(", ", texts));
+        }
+        if (parts.isEmpty()) {
+            context.append(name).append('\n');
+        } else {
+            context.append(name).append(": ").append(String.join("; ", parts)).append('\n');
+        }
     }
 
     private void appendFact(StringBuilder context, Fact fact) {
-        String name = fact.getMention().getEntity() == null ? fact.getMention().getLabel()
-                : fact.getMention().getEntity().getDisplayName();
+        if (fact == null || fact.getMention() == null) {
+            return;
+        }
+        String name = mentionDisplayName(fact.getMention());
         String value = fact.getObject();
         if (fact.getTargetMention() != null) {
-            value = fact.getTargetMention().getEntity() == null
-                    ? fact.getTargetMention().getLabel()
-                    : fact.getTargetMention().getEntity().getDisplayName();
+            String targetName = mentionDisplayName(fact.getTargetMention());
+            if (targetName != null && !targetName.isBlank()
+                    && !identityResolutionService.isGenericPersonLabel(targetName)) {
+                value = targetName;
+            } else if (identityResolutionService.isGenericPersonLabel(targetName)) {
+                value = "nierozpoznana osoba";
+            }
         }
-        context.append("- entity=").append(name).append("; predicate=").append(fact.getAction())
-                .append("; value=").append(value).append("; confidence=")
-                .append(fact.getConfidence()).append("; file=").append(fact.getFilePath()).append('\n');
+        String action = fact.getAction() == null ? "" : fact.getAction().trim();
+        // Prefer immutable Polish statement when it already uses a real name.
+        String statement = fact.getStatementPl();
+        if (statement != null && !statement.isBlank()
+                && name != null && statement.toLowerCase(Locale.ROOT).contains(name.toLowerCase(Locale.ROOT))) {
+            context.append("- ").append(ensureSentence(statement.trim())).append('\n');
+            return;
+        }
+        StringBuilder line = new StringBuilder("- ");
+        if (name != null && !name.isBlank()) {
+            line.append(name).append(' ');
+        }
+        if (!action.isBlank()) {
+            // Technical predicates → readable Polish glue; keep open NL actions as-is.
+            line.append(readableTechnicalAction(action));
+        }
+        if (value != null && !value.isBlank()) {
+            line.append(' ').append(value.trim());
+        }
+        context.append(ensureSentence(line.toString().trim())).append('\n');
     }
 
     private void appendFileContext(StringBuilder context, FileEntity file) {
-        if (file.getStructuredVisionContext() != null && !file.getStructuredVisionContext().isBlank())
-            context.append("- structured_vision=").append(file.getStructuredVisionContext()).append("; file=").append(file.getPath()).append('\n');
-        if (file.getImageScene() != null && !file.getImageScene().isBlank())
-            context.append("- scene=").append(file.getImageScene()).append("; file=").append(file.getPath()).append('\n');
-        if (file.getImageSummary() != null && !file.getImageSummary().isBlank())
-            context.append("- summary=").append(file.getImageSummary()).append("; file=").append(file.getPath()).append('\n');
+        // Intentionally omit structuredVisionContext from LLM dump (placeholders + bloat).
+        if (file.getImageScene() != null && !file.getImageScene().isBlank()) {
+            context.append("Scena: ").append(file.getImageScene().trim()).append('\n');
+        }
+        if (file.getImageSummary() != null && !file.getImageSummary().isBlank()) {
+            context.append("Podsumowanie: ").append(file.getImageSummary().trim()).append('\n');
+        }
+    }
+
+    private String mentionDisplayName(EntityMention mention) {
+        if (mention == null) {
+            return null;
+        }
+        if (mention.getEntity() != null && mention.getEntity().getDisplayName() != null
+                && !mention.getEntity().getDisplayName().isBlank()) {
+            return mention.getEntity().getDisplayName().trim();
+        }
+        if (mention.getLabel() != null && !mention.getLabel().isBlank()) {
+            return mention.getLabel().trim();
+        }
+        return null;
+    }
+
+    private static String readableTechnicalAction(String action) {
+        if (action == null) {
+            return "";
+        }
+        return switch (action.toUpperCase(Locale.ROOT)) {
+            case "RELATED_OBJECT" -> "ma przy sobie";
+            case "NEAR_TEXT" -> "ma obok napis";
+            case "HAS_APPEARANCE" -> "wygląda:";
+            case "LEFT_OF" -> "z lewej od";
+            case "RIGHT_OF" -> "z prawej od";
+            default -> action;
+        };
+    }
+
+    private static String ensureSentence(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String trimmed = value.trim();
+        if (trimmed.startsWith("- ")) {
+            // Keep bullet; ensure trailing period on the content.
+            String body = trimmed.substring(2).trim();
+            if (body.isEmpty()) {
+                return trimmed;
+            }
+            return "- " + (body.matches(".*[.!?]$") ? body : body + ".");
+        }
+        return trimmed.matches(".*[.!?]$") ? trimmed : trimmed + ".";
+    }
+
+    /** Parses JSON string arrays or comma-ish lists into plain display tokens. */
+    private static void appendJsonStringList(List<String> target, String raw) {
+        if (raw == null || raw.isBlank() || target == null) {
+            return;
+        }
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+            String inner = trimmed.substring(1, trimmed.length() - 1).trim();
+            if (inner.isEmpty()) {
+                return;
+            }
+            for (String part : inner.split(",")) {
+                String token = part.trim();
+                if ((token.startsWith("\"") && token.endsWith("\""))
+                        || (token.startsWith("'") && token.endsWith("'"))) {
+                    token = token.substring(1, token.length() - 1).trim();
+                }
+                if (!token.isEmpty()) {
+                    target.add(token);
+                }
+            }
+            return;
+        }
+        target.add(trimmed);
     }
 
     /** Certain mention: CONFIRMED status and confidence at or above threshold. */

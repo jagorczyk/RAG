@@ -47,6 +47,8 @@ public interface ChatService {
             Nie ograniczaj się do samego stwierdzenia obecności osoby, jeśli w kontekście
             są bogatsze szczegóły odpowiadające na pytanie.
             Nie dodawaj nieproszonych dygresji i nie zgaduj poza dowodami.
+            Nie moralizuj o bezpieczeństwie, policji ani „projektach artystycznych” —
+            jeśli w dowodach widać przedmiot lub czynność, opisz to krótko z grafu.
             Nie pisz o pewności, score ani „na podstawie dowodów”.
             Nie umieszczaj nazw plików, ścieżek, identyfikatorów ani list źródeł w treści.
             """;

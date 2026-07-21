@@ -274,4 +274,35 @@ class ChatAnswerGroundingTest {
         assertEquals(olek, ChatAnswerGrounding.resolveGroundedAnswer(
                 olek, List.of("Olek"), false, true));
     }
+
+    @Test
+    void detectsOlekNozSafetyLecture() {
+        String safety = """
+                Jeśli masz na myśli sytuację, w której ktoś o imieniu Olek używa noża, ważne jest, aby zachować ostrożność i odpowiedzialność. Używanie noża może być niebezpieczne zarówno dla osoby posługującej się nim, jak i dla innych. Jeśli jest to sytuacja fikcyjna lub związana z jakimś projektem artystycznym, upewnij się, że jest ona przedstawiona w sposób odpowiedzialny i bezpieczny.
+
+                Jeśli natomiast jest to sytuacja realna i istnieje zagrożenie dla czyjegoś bezpieczeństwa, należy natychmiast skontaktować się z odpowiednimi służbami, takimi jak policja, aby zapewnić pomoc i interwencję.
+
+                Jeśli masz konkretne pytanie lub potrzebujesz porady w związku z tą sytuacją, daj mi znać, a postaram się pomóc.
+                """;
+        assertTrue(ChatAnswerGrounding.isSafetyOrOfftopicLecture(safety));
+        assertTrue(ChatAnswerGrounding.shouldRewriteUngroundedAnswer(safety, false, List.of("Olek", "Bartek")));
+        // "Olek" appears in the lecture — missing-names is not required when safety shape matches.
+
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                safety, List.of("Olek", "Bartek"), true, false);
+        assertEquals("Na zdjęciu są Olek i Bartek.", resolved);
+        assertFalse(resolved.toLowerCase().contains("policj"));
+        assertFalse(resolved.toLowerCase().contains("ostrożność"));
+
+        assertFalse(ChatAnswerGrounding.isSafetyOrOfftopicLecture(
+                "Olek trzyma nóż w prawej ręce."));
+
+        // Digression that never names co-present Bartek (only generic advice).
+        String digression = """
+                Jeśli masz na myśli sytuację, w której ktoś używa noża, ważne jest, aby zachować ostrożność.
+                Daj mi znać, a postaram się pomóc z tą sprawą bezpieczeństwa.
+                """;
+        assertTrue(ChatAnswerGrounding.isAnswerMissingEvidenceNames(
+                digression, List.of("Olek", "Bartek")));
+    }
 }

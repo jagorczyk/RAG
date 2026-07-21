@@ -18,10 +18,12 @@ import com.rag.rag.knowledge.query.VisualQueryMatch;
 import dev.langchain4j.service.Result;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +53,10 @@ public class ChatInteractionService {
     private final DynamicVisualMatcher dynamicVisualMatcher;
     private final QueryPlanner queryPlanner;
     private final VerifiedVisualAnswerService verifiedVisualAnswerService;
+
+    /** Cap sources shown in UI / stored on the AI turn (GRAPH can otherwise dump all entity photos). */
+    @Value("${rag.answer.max-sources:3}")
+    private int maxSources = 3;
 
     @Transactional
     public MessageResponse processChatMessage(UUID chatId, MessageRequest messageRequest) {
@@ -208,13 +214,17 @@ public class ChatInteractionService {
             sources = List.of();
         } else {
             // GRAPH/HYBRID: keep AI prose; rewrite only capability refusals / ungrounded essays.
-            boolean entityScoped = ChatRetrievalPolicy.hasNamedEntities(plan);
+            // When the turn is scoped to specific photo(s) (fileScope or single certain path),
+            // recovery uses the full participant roster so "kto jest na zdjęciu Olka" includes co-present people.
+            boolean preferPhotoRoster = (plan.fileScope() != null && !plan.fileScope().isEmpty())
+                    || (graphEvidence.certainPaths() != null && graphEvidence.certainPaths().size() == 1);
+            boolean entityScoped = ChatRetrievalPolicy.hasNamedEntities(plan) && !preferPhotoRoster;
             List<String> recoveryNames;
             if (entityScoped) {
                 recoveryNames = plan.entities();
             } else {
-                List<String> rosterPaths = rosterPaths(plan, graphEvidence, sources);
-                recoveryNames = graphQueryService.certainParticipantNamesForPaths(rosterPaths);
+                List<String> paths = rosterPaths(plan, graphEvidence, sources);
+                recoveryNames = graphQueryService.certainParticipantNamesForPaths(paths);
             }
             boolean hasCertain = graphEvidence.hasEvidence() || !sources.isEmpty();
             answer = ChatAnswerGrounding.resolveGroundedAnswer(
@@ -323,7 +333,7 @@ public class ChatInteractionService {
             for (String path : graphEvidence.certainPaths()) {
                 putSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0), true);
             }
-            return List.copyOf(unique.values());
+            return limitSources(List.copyOf(unique.values()));
         }
 
         // Graph facts first; then scoped hybrid hits (also for GRAPH — clothing/actions in embeddings).
@@ -349,7 +359,33 @@ public class ChatInteractionService {
             }
         }
 
-        return List.copyOf(unique.values());
+        return limitSources(List.copyOf(unique.values()));
+    }
+
+    /**
+     * Prefer GRAPH_FACT and higher scores, then cap to {@link #maxSources} for UX.
+     * ALL_SAME_FILE already returns early with only joint paths (typically few).
+     */
+    private List<SourceDto> limitSources(List<SourceDto> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return List.of();
+        }
+        int cap = Math.max(1, maxSources);
+        if (sources.size() <= cap) {
+            return sources;
+        }
+        List<SourceDto> ranked = new ArrayList<>(sources);
+        ranked.sort((a, b) -> {
+            boolean aGraph = a != null && "GRAPH_FACT".equals(a.type());
+            boolean bGraph = b != null && "GRAPH_FACT".equals(b.type());
+            if (aGraph != bGraph) {
+                return aGraph ? -1 : 1;
+            }
+            double as = a == null || a.score() == null ? 0.0 : a.score();
+            double bs = b == null || b.score() == null ? 0.0 : b.score();
+            return Double.compare(bs, as);
+        });
+        return List.copyOf(ranked.subList(0, cap));
     }
 
     /**

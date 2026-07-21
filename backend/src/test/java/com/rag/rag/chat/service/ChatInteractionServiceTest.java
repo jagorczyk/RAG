@@ -657,6 +657,9 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
         when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
                 .thenReturn(new GraphEvidenceResult("- entity=Anna; file=" + path, List.of(path)));
+        // Single certain path → photo roster (not entity-only presence).
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Anna"));
         Result<String> result = Result.<String>builder()
                 .content("To imię męskie, które jest zdrobnieniem. Imię pochodzi z języka greckiego. "
                         + "W kulturze popularnej jest lubiane.")
@@ -668,7 +671,7 @@ class ChatInteractionServiceTest {
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
 
         assertFalse(ChatAnswerGrounding.isGeneralKnowledgeEssay(response.response()));
-        assertEquals("Anna jest na potwierdzonych zdjęciach w bibliotece.", response.response());
+        assertEquals("Na zdjęciu jest Anna.", response.response());
         assertEquals(1, response.sources().size());
     }
 
@@ -683,6 +686,8 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
         when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
                 .thenReturn(new GraphEvidenceResult("- entity=Anna; file=" + path, List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Anna"));
         Result<String> result = Result.<String>builder()
                 .content("Hello! How can I assist you today?")
                 .build();
@@ -693,7 +698,7 @@ class ChatInteractionServiceTest {
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
 
         assertFalse(ChatAnswerGrounding.isEmptyOrGreetingNonAnswer(response.response()));
-        assertEquals("Anna jest na potwierdzonych zdjęciach w bibliotece.", response.response());
+        assertEquals("Na zdjęciu jest Anna.", response.response());
         assertEquals(1, response.sources().size());
         assertEquals(path, response.sources().get(0).path());
     }
@@ -709,8 +714,10 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
         when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
                 .thenReturn(new GraphEvidenceResult(
-                        "=== Graf zdjęcia #1 ===\n- entity=Olek; visual_cues=[\"koszulka\"]; file=" + path,
+                        "=== Zdjęcie 1 ===\nUczestnicy: Olek\nOlek: koszulka",
                         List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Olek"));
         String speculative = """
                 Na zdjęciu Olek może robić różne rzeczy, w zależności od kontekstu. Może na przykład:
 
@@ -736,6 +743,43 @@ class ChatInteractionServiceTest {
         assertEquals(path, response.sources().get(0).path());
         assertEquals("GRAPH_FACT", response.sources().get(0).type());
         assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
+    }
+
+    @Test
+    void olekNozSafetyLectureIsRewrittenToPhotoRoster() {
+        // Live: olek-noz — GRAPH had Olek+Bartek on the knife photo; model gave police lecture.
+        String question = "kto jest na zdjęciu Olka z nożem";
+        String path = "dir://witaj/20230424_145146.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Olek"), List.of(path),
+                question, "", false, false, QueryPlan.RetrievalMode.GRAPH,
+                "Odpowiedz z grafu.");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+                .thenReturn(new GraphEvidenceResult(
+                        "=== Zdjęcie 1 ===\nUczestnicy: Olek, Bartek\nOlek: trzyma nóż\nBartek: za kierownicą",
+                        List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Olek", "Bartek"));
+        String safety = """
+                Jeśli masz na myśli sytuację, w której ktoś o imieniu Olek używa noża, ważne jest, aby zachować ostrożność i odpowiedzialność. Używanie noża może być niebezpieczne zarówno dla osoby posługującej się nim, jak i dla innych. Jeśli jest to sytuacja fikcyjna lub związana z jakimś projektem artystycznym, upewnij się, że jest ona przedstawiona w sposób odpowiedzialny i bezpieczny.
+
+                Jeśli natomiast jest to sytuacja realna i istnieje zagrożenie dla czyjegoś bezpieczeństwa, należy natychmiast skontaktować się z odpowiednimi służbami, takimi jak policja, aby zapewnić pomoc i interwencję.
+
+                Jeśli masz konkretne pytanie lub potrzebujesz porady w związku z tą sytuacją, daj mi znać, a postaram się pomóc.
+                """;
+        Result<String> result = Result.<String>builder().content(safety).build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "20230424_145146.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals("Na zdjęciu są Olek i Bartek.", response.response());
+        assertFalse(response.response().toLowerCase().contains("policj"));
+        assertEquals(1, response.sources().size());
+        assertEquals(path, response.sources().get(0).path());
+        assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
+        verify(graphQueryService).certainParticipantNamesForPaths(anyList());
     }
 
     @Test
@@ -830,6 +874,8 @@ class ChatInteractionServiceTest {
         when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
         when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
                 .thenReturn(new GraphEvidenceResult("- entity=Olek; file=" + path, List.of(path)));
+        when(graphQueryService.certainParticipantNamesForPaths(anyList()))
+                .thenReturn(List.of("Olek"));
         Result<String> result = Result.<String>builder()
                 .content("It seems like you might be saying \"a olek,\" but I'm not entirely sure what you mean. "
                         + "Could you clarify or provide more context? Let me know so I can assist you better! 😊")
@@ -842,7 +888,8 @@ class ChatInteractionServiceTest {
 
         MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
 
-        assertEquals("Olek jest na potwierdzonych zdjęciach w bibliotece.", response.response());
+        // Single certain path → photo roster grounding (not multi-file "presence in library").
+        assertEquals("Na zdjęciu jest Olek.", response.response());
         assertEquals(1, response.sources().size());
         assertEquals("GRAPH_FACT", response.sources().get(0).type());
         assertFalse(response.uncertain());
@@ -851,7 +898,7 @@ class ChatInteractionServiceTest {
         assertTrue(promptCaptor.getValue().contains("zdjęcia na których jest Olek"));
         assertTrue(promptCaptor.getValue().contains("Oryginalne brzmienie użytkownika: a olek?"));
         verify(chatMemoryService).replaceLastAiMessage(eq(chatId),
-                eq("Olek jest na potwierdzonych zdjęciach w bibliotece."));
+                eq("Na zdjęciu jest Olek."));
     }
 
     @Test

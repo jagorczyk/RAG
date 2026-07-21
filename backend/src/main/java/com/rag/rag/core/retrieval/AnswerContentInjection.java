@@ -60,18 +60,13 @@ public final class AnswerContentInjection {
         if (!graphContext.isEmpty()) {
             promptBuilder.append(graphContext).append("\n\n");
         }
-        promptBuilder.append("Odpowiedz po polsku jedną krótką zdaniami (max 1–2 zdania). ")
-                .append("Graf wiedzy (jeśli podany) jest źródłem prawdy dla osób i relacji. ")
-                .append("Poniższe fragmenty „Dokumenty” to treść z indeksu embeddingów tych samych plików — ")
-                .append("użyj ich faktów (ubiór, czynności, scena) zamiast zgadywać. ")
-                .append("Gdy pytanie ma dwie części, odpowiedz na obie krótko. ")
+        // Style rules live in ChatService.ANSWER_INSTRUCTIONS — keep injection to document body only.
+        promptBuilder.append("Graf wiedzy (jeśli podany) ma pierwszeństwo przed fragmentami poniżej. ")
                 .append("Używaj wyłącznie dostarczonych dowodów. ")
-                .append("Nie twórz list możliwości ani hipotez („może robić różne rzeczy”, ")
-                .append("„w zależności od kontekstu”, numerowane menu aktywności). ")
-                .append("Gdy brak konkretu w dowodach, napisz krótko o braku potwierdzonych szczegółów. ")
-                .append("Nie opisuj wyglądu, ubrań, włosów ani sceny, jeśli pytanie prosi tylko o wskazanie zdjęć. ")
-                .append("Nie pisz o pewności ani „na podstawie dowodów”. ")
-                .append("Nie wypisuj nazw plików, ścieżek ani list źródeł — źródła są w UI.\n\n")
+                .append("Odpowiedź po polsku, konkretna, zwykle 1–3 zdania. ")
+                .append("Nie twórz list hipotez ani menu możliwości. ")
+                .append("Nie moralizuj o przedmiotach ze zdjęć (np. nóż) — opisz tylko to, co widać w dowodach. ")
+                .append("Nie wypisuj ścieżek ani list źródeł.\n\n")
                 .append(SHORT_QUESTION_MARKER).append(" ").append(actualQuestion).append("\n\n")
                 .append(DOCUMENTS_HEADER).append("\n").append(contextJoined);
 
