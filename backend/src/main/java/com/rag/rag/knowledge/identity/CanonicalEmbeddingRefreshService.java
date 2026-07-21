@@ -3,10 +3,8 @@ package com.rag.rag.knowledge.identity;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
-import com.rag.rag.knowledge.entity.KnowledgeEntity;
-import com.rag.rag.knowledge.entity.MentionStatus;
 import com.rag.rag.knowledge.fact.Fact;
-import com.rag.rag.knowledge.fact.FactStatementRewriter;
+import com.rag.rag.knowledge.graph.ImageEmbeddingDocumentBuilder;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FactRepository;
 import dev.langchain4j.data.document.Document;
@@ -42,16 +40,12 @@ public class CanonicalEmbeddingRefreshService {
     private final EmbeddingStoreIngestor embeddingStoreIngestor;
     private final JdbcTemplate jdbcTemplate;
 
-    /**
-     * Re-embeds every image path that still has a mention linked to this entity.
-     */
     @Transactional
     public void refreshForEntity(UUID entityId) {
         if (entityId == null) {
             return;
         }
-        Set<String> paths = pathsForEntity(entityId);
-        refreshPaths(paths);
+        refreshPaths(pathsForEntity(entityId));
     }
 
     @Transactional
@@ -67,9 +61,6 @@ public class CanonicalEmbeddingRefreshService {
         }
     }
 
-    /**
-     * Paths currently linked to the entity (for tests and callers).
-     */
     Set<String> pathsForEntity(UUID entityId) {
         if (entityId == null) {
             return Set.of();
@@ -108,132 +99,20 @@ public class CanonicalEmbeddingRefreshService {
         document.metadata().put("filename", fileName);
         document.metadata().put("source_type", "IMAGE");
         document.metadata().put("document_id", folderIdFromPath(path));
-        if (file.getOwnerId() != null) document.metadata().put("owner_id", file.getOwnerId().toString());
+        if (file.getOwnerId() != null) {
+            document.metadata().put("owner_id", file.getOwnerId().toString());
+        }
 
         jdbcTemplate.update(DELETE_EMBEDDINGS_SQL, path);
         embeddingStoreIngestor.ingest(document);
-        log.info("Refreshed document embeddings for path {} after identity rename ({} chars)", path, text.length());
+        log.info("Refreshed structured JSON embeddings for path {} ({} chars)", path, text.length());
     }
 
     /**
-     * Builds embeddable text from graph labels (current names) + stored vision context.
-     * Prefer Polish claim statements over technical action codes.
-     * Package-visible for unit tests. No vision LLM call.
+     * Structured JSON document for hybrid/vector recall. Package-visible for unit tests.
      */
     String buildCanonicalText(FileEntity file, List<EntityMention> mentions, List<Fact> facts) {
-        StringBuilder canonical = new StringBuilder();
-        if (file != null) {
-            if (file.getImageScene() != null && !file.getImageScene().isBlank()) {
-                canonical.append("Scena: ").append(file.getImageScene().trim()).append(". ");
-            }
-            if (file.getImageSummary() != null && !file.getImageSummary().isBlank()) {
-                canonical.append("Kontekst sceny: ").append(file.getImageSummary().trim()).append(". ");
-            }
-            if (file.getSceneAttributes() != null && !file.getSceneAttributes().isBlank()) {
-                canonical.append("Atrybuty sceny: ").append(file.getSceneAttributes().trim()).append(". ");
-            }
-            String fileName = file.getFileName() != null ? file.getFileName() : fileNameFromPath(file.getPath());
-            if (fileName != null && !fileName.isBlank()) {
-                canonical.append("Plik: ").append(fileName).append(". ");
-            }
-        }
-
-        if (mentions != null) {
-            for (EntityMention mention : mentions) {
-                if (mention == null || mention.getStatus() == MentionStatus.REJECTED) {
-                    continue;
-                }
-                String participant = participantName(mention);
-                String type = mention.getEntityType() != null ? mention.getEntityType() : "PERSON";
-                canonical.append("Uczestnik: ").append(participant)
-                        .append(" (typ: ").append(type).append("). ");
-                appendJsonField(canonical, "Wygląd", mention.getVisualCues());
-                appendJsonField(canonical, "Obiekty i otoczenie", mention.getContextObjects());
-                appendJsonField(canonical, "Napisy obok", mention.getNearbyText());
-            }
-        }
-
-        if (facts != null) {
-            LinkedHashSet<String> seenStatements = new LinkedHashSet<>();
-            for (Fact fact : facts) {
-                if (fact == null) {
-                    continue;
-                }
-                String statement = fact.getStatementPl();
-                if (statement == null || statement.isBlank()) {
-                    String subject = fact.getMention() != null
-                            ? participantName(fact.getMention())
-                            : "uczestnik";
-                    String value = factObjectLabel(fact);
-                    statement = FactStatementRewriter.buildStatement(subject, fact.getAction(), value);
-                }
-                statement = statement.trim();
-                if (statement.isEmpty()) {
-                    continue;
-                }
-                String key = statement.toLowerCase(Locale.ROOT);
-                if (!seenStatements.add(key)) {
-                    continue;
-                }
-                canonical.append(statement.endsWith(".") ? statement : statement + ".").append(' ');
-            }
-        }
-
-        // Structured JSON only as last-resort recall if prose is still thin.
-        int proseLen = canonical.length();
-        if (file != null && proseLen < 120
-                && file.getStructuredVisionContext() != null
-                && !file.getStructuredVisionContext().isBlank()) {
-            canonical.append("Opis strukturalny JSON: ")
-                    .append(file.getStructuredVisionContext())
-                    .append(' ');
-        }
-        if (file != null && file.getVisibleTexts() != null && !file.getVisibleTexts().isBlank()) {
-            canonical.append("Widoczne napisy: ").append(file.getVisibleTexts()).append(". ");
-        }
-
-        return canonical.toString().trim();
-    }
-
-    private static void appendJsonField(StringBuilder canonical, String label, String rawJson) {
-        if (rawJson == null || rawJson.isBlank()) {
-            return;
-        }
-        String cleaned = rawJson.trim();
-        // Strip crude JSON array brackets for readable embed text.
-        if (cleaned.startsWith("[") && cleaned.endsWith("]")) {
-            cleaned = cleaned.substring(1, cleaned.length() - 1)
-                    .replace("\"", "")
-                    .trim();
-        }
-        if (cleaned.isBlank()) {
-            return;
-        }
-        canonical.append(label).append(": ").append(cleaned).append(". ");
-    }
-
-    static String participantName(EntityMention mention) {
-        if (mention == null) {
-            return "unknown";
-        }
-        KnowledgeEntity entity = mention.getEntity();
-        if (entity != null && entity.getDisplayName() != null && !entity.getDisplayName().isBlank()) {
-            return entity.getDisplayName().trim();
-        }
-        if (mention.getLabel() != null && !mention.getLabel().isBlank()) {
-            return mention.getLabel().trim();
-        }
-        return "unknown";
-    }
-
-    private static String factObjectLabel(Fact fact) {
-        if (fact.getTargetMention() != null) {
-            return participantName(fact.getTargetMention());
-        }
-        if (fact.getObject() != null && !fact.getObject().isBlank()) {
-            return fact.getObject().trim();
-        }
-        return "";
+        return ImageEmbeddingDocumentBuilder.build(file, mentions, facts);
     }
 
     private static boolean isImageFile(FileEntity file) {

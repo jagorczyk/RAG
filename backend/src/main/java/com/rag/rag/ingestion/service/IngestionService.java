@@ -268,15 +268,6 @@ public class IngestionService {
                     fileRepository.save(f);
                 }
 
-                StringBuilder canonicalText = new StringBuilder();
-                if (dto.getScene() != null) {
-                    canonicalText.append("Scena: ").append(dto.getScene()).append(". ");
-                }
-                if (dto.getSceneSummary() != null && !dto.getSceneSummary().isBlank()) {
-                    canonicalText.append("Kontekst sceny: ").append(dto.getSceneSummary()).append(". ");
-                }
-                canonicalText.append("Plik: ").append(fileName).append(". ");
-
                 factRepo.deleteByFilePath(path);
                 fileOpt.ifPresent(file -> {
                     file.setImageScene(dto.getScene());
@@ -439,16 +430,8 @@ public class IngestionService {
                             identityResolutionService.resolve(mention, tagForEntity, entityType);
                         }
 
-                        String canonicalParticipant = mention.getEntity() != null
-                                && mention.getEntity().getDisplayName() != null
-                                ? mention.getEntity().getDisplayName() : label;
-                        canonicalText.append("Uczestnik: ").append(canonicalParticipant)
-                                .append(" (typ: ").append(entityType).append("). ");
-                        if (p.getActions() != null && !p.getActions().isEmpty()) {
-                            canonicalText.append("Czynności: ").append(String.join(", ", p.getActions())).append(". ");
-                        }
+                        // Facts only here — embedding document is built as structured JSON after all graph rows exist.
                         if (!heldObjects.isEmpty()) {
-                            canonicalText.append("Obiekty: ").append(String.join(", ", heldObjects)).append(". ");
                             for (String objectValue : heldObjects) {
                                 factRepo.save(Fact.builder().mention(mention)
                                         .action(com.rag.rag.knowledge.fact.FactStatementRewriter.ACTION_RELATED_OBJECT)
@@ -461,7 +444,6 @@ public class IngestionService {
                             }
                         }
                         if (!nearbyObjects.isEmpty()) {
-                            canonicalText.append("Obiekty w pobliżu: ").append(String.join(", ", nearbyObjects)).append(". ");
                             for (String objectValue : nearbyObjects) {
                                 factRepo.save(Fact.builder().mention(mention)
                                         .action(com.rag.rag.knowledge.fact.FactStatementRewriter.ACTION_NEAR_OBJECT)
@@ -474,20 +456,12 @@ public class IngestionService {
                             }
                         }
                         if (!nearbyText.isEmpty()) {
-                            canonicalText.append("Napisy obok: ").append(String.join(", ", nearbyText)).append(". ");
                             for (String textValue : nearbyText) {
                                 factRepo.save(Fact.builder().mention(mention).action("NEAR_TEXT")
                                         .object(textValue).statementPl(subjectStatement(mention, "ma obok napis", textValue))
                                         .evidenceOrigin("VISION_STRUCTURED")
                                         .filePath(path).confidence(new BigDecimal("0.800")).build());
                             }
-                        }
-                        if (p.getVisualCues() != null && !p.getVisualCues().isEmpty()) {
-                            canonicalText.append("Wygląd: ").append(String.join(", ", p.getVisualCues())).append(". ");
-                            // Claim rows already store each cue; keep embed text for hybrid recall.
-                        }
-                        if (p.getBbox() != null && !p.getBbox().isEmpty()) {
-                            canonicalText.append("Położenie bbox: ").append(p.getBbox()).append(". ");
                         }
                     }
 
@@ -532,33 +506,7 @@ public class IngestionService {
                                         .confidence(new BigDecimal("0.900"))
                                         .build());
                             }
-
-                            canonicalText.append("Relacja: ")
-                                    .append(subject != null && subject.getEntity() != null
-                                            ? subject.getEntity().getDisplayName()
-                                            : subject != null ? subject.getLabel() : relation.getSubjectLabel())
-                                    .append(" ")
-                                    .append(factAction)
-                                    .append(" ")
-                                    .append(objectLabel)
-                                    .append(". ");
                         }
-                    }
-
-                    if (dto.getVisibleTexts() != null && !dto.getVisibleTexts().isEmpty()) {
-                        List<String> allTexts = dto.getVisibleTexts().stream()
-                                .filter(vt -> vt != null && vt.getText() != null && !vt.getText().isBlank())
-                                .map(VisibleTextDto::getText)
-                                .toList();
-                        if (!allTexts.isEmpty()) {
-                            canonicalText.append("Widoczne napisy: ").append(String.join(", ", allTexts)).append(". ");
-                        }
-                    }
-
-                    // Full structured JSON is also embedded so every detail remains searchable.
-                    String structuredJson = writeJson(dto);
-                    if (structuredJson != null && !structuredJson.isBlank()) {
-                        canonicalText.append("Opis strukturalny JSON: ").append(structuredJson).append(" ");
                     }
 
                     fileOpt.ifPresent(file -> {
@@ -568,9 +516,15 @@ public class IngestionService {
                     });
 
                 }
+                // One structured JSON embedding document (participants + neighbors + relations).
+                FileEntity embedFile = fileRepository.findByPath(path).orElse(null);
+                List<EntityMention> embedMentions = mentionRepo.findByFilePath(path);
+                List<Fact> embedFacts = factRepo.findByFilePath(path);
+                String embeddingJson = com.rag.rag.knowledge.graph.ImageEmbeddingDocumentBuilder
+                        .build(embedFile, embedMentions, embedFacts);
                 // Face analysis runs after the vision/ingest transaction commits so a face
                 // failure cannot mark the whole upload as rollback-only.
-                return Document.from(canonicalText.toString());
+                return Document.from(embeddingJson);
             } else {
                 var fileOpt = fileRepository.findByPath(path);
                 String raw = result.rawText() == null ? "" : result.rawText().trim();
@@ -587,15 +541,27 @@ public class IngestionService {
                     }
                     fileRepository.save(f);
                 }
-                StringBuilder fallback = new StringBuilder();
-                fallback.append("Plik: ").append(fileName).append(". ");
-                fallback.append("Uwaga: strukturalna analiza vision nie powiodła się; poniżej surowy opis modelu. ");
-                if (!raw.isBlank()) {
-                    fallback.append(raw);
-                } else {
-                    fallback.append("Brak opisu obrazu.");
+                // Minimal structured shell so hybrid still sees a stable schema even on vision failure.
+                try {
+                    com.fasterxml.jackson.databind.node.ObjectNode failDoc =
+                            objectMapper.createObjectNode();
+                    failDoc.put("type", "image_knowledge");
+                    failDoc.put("file", fileName);
+                    failDoc.put("path", path);
+                    failDoc.put("vision_status", "FAILED");
+                    com.fasterxml.jackson.databind.node.ObjectNode scene = objectMapper.createObjectNode();
+                    if (!raw.isBlank()) {
+                        scene.put("summary", raw.length() > 4000 ? raw.substring(0, 4000) : raw);
+                    } else {
+                        scene.put("summary", "Brak opisu obrazu.");
+                    }
+                    failDoc.set("scene", scene);
+                    failDoc.set("participants", objectMapper.createArrayNode());
+                    return Document.from(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(failDoc));
+                } catch (Exception e) {
+                    return Document.from("{\"type\":\"image_knowledge\",\"file\":\"" + fileName
+                            + "\",\"vision_status\":\"FAILED\",\"scene\":{\"summary\":\"Brak opisu obrazu.\"},\"participants\":[]}");
                 }
-                return Document.from(fallback.toString());
             }
         } catch (InvalidImageException e) {
             throw e;

@@ -102,8 +102,10 @@ class CanonicalEmbeddingRefreshServiceTest {
         verify(embeddingStoreIngestor).ingest(docCaptor.capture());
         String text = docCaptor.getValue().text();
         assertTrue(text.contains("Bartek"), "canonical embed text must include new display name");
-        assertTrue(text.contains("Uczestnik: Bartek"));
-        assertTrue(text.contains("je"));
+        assertTrue(text.contains("\"type\"") && text.contains("image_knowledge"),
+                "embedding must be structured image_knowledge JSON");
+        assertTrue(text.contains("\"participants\""));
+        assertTrue(text.contains("je") || text.contains("zupa"));
         assertEquals(PATH_A, docCaptor.getValue().metadata().getString("path"));
         assertEquals("party.jpg", docCaptor.getValue().metadata().getString("filename"));
     }
@@ -160,7 +162,8 @@ class CanonicalEmbeddingRefreshServiceTest {
         String text = service.buildCanonicalText(file, List.of(mention), List.of());
 
         assertTrue(text.contains("Bartek"));
-        assertFalse(text.contains("Uczestnik: person 1"));
+        assertTrue(text.contains("image_knowledge"));
+        assertFalse(text.contains("\"name\" : \"person 1\"") || text.contains("\"name\":\"person 1\""));
     }
 
     @Test
