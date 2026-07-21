@@ -92,6 +92,24 @@ public final class ChatAnswerGrounding {
                 "podaj wiecej szczegolow",
                 "podać więcej szczegółów",
                 "podac wiecej szczegolow",
+                "potrzebuję więcej szczegółów",
+                "potrzebuje wiecej szczegolow",
+                "potrzebuję wiecej szczegółów",
+                "potrzebuje więcej szczegółów",
+                "więcej szczegółów na jego temat",
+                "wiecej szczegolow na jego temat",
+                "więcej szczegółów na jej temat",
+                "aby opisać zdjęcie",
+                "aby opisac zdjecie",
+                "żeby opisać zdjęcie",
+                "zeby opisac zdjecie",
+                "możesz mi powiedzieć, co jest na zdjęciu",
+                "mozesz mi powiedziec, co jest na zdjeciu",
+                "możesz mi powiedzieć co jest na zdjęciu",
+                "jakie kolory dominują",
+                "jakie kolory dominuja",
+                "im więcej szczegółów podasz",
+                "im wiecej szczegolow podasz",
                 "cannot see image",
                 "can't see image",
                 "i cannot see",
@@ -108,6 +126,8 @@ public final class ChatAnswerGrounding {
                 "more details or context",
                 "need more information",
                 "need more info",
+                "tell me more about the photo",
+                "what is in the photo",
                 "describe how they look",
                 "describe what they look");
     }
@@ -225,7 +245,13 @@ public final class ChatAnswerGrounding {
                 "nie do końca rozumiem",
                 "nie do konca rozumiem",
                 "could you rephrase",
-                "can you rephrase");
+                "can you rephrase",
+                "możesz mi powiedzieć, co jest na zdjęciu",
+                "mozesz mi powiedziec co jest na zdjeciu",
+                "aby opisać zdjęcie, potrzebuję",
+                "aby opisac zdjecie, potrzebuje",
+                "oczywiście! aby opisać",
+                "oczywiście! aby opisac");
     }
 
     /**

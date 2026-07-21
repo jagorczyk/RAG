@@ -26,8 +26,11 @@ public interface ChatService {
             Kontekst tekstowy o obrazach z bazy i grafu jest pełnoprawnym dowodem — nie mów,
             że nie widzisz zdjęć, nie masz dostępu do plików, nie możesz określić kto jest
             na zdjęciu ani że nie wiesz o kogo pyta użytkownik, gdy w kontekście są
-            potwierdzone imiona lub encje. Nie proś użytkownika o opis wyglądu ani o listę
-            zdjęć, gdy w kontekście są już potwierdzone encje lub pliki.
+            potwierdzone imiona lub encje. Nie proś użytkownika o opis wyglądu, listę
+            zdjęć ani o to, „co jest na zdjęciu” / „jakie kolory dominują”, gdy w kontekście
+            są już potwierdzone encje, scena, fragmenty dokumentów lub wskazany plik.
+            Jeśli użytkownik prosi o opis wskazanego zdjęcia (@plik), opisz je wyłącznie
+            z kontekstu grafu/retrieval — nigdy nie odsyłaj pytania z powrotem do użytkownika.
             Nie używaj placeholderów vision (person 1, animal 1) jako imion — pomiń je i podaj
             tylko prawdziwe nazwy z grafu.
             Nie podawaj etymologii imion, biografii ogólnych ani wiedzy encyklopedycznej

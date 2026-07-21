@@ -24,12 +24,28 @@ class ChatAnswerGroundingTest {
                 "Aby odpowiedzieć na pytanie, potrzebuję więcej informacji. Czy możesz podać dostępne zdjęcia lub opisać, jak wygląda osoba?"));
         assertTrue(ChatAnswerGrounding.isCapabilityDenial(
                 "Need more information — describe how they look."));
+        assertTrue(ChatAnswerGrounding.isCapabilityDenial("""
+                Oczywiście! Aby opisać zdjęcie, potrzebuję więcej szczegółów na jego temat. Możesz mi powiedzieć, co jest na zdjęciu? Na przykład:
+                - Czy to krajobraz, portret, czy może zdjęcie przedmiotu?
+                - Jakie kolory dominują?
+                """));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(
                 "Na zdjęciu są Igor i Anna."));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(
                 "Nie znaleziono informacji w dokumentach."));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(""));
         assertFalse(ChatAnswerGrounding.isCapabilityDenial(null));
+    }
+
+    @Test
+    void describePhotoAskBackIsRewrittenWhenEvidenceExists() {
+        String askBack = """
+                Oczywiście! Aby opisać zdjęcie, potrzebuję więcej szczegółów na jego temat. Możesz mi powiedzieć, co jest na zdjęciu?
+                """;
+        String resolved = ChatAnswerGrounding.resolveGroundedAnswer(
+                askBack, List.of("Igor", "Anna"), true, false);
+        assertEquals("Na zdjęciu są Igor i Anna.", resolved);
+        assertFalse(ChatAnswerGrounding.isCapabilityDenial(resolved));
     }
 
     @Test
