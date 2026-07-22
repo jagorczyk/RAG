@@ -47,6 +47,18 @@ frontend/yarn-debug.log*
 frontend/yarn-error.log*
 frontend/.pnp.*
 
+new_frontend/node_modules/
+new_frontend/.next/
+new_frontend/out/
+new_frontend/build/
+new_frontend/coverage/
+new_frontend/.env*.local
+new_frontend/.npm/
+new_frontend/npm-debug.log*
+new_frontend/yarn-debug.log*
+new_frontend/yarn-error.log*
+new_frontend/.pnp.*
+
 # =========================
 # Thesis / local docs (not part of app)
 # =========================
@@ -76,6 +88,7 @@ revert_listings.py
 # Local-only docs / samples (not on GitHub)
 # =========================
 *.md
+!/AGENTS.md
 docs/
 scripts/
 test-data/
