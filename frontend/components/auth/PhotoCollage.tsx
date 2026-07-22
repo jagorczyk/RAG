@@ -14,6 +14,7 @@ import {
 import {
   AnimatePresence,
   motion,
+  useMotionTemplate,
   useMotionValue,
   useReducedMotion,
   useSpring,
@@ -40,8 +41,8 @@ const FOLDERS = [
 ] as const;
 
 /**
- * Equal square tiles side by side. Z-axis: retreat / advance for depth.
- * More tiles, smaller cells, top-cropped faces, grid pulled back.
+ * Equal square tiles side by side. Strong Z push/pull for visible 3D size change.
+ * Cursor tilts the whole scene (additive).
  */
 const COLS = 6;
 const ROWS = 4;
@@ -49,13 +50,27 @@ const ROWS = 4;
 const TILE_MOTION: {
   src: string;
   depth: number[];
+  opacity: number[];
+  shadow: string[];
   duration: number;
   delay: number;
 }[] = Array.from({ length: COLS * ROWS }, (_, i) => {
   const retreat = i % 2 === 0;
   return {
     src: PHOTOS[i % PHOTOS.length],
-    depth: retreat ? [0, -110, 0] : [0, 70, 0],
+    depth: retreat ? [0, -220, 0] : [0, 140, 0],
+    opacity: retreat ? [1, 0.72, 1] : [1, 1, 1],
+    shadow: retreat
+      ? [
+          "0 8px 24px rgba(17,45,78,0.10)",
+          "0 2px 8px rgba(17,45,78,0.04)",
+          "0 8px 24px rgba(17,45,78,0.10)",
+        ]
+      : [
+          "0 8px 24px rgba(17,45,78,0.10)",
+          "0 28px 60px rgba(17,45,78,0.28)",
+          "0 8px 24px rgba(17,45,78,0.10)",
+        ],
     duration: 6.4 + (i % 5) * 0.55,
     delay: (i % 8) * 0.18,
   };
@@ -73,8 +88,11 @@ export function PhotoCollage() {
   const my = useMotionValue(0);
   const springX = useSpring(mx, { stiffness: 55, damping: 20, mass: 0.5 });
   const springY = useSpring(my, { stiffness: 55, damping: 20, mass: 0.5 });
-  const nudgeX = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 12));
-  const nudgeY = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * 8));
+  const nudgeX = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 10));
+  const nudgeY = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * 6));
+  const tiltY = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 12));
+  const tiltX = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * -8));
+  const sceneTransform = useMotionTemplate`translate3d(${nudgeX}px, ${nudgeY}px, 0) rotateX(${tiltX}deg) rotateY(${tiltY}deg)`;
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -142,60 +160,85 @@ export function PhotoCollage() {
             exit={{ opacity: 0, scale: 0.92, filter: "blur(8px)" }}
             transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
           >
-            <motion.div
+            {/* Perspective root — no conflicting Motion transforms here */}
+            <div
               className="absolute inset-0 flex items-center justify-center p-12 lg:p-20"
-              style={{
-                x: nudgeX,
-                y: nudgeY,
-                perspective: 1200,
-                transformStyle: "preserve-3d",
-                transform: "translateZ(-160px)",
-              }}
+              style={{ perspective: 750 }}
             >
-              <div
-                className="grid w-full max-w-2xl grid-cols-6 gap-0"
-                style={{ transformStyle: "preserve-3d" }}
+              {/* Cursor tilt / nudge */}
+              <motion.div
+                className="flex h-full w-full items-center justify-center"
+                style={{
+                  transform: sceneTransform,
+                  transformStyle: "preserve-3d",
+                }}
               >
-                {TILE_MOTION.map((tile, index) => (
-                  <motion.div
-                    key={`${tile.src}-${index}`}
-                    className="relative aspect-square min-h-0 min-w-0 overflow-hidden bg-[#DBE2EF]"
+                {/* Base pull-back — separate from Motion x/y/rotate */}
+                <div
+                  className="w-full max-w-2xl"
+                  style={{
+                    transform: "translateZ(-140px)",
+                    transformStyle: "preserve-3d",
+                  }}
+                >
+                  <div
+                    className="grid w-full grid-cols-6 gap-0"
                     style={{ transformStyle: "preserve-3d" }}
-                    initial={{ opacity: 0, z: 0 }}
-                    animate={
-                      reduced
-                        ? { opacity: 1, z: 0 }
-                        : {
-                            opacity: 1,
-                            z: tile.depth,
-                          }
-                    }
-                    transition={
-                      reduced
-                        ? { duration: 0.35, delay: index * 0.02 }
-                        : {
-                            opacity: { duration: 0.4, delay: index * 0.03 },
-                            z: {
-                              duration: tile.duration,
-                              repeat: Infinity,
-                              ease: "easeInOut",
-                              delay: tile.delay,
-                            },
-                          }
-                    }
                   >
-                    <Image
-                      src={tile.src}
-                      alt=""
-                      fill
-                      sizes="12vw"
-                      className="object-cover object-top"
-                      priority={index < 8}
-                    />
-                  </motion.div>
-                ))}
-              </div>
-            </motion.div>
+                    {TILE_MOTION.map((tile, index) => (
+                      <motion.div
+                        key={`${tile.src}-${index}`}
+                        className="relative aspect-square min-h-0 min-w-0 overflow-hidden bg-[#DBE2EF]"
+                        style={{ transformStyle: "preserve-3d" }}
+                        initial={{ opacity: 0, z: 0 }}
+                        animate={
+                          reduced
+                            ? { opacity: 1, z: 0, boxShadow: tile.shadow[0] }
+                            : {
+                                opacity: tile.opacity,
+                                z: tile.depth,
+                                boxShadow: tile.shadow,
+                              }
+                        }
+                        transition={
+                          reduced
+                            ? { duration: 0.35, delay: index * 0.02 }
+                            : {
+                                opacity: {
+                                  duration: tile.duration,
+                                  repeat: Infinity,
+                                  ease: "easeInOut",
+                                  delay: tile.delay,
+                                },
+                                z: {
+                                  duration: tile.duration,
+                                  repeat: Infinity,
+                                  ease: "easeInOut",
+                                  delay: tile.delay,
+                                },
+                                boxShadow: {
+                                  duration: tile.duration,
+                                  repeat: Infinity,
+                                  ease: "easeInOut",
+                                  delay: tile.delay,
+                                },
+                              }
+                        }
+                      >
+                        <Image
+                          src={tile.src}
+                          alt=""
+                          fill
+                          sizes="12vw"
+                          className="object-cover object-top"
+                          priority={index < 8}
+                        />
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            </div>
             <Caption>Biblioteka w ruchu</Caption>
           </motion.div>
         ) : (
