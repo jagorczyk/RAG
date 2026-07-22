@@ -134,11 +134,11 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- Siatka **złączonych** zdjęć (bez luk i bez zaokrągleń), jak jedna płaszczyzna albumu.
-- Wybrane kafelki **powoli się powiększają** (scale breathe), żeby dać wrażenie oddalenia / wysuwania.
-- Mocniejszy **3D** (perspective, rotateX/Y, translateZ) zależny od kursora; idle float na części kafelków.
-- Assets w `public/collage/`. `prefers-reduced-motion` / touch: bez 3D tilt i breathe.
-- Bez overlay badge’y, chipów i copy na kolażu.
+- Gęsta siatka (np. 8×3) ze zdjęć z `public/collage/` (powtórzenia OK).
+- Ściana cylindryczna: obrót **od lewej do prawej** (rotateY wg kolumny + ciągły drift + kursor).
+- Wybrane kafelki wolno się powiększają (breathe).
+- Tło: ciemne, ziarno, rozmycie fotograficzne — bez „orbs” radial gradientów.
+- `prefers-reduced-motion`: bez driftu / 3D.
 - Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
