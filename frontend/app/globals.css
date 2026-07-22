@@ -2,28 +2,28 @@
 
 :root {
   color-scheme: light;
-  --ink: #000000;
-  /* ~7:1 on white — body/placeholder AA */
-  --ink-muted: #595959;
-  --surface: #ffffff;
+  --ink: #112d4e;
+  /* ~4.8:1 on #F9F7F7 — body/placeholder AA */
+  --ink-muted: #4a6b8a;
+  --surface: #f9f7f7;
   --surface-raised: #ffffff;
-  --sidebar: #f7f7f8;
-  --soft: #f7f7f8;
-  --border: #e5e5e5;
-  --border-strong: #d0d0d0;
-  --accent: #000000;
-  --accent-hover: #1a1a1a;
-  --accent-subtle: #f7f7f8;
-  --accent-muted: #efefef;
-  --on-accent: #ffffff;
+  --sidebar: #dbe2ef;
+  --soft: #f9f7f7;
+  --border: #dbe2ef;
+  --border-strong: #8fa6c4;
+  --accent: #3f72af;
+  --accent-hover: #2e5a8f;
+  --accent-subtle: #dbe2ef;
+  --accent-muted: #e8eef6;
+  --on-accent: #f9f7f7;
   --success: #1a7a4c;
   --success-soft: #e8f5ee;
   --warning: #b45309;
   --warning-soft: #fef3e7;
   --error: #c54444;
   --error-soft: #fff1f1;
-  --info: #1d4ed8;
-  --info-soft: #eff4ff;
+  --info: #3f72af;
+  --info-soft: #e8eef6;
   --scrim: color-mix(in srgb, var(--ink) 28%, transparent);
   --focus-ring: color-mix(in srgb, var(--ink) 12%, transparent);
   --error-ring: color-mix(in srgb, var(--error) 22%, transparent);
@@ -96,7 +96,8 @@
   --color-error-soft: var(--error-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-source-sans);
+  --font-display: var(--font-fraunces);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --shadow-sm: var(--shadow-sm);
   --shadow-md: var(--shadow-md);
@@ -115,7 +116,7 @@
     margin: 0;
     background: var(--surface);
     color: var(--ink);
-    font-family: var(--font-inter), system-ui, sans-serif;
+    font-family: var(--font-source-sans), system-ui, sans-serif;
     /* 1.125rem × 12px root ≈ 13.5px — readable at compact density */
     font-size: 1.125rem;
     line-height: 1.5;
@@ -234,9 +235,10 @@
   }
 
   .page-title {
+    font-family: var(--font-fraunces), Georgia, serif;
     font-size: 1.5rem;
-    font-weight: 800;
-    letter-spacing: -0.04em;
+    font-weight: 700;
+    letter-spacing: -0.02em;
     line-height: 1.15;
     color: var(--ink);
     text-wrap: balance;
@@ -509,7 +511,7 @@
 
   .nav-item-active {
     background: var(--accent-muted);
-    color: var(--ink);
+    color: var(--accent);
     font-weight: 700;
   }
 

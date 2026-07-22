@@ -67,7 +67,11 @@ function handleUnauthorized(status: number): void {
   if (status === 401 && typeof window !== "undefined") {
     clearAuth();
     const path = window.location.pathname;
-    if (!path.startsWith("/login") && !path.startsWith("/register")) {
+    if (
+      !path.startsWith("/login") &&
+      !path.startsWith("/register") &&
+      !path.startsWith("/privacy")
+    ) {
       const next = encodeURIComponent(path + window.location.search);
       window.location.href = `/login?next=${next}`;
     }

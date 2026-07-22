@@ -15,11 +15,11 @@ import {
   Check,
   X,
   Users,
-  LogOut,
+  Settings,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { getChats, createChat, Chat, renameChat } from "@/lib/api";
-import { getStoredUser, logout } from "@/lib/auth";
+import { getStoredUser } from "@/lib/auth";
 
 function groupChats(chats: Chat[]) {
   const now = new Date();
@@ -41,8 +41,6 @@ function groupChats(chats: Chat[]) {
 }
 
 export function Sidebar() {
-  // SSR + first client paint: closed. Tab bar owns primary phone nav (no open-drawer flash).
-  // Desktop opens in the effect below after mount.
   const [isOpen, setIsOpen] = useState(false);
   const [chats, setChats] = useState<Chat[]>([]);
   const [isCreating, setIsCreating] = useState(false);
@@ -54,6 +52,7 @@ export function Sidebar() {
 
   const pathname = usePathname();
   const router = useRouter();
+  const user = getStoredUser();
 
   const fetchChats = async () => {
     try {
@@ -73,13 +72,11 @@ export function Sidebar() {
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");
     const syncToViewport = () => setIsOpen(mq.matches);
-    // Desktop: open rail. Phone: stay closed (initial state already closed).
     syncToViewport();
     mq.addEventListener("change", syncToViewport);
     return () => mq.removeEventListener("change", syncToViewport);
   }, []);
 
-  // After navigation on phone, dismiss the drawer so content is full-width.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.matchMedia("(max-width: 767px)").matches) {
@@ -146,7 +143,9 @@ export function Sidebar() {
   const isChatActive = (id: string) => pathname === `/chat/${id}`;
   const isFoldersActive = pathname.startsWith("/folders");
   const isKnowledgeActive = pathname.startsWith("/knowledge");
+  const isSettingsActive = pathname.startsWith("/settings");
   const groups = useMemo(() => groupChats(chats), [chats]);
+  const initials = (user?.displayName || user?.email || "?").slice(0, 1).toUpperCase();
 
   return (
     <>
@@ -186,7 +185,8 @@ export function Sidebar() {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -6 }}
                   transition={{ duration: 0.15 }}
-                  className="truncate text-sm font-extrabold tracking-tight text-ink"
+                  className="truncate text-sm font-bold tracking-tight text-ink"
+                  style={{ fontFamily: "var(--font-fraunces), Georgia, serif" }}
                 >
                   RAG
                 </motion.p>
@@ -215,29 +215,7 @@ export function Sidebar() {
           )}
         </div>
 
-        <div className="border-b border-border p-3">
-          <button
-            type="button"
-            onClick={handleCreateChat}
-            disabled={isCreating}
-            className={`btn-primary w-full ${!isOpen ? "px-0 py-2.5" : "py-2.5"}`}
-            title="Nowa rozmowa"
-          >
-            {isCreating ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <Plus size={18} />
-            )}
-            {isOpen && <span>Nowa rozmowa</span>}
-          </button>
-          {createError && isOpen && (
-            <p className="mt-2 text-xs text-error" role="alert">
-              {createError}
-            </p>
-          )}
-        </div>
-
-        <nav className="flex flex-1 flex-col gap-3 overflow-y-auto p-3">
+        <nav className="flex min-h-0 flex-1 flex-col p-3">
           <ul className="space-y-0.5">
             <li>
               <Link
@@ -271,12 +249,32 @@ export function Sidebar() {
             </li>
           </ul>
 
-          <div className="border-t border-border" />
+          <div className="my-3 border-t border-border" />
 
-          <div className="min-h-0 flex-1">
-            {isOpen && (
-              <p className="section-caption px-2">Rozmowy</p>
+          <div className="mb-2">
+            <button
+              type="button"
+              onClick={handleCreateChat}
+              disabled={isCreating}
+              className={`btn-primary w-full ${!isOpen ? "px-0 py-2.5" : "py-2.5"}`}
+              title="Nowa rozmowa"
+            >
+              {isCreating ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : (
+                <Plus size={18} />
+              )}
+              {isOpen && <span>Nowa rozmowa</span>}
+            </button>
+            {createError && isOpen && (
+              <p className="mt-2 text-xs text-error" role="alert">
+                {createError}
+              </p>
             )}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {isOpen && <p className="section-caption px-2">Rozmowy</p>}
             <ul className="space-y-0.5">
               {isLoadingChats && isOpen && (
                 <>
@@ -336,21 +334,42 @@ export function Sidebar() {
             </ul>
           </div>
 
-          <div className="mt-auto border-t border-border pt-2">
-            {isOpen && getStoredUser() && (
-              <p className="mb-1 truncate px-2 text-xs text-ink-muted" title={getStoredUser()?.email}>
-                {getStoredUser()?.displayName || getStoredUser()?.email}
-              </p>
+          <div className="mt-2 border-t border-border pt-2">
+            {isOpen && user && (
+              <div className="mb-1 flex items-center gap-2 px-2 py-1.5">
+                <span
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-on-accent"
+                  aria-hidden
+                >
+                  {initials}
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink">
+                    {user.displayName?.trim() || "Profil"}
+                  </p>
+                  <p className="truncate text-xs text-ink-muted" title={user.email}>
+                    {user.email}
+                  </p>
+                </div>
+              </div>
             )}
-            <button
-              type="button"
-              onClick={() => logout()}
-              className={`nav-item w-full ${!isOpen ? "justify-center px-0" : ""}`}
-              title="Wyloguj"
+            {!isOpen && (
+              <div
+                className="mx-auto mb-1 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-xs font-bold text-on-accent"
+                title={user?.email || "Profil"}
+                aria-hidden
+              >
+                {initials}
+              </div>
+            )}
+            <Link
+              href="/settings"
+              className={`nav-item w-full ${isSettingsActive ? "nav-item-active" : ""} ${!isOpen ? "justify-center px-0" : ""}`}
+              title="Ustawienia"
             >
-              <LogOut size={18} className="shrink-0" />
-              {isOpen && <span className="truncate">Wyloguj</span>}
-            </button>
+              <Settings size={18} className="shrink-0" />
+              {isOpen && <span className="truncate">Ustawienia</span>}
+            </Link>
           </div>
         </nav>
       </aside>

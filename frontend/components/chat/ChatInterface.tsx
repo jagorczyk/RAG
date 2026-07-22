@@ -10,11 +10,13 @@ import {
   Image as ImageIcon,
   File,
   X,
+  Users,
 } from "lucide-react";
 import {
   getMessagesForChat,
   sendMessage,
   Message,
+  QueryEvidence,
   Source,
   getFolders,
   getAllFiles,
@@ -24,10 +26,15 @@ import {
   FilePreview,
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ImagePreview } from "@/components/ui/ImagePreview";
 import { ChatMessageBubble, TypingIndicator } from "@/components/chat/ChatMessageBubble";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Loading } from "@/components/ui/Loading";
+import {
+  resolveMentionedPeople,
+  type MentionedPerson,
+} from "@/lib/mentioned-people";
 
 interface ChatInterfaceProps {
   chatId?: string;
@@ -56,6 +63,9 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const [previewFile, setPreviewFile] = useState<FilePreview | null>(null);
   const [sheetSources, setSheetSources] = useState<Source[] | null>(null);
+  const [sheetEvidence, setSheetEvidence] = useState<QueryEvidence[]>([]);
+  const [sheetPeople, setSheetPeople] = useState<MentionedPerson[] | null>(null);
+  const [peopleByMessageId, setPeopleByMessageId] = useState<Record<string, MentionedPerson[]>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -70,6 +80,8 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     if (chatId) {
       setIsInitialLoading(true);
       setHistoryIndex(-1);
+      setPeopleByMessageId({});
+      setSheetPeople(null);
       getMessagesForChat(chatId)
         .then((msgs) => {
           setMessages(msgs);
@@ -81,9 +93,42 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         });
     } else {
       setMessages([]);
+      setPeopleByMessageId({});
     }
   }, [chatId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const pending = messages.filter(
+      (msg) =>
+        msg.role === "assistant" &&
+        (msg.sources?.length ?? 0) > 0 &&
+        !(msg.id in peopleByMessageId)
+    );
+    if (pending.length === 0) return;
+
+    (async () => {
+      const updates: Record<string, MentionedPerson[]> = {};
+      await Promise.all(
+        pending.map(async (msg) => {
+          try {
+            updates[msg.id] = await resolveMentionedPeople(msg.content, msg.sources);
+          } catch {
+            updates[msg.id] = [];
+          }
+        })
+      );
+      if (!cancelled) {
+        setPeopleByMessageId((prev) => ({ ...prev, ...updates }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Resolve once per message id; peopleByMessageId keys gate re-entry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional gate via `in` check
+  }, [messages]);
   useEffect(() => {
     Promise.all([getFolders(), getAllFiles()])
       .then(([folders, files]) => {
@@ -503,8 +548,14 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
                 key={msg.id}
                 message={msg}
                 sources={msg.sources}
+                evidence={msg.evidence}
                 uncertain={msg.uncertain}
-                onSourcesOpen={setSheetSources}
+                mentionedPeople={peopleByMessageId[msg.id] ?? []}
+                onSourcesOpen={(sources, evidence) => {
+                  setSheetSources(sources);
+                  setSheetEvidence(evidence);
+                }}
+                onPeopleOpen={(people) => setSheetPeople(people)}
                 index={index}
               >
                 {msg.content
@@ -637,7 +688,10 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-bold text-ink">{item.fileName}</span>
-                <span className="mt-0.5 block text-xs text-ink-muted">Otwórz podgląd</span>
+                <span className="mt-0.5 block text-xs text-ink-muted">
+                  {sheetEvidence.find((evidence) => evidence.path === item.path)?.reasons?.[0]
+                    ?? "Otwórz podgląd"}
+                </span>
               </span>
             </button>
           ))}
@@ -645,6 +699,45 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         <button
           type="button"
           onClick={() => setSheetSources(null)}
+          className="btn-ghost mt-2 w-full"
+        >
+          <X size={16} /> Zamknij
+        </button>
+      </BottomSheet>
+
+      <BottomSheet
+        open={!!sheetPeople}
+        onClose={() => setSheetPeople(null)}
+        title={sheetPeople ? `Osoby (${sheetPeople.length})` : "Osoby"}
+      >
+        <div className="-mx-1">
+          {(sheetPeople || []).map((person) => (
+            <Link
+              key={person.id}
+              href={`/knowledge/${person.id}`}
+              onClick={() => setSheetPeople(null)}
+              className="flex min-h-[var(--touch-min)] w-full items-center gap-2.5 border-b border-border px-1 text-left last:border-b-0 transition-opacity active:opacity-55"
+            >
+              <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-accent-muted text-accent">
+                {person.photoBase64 ? (
+                  <img
+                    src={`data:image/jpeg;base64,${person.photoBase64}`}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <Users size={16} aria-hidden />
+                )}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm font-bold text-ink">
+                {person.displayName}
+              </span>
+            </Link>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => setSheetPeople(null)}
           className="btn-ghost mt-2 w-full"
         >
           <X size={16} /> Zamknij

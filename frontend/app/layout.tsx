@@ -1,19 +1,25 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Fraunces, Source_Sans_3 } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/layout/AppShell";
 import { ThemeProvider } from "@/lib/ThemeContext";
 import { ThemeScript } from "@/components/ThemeScript";
 
-const inter = Inter({
-  variable: "--font-inter",
+const sourceSans = Source_Sans_3({
+  variable: "--font-source-sans",
   subsets: ["latin", "latin-ext"],
-  weight: ["400", "500", "600", "700", "800"],
+  weight: ["400", "500", "600", "700"],
+});
+
+const fraunces = Fraunces({
+  variable: "--font-fraunces",
+  subsets: ["latin", "latin-ext"],
+  weight: ["500", "600", "700"],
 });
 
 export const metadata: Metadata = {
   title: "RAG",
-  description: "Biblioteka dokumentów i czat z bazą wiedzy",
+  description: "Biblioteka zdjęć i czat GraphRAG",
 };
 
 export default function RootLayout({
@@ -22,7 +28,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pl" className={`${inter.variable} h-full antialiased`} suppressHydrationWarning>
+    <html
+      lang="pl"
+      className={`${sourceSans.variable} ${fraunces.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
       <body className="h-screen w-screen overflow-hidden bg-surface font-sans text-ink">
         <ThemeScript />
         <ThemeProvider>

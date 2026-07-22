@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { login } from "@/lib/auth";
 import { Button } from "@/components/ui/Button";
+import { AuthLanding, GoogleSignInButton } from "@/components/auth/AuthLanding";
 
 function LoginForm() {
   const router = useRouter();
@@ -30,29 +31,33 @@ function LoginForm() {
   };
 
   return (
-    <div className="w-full max-w-md rounded-xl border border-border bg-surface-raised p-6 shadow-sm">
-      <div className="mb-6 text-center">
-        <h1 className="text-2xl font-semibold text-ink">Zaloguj się</h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          Dostęp do folderów, czatu i bazy wiedzy wymaga konta.
+    <AuthLanding
+      title="Zaloguj się"
+      subtitle="Dostęp do biblioteki zdjęć, osób i czatu GraphRAG."
+      footer={
+        <p>
+          Nie masz konta?{" "}
+          <Link href="/register" className="font-semibold text-accent underline-offset-2 hover:underline">
+            Zarejestruj się
+          </Link>
         </p>
-      </div>
-
+      }
+    >
       <form onSubmit={onSubmit} className="space-y-4">
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-ink">E-mail</span>
+          <span className="mb-1 block text-sm font-semibold text-ink">E-mail</span>
           <input
             type="email"
             autoComplete="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-ink outline-none focus:border-ink"
+            className="w-full rounded-[10px] border border-border bg-surface-raised px-3 py-2.5 text-ink outline-none focus:border-accent"
           />
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-sm font-medium text-ink">Hasło</span>
+          <span className="mb-1 block text-sm font-semibold text-ink">Hasło</span>
           <input
             type="password"
             autoComplete="current-password"
@@ -60,35 +65,38 @@ function LoginForm() {
             minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-ink outline-none focus:border-ink"
+            className="w-full rounded-[10px] border border-border bg-surface-raised px-3 py-2.5 text-ink outline-none focus:border-accent"
           />
         </label>
 
         {error && (
-          <p className="rounded-lg bg-[var(--error-soft)] px-3 py-2 text-sm text-[var(--error)]" role="alert">
+          <p className="rounded-[10px] bg-[var(--error-soft)] px-3 py-2 text-sm text-[var(--error)]" role="alert">
             {error}
           </p>
         )}
 
-        <Button label={loading ? "Logowanie…" : "Zaloguj"} type="submit" disabled={loading} />
+        <Button label={loading ? "Logowanie…" : "Zaloguj się"} type="submit" disabled={loading} />
       </form>
 
-      <p className="mt-4 text-center text-sm text-ink-muted">
-        Nie masz konta?{" "}
-        <Link href="/register" className="font-medium text-ink underline underline-offset-2">
-          Zarejestruj się
-        </Link>
-      </p>
-    </div>
+      <div className="my-5 flex items-center gap-3" aria-hidden>
+        <span className="h-px flex-1 bg-border" />
+        <span className="text-xs font-semibold uppercase tracking-wide text-ink-muted">lub</span>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+
+      <GoogleSignInButton disabled />
+    </AuthLanding>
   );
 }
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-full items-center justify-center bg-surface px-4 py-10">
-      <Suspense fallback={<div className="text-sm text-ink-muted">Ładowanie…</div>}>
-        <LoginForm />
-      </Suspense>
-    </div>
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center text-sm text-ink-muted">Ładowanie…</div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

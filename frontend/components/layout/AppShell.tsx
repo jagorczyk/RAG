@@ -7,11 +7,13 @@ import { MobileTabBar } from "./MobileTabBar";
 import { isAuthenticated } from "@/lib/auth";
 
 const AUTH_PATHS = ["/login", "/register"];
+const PUBLIC_PATHS = ["/privacy"];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isAuthScreen = AUTH_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  const isPublicScreen = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -24,15 +26,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    if (isPublicScreen) {
+      setReady(true);
+      return;
+    }
+
     if (!isAuthenticated()) {
       const next = encodeURIComponent(pathname || "/");
       router.replace(`/login?next=${next}`);
       return;
     }
     setReady(true);
-  }, [pathname, isAuthScreen, router]);
+  }, [pathname, isAuthScreen, isPublicScreen, router]);
 
-  if (isAuthScreen) {
+  if (isAuthScreen || isPublicScreen) {
     return (
       <div className="h-full w-full">
         <main id="main-content" tabIndex={-1} className="h-full outline-none">
