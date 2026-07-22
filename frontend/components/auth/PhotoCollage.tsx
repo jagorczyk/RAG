@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
   motion,
@@ -22,16 +22,16 @@ const PHOTOS = [
   "/collage/08.jpg",
 ] as const;
 
-/** Depth / float bias per „page” — album spread feel */
-const PAGE_META = [
-  { z: 40, float: 0.0, tilt: -1.2 },
-  { z: 28, float: 0.35, tilt: 0.8 },
-  { z: 52, float: 0.15, tilt: -0.6 },
-  { z: 22, float: 0.55, tilt: 1.1 },
-  { z: 36, float: 0.25, tilt: 0.4 },
-  { z: 48, float: 0.7, tilt: -0.9 },
-  { z: 30, float: 0.1, tilt: 0.7 },
-  { z: 44, float: 0.45, tilt: -0.5 },
+/** Per-tile 3D depth + which ones slowly “come forward” */
+const TILE_META = [
+  { depth: 1.15, breathe: true, phase: 0.0 },
+  { depth: 0.75, breathe: false, phase: 0.4 },
+  { depth: 1.35, breathe: true, phase: 1.1 },
+  { depth: 0.9, breathe: false, phase: 0.7 },
+  { depth: 1.05, breathe: true, phase: 2.0 },
+  { depth: 0.7, breathe: false, phase: 1.5 },
+  { depth: 1.4, breathe: true, phase: 0.3 },
+  { depth: 0.85, breathe: true, phase: 2.6 },
 ] as const;
 
 export function PhotoCollage() {
@@ -39,12 +39,13 @@ export function PhotoCollage() {
   const [finePointer, setFinePointer] = useState(false);
   const mx = useMotionValue(0);
   const my = useMotionValue(0);
-  const springX = useSpring(mx, { stiffness: 100, damping: 20, mass: 0.45 });
-  const springY = useSpring(my, { stiffness: 100, damping: 20, mass: 0.45 });
+  const springX = useSpring(mx, { stiffness: 70, damping: 16, mass: 0.55 });
+  const springY = useSpring(my, { stiffness: 70, damping: 16, mass: 0.55 });
 
-  const sceneRotateY = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 28));
-  const sceneRotateX = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * -18));
-  const sceneTransform = useMotionTemplate`perspective(1200px) rotateX(${sceneRotateX}deg) rotateY(${sceneRotateY}deg)`;
+  const sceneRotateY = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 42));
+  const sceneRotateX = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * -28));
+  const sceneZ = useTransform(springX, (v) => (reduced || !finePointer ? 0 : Math.abs(v) * 40));
+  const sceneTransform = useMotionTemplate`perspective(900px) rotateX(${sceneRotateX}deg) rotateY(${sceneRotateY}deg) translateZ(${sceneZ}px)`;
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -74,27 +75,29 @@ export function PhotoCollage() {
       aria-hidden
     >
       <div
-        className="pointer-events-none absolute inset-0 opacity-50"
+        className="pointer-events-none absolute inset-0 opacity-45"
         style={{
           background:
-            "radial-gradient(ellipse at 40% 30%, #3F72AF 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, #DBE2EF 0%, transparent 40%)",
+            "radial-gradient(ellipse at 35% 25%, #3F72AF 0%, transparent 55%), radial-gradient(ellipse at 85% 75%, #DBE2EF 0%, transparent 42%)",
         }}
       />
 
-      <div className="absolute inset-0 flex items-center justify-center px-5 py-8 lg:px-10 lg:py-12">
+      <div
+        className="absolute inset-0 flex items-center justify-center"
+        style={{ perspective: "900px" }}
+      >
         <motion.div
-          className="grid w-full max-w-3xl grid-cols-4 gap-3 sm:gap-4"
+          className="grid h-[118%] w-[118%] grid-cols-4 grid-rows-2"
           style={{
             transformStyle: "preserve-3d",
             transform: sceneTransform,
           }}
         >
           {PHOTOS.map((src, index) => (
-            <AlbumPage
+            <CollageTile
               key={src}
               src={src}
-              index={index}
-              meta={PAGE_META[index]}
+              meta={TILE_META[index]}
               springX={springX}
               springY={springY}
               reduced={!!reduced || !finePointer}
@@ -107,9 +110,8 @@ export function PhotoCollage() {
   );
 }
 
-function AlbumPage({
+function CollageTile({
   src,
-  index,
   meta,
   springX,
   springY,
@@ -117,56 +119,51 @@ function AlbumPage({
   priority,
 }: {
   src: string;
-  index: number;
-  meta: (typeof PAGE_META)[number];
+  meta: (typeof TILE_META)[number];
   springX: ReturnType<typeof useSpring>;
   springY: ReturnType<typeof useSpring>;
   reduced: boolean;
   priority: boolean;
 }) {
-  const localX = useTransform(springX, (v) => (reduced ? 0 : v * meta.z * 0.35));
-  const localY = useTransform(springY, (v) => (reduced ? 0 : v * meta.z * 0.28));
-  const localZ = useTransform(springX, (v) => (reduced ? 0 : meta.z + Math.abs(v) * 18));
-  const tiltY = useTransform(springX, (v) => (reduced ? 0 : meta.tilt + v * 6));
-  const tiltX = useTransform(springY, (v) => (reduced ? 0 : -v * 5));
-  const transform = useMotionTemplate`translate3d(${localX}px, ${localY}px, ${localZ}px) rotateX(${tiltX}deg) rotateY(${tiltY}deg)`;
+  const push = meta.depth * 56;
+  const x = useTransform(springX, (v) => (reduced ? 0 : v * push));
+  const y = useTransform(springY, (v) => (reduced ? 0 : v * push * 0.85));
+  const z = useTransform(springX, (v) => (reduced ? 0 : meta.depth * 70 + Math.abs(v) * 36));
+  const rotY = useTransform(springX, (v) => (reduced ? 0 : v * 10 * meta.depth));
+  const rotX = useTransform(springY, (v) => (reduced ? 0 : -v * 8 * meta.depth));
+  const transform = useMotionTemplate`translate3d(${x}px, ${y}px, ${z}px) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
+
+  const breathe = useMemo(() => {
+    if (reduced || !meta.breathe) return undefined;
+    return {
+      scale: [1, 1.14, 1],
+      z: [0, 28, 0],
+      transition: {
+        duration: 7.5 + meta.phase,
+        repeat: Infinity,
+        ease: "easeInOut" as const,
+        delay: meta.phase,
+      },
+    };
+  }, [reduced, meta.breathe, meta.phase]);
 
   return (
     <motion.div
-      className="relative aspect-[3/4] overflow-hidden rounded-2xl border border-white/25 bg-[#DBE2EF] shadow-[0_18px_40px_rgba(17,45,78,0.45)]"
+      className="relative min-h-0 min-w-0 overflow-hidden bg-[#DBE2EF]"
       style={{
         transformStyle: "preserve-3d",
         transform,
-        zIndex: Math.round(meta.z),
+        zIndex: Math.round(meta.depth * 20),
       }}
-      animate={
-        reduced
-          ? undefined
-          : {
-              y: [0, -8 - (index % 3) * 2, 0],
-              transition: {
-                duration: 4.2 + meta.float * 2.4,
-                repeat: Infinity,
-                ease: "easeInOut",
-                delay: meta.float * 1.2,
-              },
-            }
-      }
+      animate={breathe}
     >
       <Image
         src={src}
         alt=""
         fill
-        sizes="(max-width: 1024px) 28vw, 18vw"
+        sizes="(max-width: 1024px) 40vw, 28vw"
         className="object-cover"
         priority={priority}
-      />
-      <div
-        className="pointer-events-none absolute inset-0 rounded-2xl"
-        style={{
-          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.18)",
-          background: "linear-gradient(145deg, rgba(255,255,255,0.18) 0%, transparent 42%)",
-        }}
       />
     </motion.div>
   );
