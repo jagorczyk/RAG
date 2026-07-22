@@ -34,17 +34,11 @@ export function AuthLanding({ title, subtitle, children, footer }: AuthLandingPr
                 className="h-10 w-10 object-contain"
                 priority
               />
-              <p
-                className="text-2xl font-semibold tracking-tight text-ink"
-                style={{ fontFamily: "var(--font-fraunces), Georgia, serif" }}
-              >
-                RAG
+              <p className="font-display text-2xl font-bold tracking-tight text-ink">
+                Cogniface
               </p>
             </div>
-            <h1
-              className="text-3xl font-semibold tracking-tight text-ink text-balance"
-              style={{ fontFamily: "var(--font-fraunces), Georgia, serif" }}
-            >
+            <h1 className="font-display text-3xl font-bold tracking-tight text-ink text-balance">
               {title}
             </h1>
             <p className="mt-2 text-[0.9375rem] leading-relaxed text-ink-muted text-pretty">

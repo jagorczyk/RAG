@@ -96,8 +96,8 @@
   --color-error-soft: var(--error-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
-  --font-sans: var(--font-source-sans);
-  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-manrope);
+  --font-display: var(--font-bricolage);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --shadow-sm: var(--shadow-sm);
   --shadow-md: var(--shadow-md);
@@ -116,7 +116,7 @@
     margin: 0;
     background: var(--surface);
     color: var(--ink);
-    font-family: var(--font-source-sans), system-ui, sans-serif;
+    font-family: var(--font-manrope), system-ui, sans-serif;
     /* 1.125rem × 12px root ≈ 13.5px — readable at compact density */
     font-size: 1.125rem;
     line-height: 1.5;
@@ -235,10 +235,10 @@
   }
 
   .page-title {
-    font-family: var(--font-fraunces), Georgia, serif;
+    font-family: var(--font-bricolage), system-ui, sans-serif;
     font-size: 1.5rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.03em;
     line-height: 1.15;
     color: var(--ink);
     text-wrap: balance;

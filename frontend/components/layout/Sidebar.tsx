@@ -168,11 +168,11 @@ export function Sidebar() {
           <Link
             href="/folders"
             className={`flex min-w-0 items-center gap-2 ${isOpen ? "flex-1" : "mx-auto justify-center"}`}
-            title="RAG"
+            title="Cogniface"
           >
             <Image
               src="/logo_rag.png"
-              alt="RAG"
+              alt="Cogniface"
               width={24}
               height={24}
               priority
@@ -185,10 +185,9 @@ export function Sidebar() {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -6 }}
                   transition={{ duration: 0.15 }}
-                  className="truncate text-sm font-bold tracking-tight text-ink"
-                  style={{ fontFamily: "var(--font-fraunces), Georgia, serif" }}
+                  className="font-display truncate text-sm font-bold tracking-tight text-ink"
                 >
-                  RAG
+                  Cogniface
                 </motion.p>
               )}
             </AnimatePresence>

@@ -1,24 +1,24 @@
 import type { Metadata } from "next";
-import { Fraunces, Source_Sans_3 } from "next/font/google";
+import { Bricolage_Grotesque, Manrope } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/layout/AppShell";
 import { ThemeProvider } from "@/lib/ThemeContext";
 import { ThemeScript } from "@/components/ThemeScript";
 
-const sourceSans = Source_Sans_3({
-  variable: "--font-source-sans",
+const manrope = Manrope({
+  variable: "--font-manrope",
   subsets: ["latin", "latin-ext"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
+const bricolage = Bricolage_Grotesque({
+  variable: "--font-bricolage",
   subsets: ["latin", "latin-ext"],
-  weight: ["500", "600", "700"],
+  weight: ["500", "600", "700", "800"],
 });
 
 export const metadata: Metadata = {
-  title: "RAG",
+  title: "Cogniface",
   description: "Biblioteka zdjęć i czat GraphRAG",
 };
 
@@ -30,7 +30,7 @@ export default function RootLayout({
   return (
     <html
       lang="pl"
-      className={`${sourceSans.variable} ${fraunces.variable} h-full antialiased`}
+      className={`${manrope.variable} ${bricolage.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="h-screen w-screen overflow-hidden bg-surface font-sans text-ink">

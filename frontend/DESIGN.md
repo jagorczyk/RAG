@@ -1,4 +1,4 @@
-# Frontend DESIGN — RAG / GraphRAG
+# Frontend DESIGN — Cogniface
 
 Dokument wiążący dla każdego agenta i każdej zmiany UI w `frontend/`.
 Przed edycją layoutu, stylów, routingu lub ekranów **przeczytaj ten plik w całości**.
@@ -6,6 +6,8 @@ Kontrakt produktowy (retrieval, źródła, język odpowiedzi) pozostaje w root [
 Konwencje Next.js: [`AGENTS.md`](./AGENTS.md).
 
 Ten dokument zastępuje Quiet Archive (monochrome). Nie wracaj do `#000` / `#fff` jako accent/surface bez jawnej decyzji użytkownika.
+
+Nazwa produktu w UI: **Cogniface**.
 
 ---
 
@@ -78,8 +80,8 @@ Nie używać Inter jako display. Dwie rodziny (Google Fonts przez `next/font`):
 
 | Rola | Rodzina | Użycie |
 |------|---------|--------|
-| Display / headlines | **Fraunces** (serif, soft) | landing headline, tytuły stron |
-| Body / UI | **Source Sans 3** | treść, formularze, nav, chat |
+| Display / headlines | **Bricolage Grotesque** | brand, landing headline, tytuły stron |
+| Body / UI | **Manrope** | treść, formularze, nav, chat |
 
 Skala orientacyjna: display ~2rem / 700; headline ~1.25rem / 650; title ~1.0625rem / 600; body ~0.9375rem / 400; label ~0.75rem / 600.
 
@@ -132,8 +134,8 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- Siatka / warstwy 6–12 miniaturek (assets z `public/` lub bezpieczne mocki lokalne).
-- Ruch zależny od pozycji kursora: warstwy z różnym współczynnikiem (`useMotionValue` + `useTransform` z `motion/react`, albo `transform` na `mousemove`).
+- Siatka zdjęć **złączonych obok siebie** (bez luk i rotacji), np. 4×2. Cały kolaż lekko reaguje na kursor (parallax).
+- Assets w `public/collage/`.
 - Bez overlay badge’y, chipów i copy na kolażu.
 - Obrazy dekoracyjne — nie są źródłami użytkownika.
 
@@ -239,7 +241,7 @@ Bez: billing, dark mode, zaawansowanych flag eksperymentalnych — dopóki nie b
 > **Disclaimer:** poniższy tekst jest szkicem produktowym, **nie stanowi porady prawnej** ani finalnej polityki RODO. Przed produkcją wymaga przeglądu prawnego.
 
 **1. Administrator**  
-Administratorem danych jest operator aplikacji RAG / GraphRAG [uzupełnić: nazwa, adres, e-mail kontaktowy].
+Administratorem danych jest operator aplikacji Cogniface [uzupełnić: nazwa, adres, e-mail kontaktowy].
 
 **2. Zakres danych**  
 - Dane konta: adres e-mail, hasło (hash) lub identyfikator konta Google przy OAuth.  

@@ -33,7 +33,7 @@ function LoginForm() {
   return (
     <AuthLanding
       title="Zaloguj się"
-      subtitle="Dostęp do biblioteki zdjęć, osób i czatu GraphRAG."
+      subtitle="Dostęp do biblioteki zdjęć, osób i czatu Cogniface."
       footer={
         <p>
           Nie masz konta?{" "}

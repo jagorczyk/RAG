@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 export const metadata: Metadata = {
-  title: "Polityka prywatności — RAG",
-  description: "Informacje o przetwarzaniu danych w aplikacji RAG / GraphRAG",
+  title: "Polityka prywatności — Cogniface",
+  description: "Informacje o przetwarzaniu danych w aplikacji Cogniface",
 };
 
 const SECTIONS: { title: string; body: ReactNode }[] = [
@@ -12,7 +12,7 @@ const SECTIONS: { title: string; body: ReactNode }[] = [
     title: "1. Administrator",
     body: (
       <p>
-        Administratorem danych jest operator aplikacji RAG / GraphRAG. Dane kontaktowe zostaną
+        Administratorem danych jest operator aplikacji Cogniface. Dane kontaktowe zostaną
         uzupełnione przed uruchomieniem produkcyjnym.
       </p>
     ),
@@ -110,10 +110,7 @@ export default function PrivacyPage() {
         <div className="space-y-8">
           {SECTIONS.map((section) => (
             <section key={section.title}>
-              <h2
-                className="mb-2 text-lg font-semibold text-ink"
-                style={{ fontFamily: "var(--font-fraunces), Georgia, serif" }}
-              >
+              <h2 className="font-display mb-2 text-lg font-semibold text-ink">
                 {section.title}
               </h2>
               <div className="text-[0.9375rem] leading-relaxed text-ink-muted">{section.body}</div>
