@@ -159,8 +159,9 @@ export function GalleryItem({
             fill
             sizes="(max-width: 1024px) 55vw, 280px"
             className="object-cover"
-            loading="lazy"
-            priority={index < 2}
+            {...(index < 2
+              ? { priority: true as const }
+              : { loading: "lazy" as const })}
           />
         ) : (
           <div className="absolute inset-0 bg-[#DBE2EF]" />
