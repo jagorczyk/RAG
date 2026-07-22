@@ -13,22 +13,21 @@ import {
 
 type CollageTile = {
   id: string;
-  src?: string;
-  tone: string;
+  src: string;
   depth: number;
   className: string;
   rotate: number;
 };
 
 const TILES: CollageTile[] = [
-  { id: "a", src: "/logo.png", tone: "#3F72AF", depth: 28, className: "left-[6%] top-[8%] h-[38%] w-[32%]", rotate: -6 },
-  { id: "b", src: "/logo_rag.png", tone: "#112D4E", depth: 18, className: "right-[8%] top-[6%] h-[28%] w-[36%]", rotate: 5 },
-  { id: "c", tone: "#DBE2EF", depth: 36, className: "left-[12%] top-[48%] h-[34%] w-[28%]", rotate: 3 },
-  { id: "d", src: "/logo.png", tone: "#2E5A8F", depth: 22, className: "left-[42%] top-[36%] h-[40%] w-[30%]", rotate: -4 },
-  { id: "e", tone: "#8FA6C4", depth: 40, className: "right-[6%] top-[42%] h-[30%] w-[26%]", rotate: 7 },
-  { id: "f", src: "/logo_rag.png", tone: "#3F72AF", depth: 14, className: "left-[38%] top-[8%] h-[22%] w-[22%]", rotate: 2 },
-  { id: "g", tone: "#112D4E", depth: 30, className: "right-[28%] bottom-[8%] h-[24%] w-[24%]", rotate: -5 },
-  { id: "h", tone: "#DBE2EF", depth: 20, className: "left-[4%] bottom-[6%] h-[20%] w-[30%]", rotate: 4 },
+  { id: "a", src: "/collage/01.jpg", depth: 28, className: "left-[6%] top-[8%] h-[38%] w-[32%]", rotate: -6 },
+  { id: "b", src: "/collage/02.jpg", depth: 18, className: "right-[8%] top-[6%] h-[28%] w-[36%]", rotate: 5 },
+  { id: "c", src: "/collage/03.jpg", depth: 36, className: "left-[12%] top-[48%] h-[34%] w-[28%]", rotate: 3 },
+  { id: "d", src: "/collage/04.jpg", depth: 22, className: "left-[42%] top-[36%] h-[40%] w-[30%]", rotate: -4 },
+  { id: "e", src: "/collage/05.jpg", depth: 40, className: "right-[6%] top-[42%] h-[30%] w-[26%]", rotate: 7 },
+  { id: "f", src: "/collage/06.jpg", depth: 14, className: "left-[38%] top-[8%] h-[22%] w-[22%]", rotate: 2 },
+  { id: "g", src: "/collage/07.jpg", depth: 30, className: "right-[28%] bottom-[8%] h-[24%] w-[24%]", rotate: -5 },
+  { id: "h", src: "/collage/08.jpg", depth: 20, className: "left-[4%] bottom-[6%] h-[20%] w-[30%]", rotate: 4 },
 ];
 
 export function PhotoCollage() {
@@ -69,7 +68,7 @@ export function PhotoCollage() {
       aria-hidden
     >
       <div
-        className="pointer-events-none absolute inset-0 opacity-40"
+        className="pointer-events-none absolute inset-0 opacity-35"
         style={{
           background:
             "radial-gradient(ellipse at 30% 20%, #3F72AF 0%, transparent 55%), radial-gradient(ellipse at 80% 70%, #DBE2EF 0%, transparent 45%)",
@@ -121,27 +120,18 @@ function CollageFrame({
 
   return (
     <motion.div
-      className={`absolute overflow-hidden rounded-xl border border-white/20 shadow-md ${tile.className}`}
-      style={{ transform, backgroundColor: tile.tone }}
+      className={`absolute overflow-hidden rounded-xl border border-white/25 shadow-md ${tile.className}`}
+      style={{ transform, backgroundColor: "#DBE2EF" }}
       animate={float}
     >
-      {tile.src ? (
-        <Image
-          src={tile.src}
-          alt=""
-          fill
-          sizes="280px"
-          className="object-cover opacity-90"
-          priority={tile.id === "a"}
-        />
-      ) : (
-        <div
-          className="h-full w-full"
-          style={{
-            background: `linear-gradient(145deg, ${tile.tone}, color-mix(in srgb, ${tile.tone} 55%, #F9F7F7))`,
-          }}
-        />
-      )}
+      <Image
+        src={tile.src}
+        alt=""
+        fill
+        sizes="(max-width: 1024px) 40vw, 28vw"
+        className="object-cover"
+        priority={tile.id === "a" || tile.id === "b"}
+      />
     </motion.div>
   );
 }
