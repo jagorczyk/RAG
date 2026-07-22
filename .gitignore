@@ -89,6 +89,9 @@ revert_listings.py
 # =========================
 *.md
 !/AGENTS.md
+!/DESIGN.md
+!/frontend/AGENTS.md
+!/frontend/DESIGN.md
 docs/
 scripts/
 test-data/
