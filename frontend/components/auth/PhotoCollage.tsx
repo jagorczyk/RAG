@@ -41,14 +41,18 @@ const FOLDERS = [
 ] as const;
 
 /**
- * Equal square tiles side by side. Strong Z push/pull for visible 3D size change.
- * Cursor tilts the whole scene (additive).
+ * Equal square tiles. Idle Z push/pull + per-tile lean (forward/back).
+ * Lean magnitude follows the cursor.
  */
 const COLS = 6;
 const ROWS = 4;
 
 const TILE_MOTION: {
   src: string;
+  /** +1 leans back (away), -1 leans forward (toward viewer) */
+  lean: 1 | -1;
+  col: number;
+  row: number;
   depth: number[];
   opacity: number[];
   shadow: string[];
@@ -58,6 +62,9 @@ const TILE_MOTION: {
   const retreat = i % 2 === 0;
   return {
     src: PHOTOS[i % PHOTOS.length],
+    lean: retreat ? 1 : -1,
+    col: i % COLS,
+    row: Math.floor(i / COLS),
     depth: retreat ? [0, -220, 0] : [0, 140, 0],
     opacity: retreat ? [1, 0.72, 1] : [1, 1, 1],
     shadow: retreat
@@ -88,11 +95,9 @@ export function PhotoCollage() {
   const my = useMotionValue(0);
   const springX = useSpring(mx, { stiffness: 55, damping: 20, mass: 0.5 });
   const springY = useSpring(my, { stiffness: 55, damping: 20, mass: 0.5 });
-  const nudgeX = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 10));
-  const nudgeY = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * 6));
-  const tiltY = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 12));
-  const tiltX = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * -8));
-  const sceneTransform = useMotionTemplate`translate3d(${nudgeX}px, ${nudgeY}px, 0) rotateX(${tiltX}deg) rotateY(${tiltY}deg)`;
+  const nudgeX = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 8));
+  const nudgeY = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * 5));
+  const sceneTransform = useMotionTemplate`translate3d(${nudgeX}px, ${nudgeY}px, 0)`;
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -186,54 +191,14 @@ export function PhotoCollage() {
                     style={{ transformStyle: "preserve-3d" }}
                   >
                     {TILE_MOTION.map((tile, index) => (
-                      <motion.div
+                      <CollageTile
                         key={`${tile.src}-${index}`}
-                        className="relative aspect-square min-h-0 min-w-0 overflow-hidden bg-[#DBE2EF]"
-                        style={{ transformStyle: "preserve-3d" }}
-                        initial={{ opacity: 0, z: 0 }}
-                        animate={
-                          reduced
-                            ? { opacity: 1, z: 0, boxShadow: tile.shadow[0] }
-                            : {
-                                opacity: tile.opacity,
-                                z: tile.depth,
-                                boxShadow: tile.shadow,
-                              }
-                        }
-                        transition={
-                          reduced
-                            ? { duration: 0.35, delay: index * 0.02 }
-                            : {
-                                opacity: {
-                                  duration: tile.duration,
-                                  repeat: Infinity,
-                                  ease: "easeInOut",
-                                  delay: tile.delay,
-                                },
-                                z: {
-                                  duration: tile.duration,
-                                  repeat: Infinity,
-                                  ease: "easeInOut",
-                                  delay: tile.delay,
-                                },
-                                boxShadow: {
-                                  duration: tile.duration,
-                                  repeat: Infinity,
-                                  ease: "easeInOut",
-                                  delay: tile.delay,
-                                },
-                              }
-                        }
-                      >
-                        <Image
-                          src={tile.src}
-                          alt=""
-                          fill
-                          sizes="12vw"
-                          className="object-cover object-top"
-                          priority={index < 8}
-                        />
-                      </motion.div>
+                        tile={tile}
+                        index={index}
+                        springX={springX}
+                        springY={springY}
+                        reduced={!!reduced || !finePointer}
+                      />
                     ))}
                   </div>
                 </div>
@@ -269,6 +234,94 @@ function Caption({ children }: { children: React.ReactNode }) {
     >
       {children}
     </motion.p>
+  );
+}
+
+function CollageTile({
+  tile,
+  index,
+  springX,
+  springY,
+  reduced,
+}: {
+  tile: (typeof TILE_MOTION)[number];
+  index: number;
+  springX: ReturnType<typeof useSpring>;
+  springY: ReturnType<typeof useSpring>;
+  reduced: boolean;
+}) {
+  // Base lean: back (+rotateX) or forward (-rotateX). Cursor Y deepens/relaxes it;
+  // cursor X adds a slight side twist, stronger for tiles farther from center.
+  const colBias = (tile.col - (COLS - 1) / 2) / ((COLS - 1) / 2);
+  const rotateX = useTransform(springY, (v) => {
+    if (reduced) return tile.lean * 10;
+    const base = tile.lean * 22;
+    const fromCursor = tile.lean * (v * -28);
+    return base + fromCursor;
+  });
+  const rotateY = useTransform(springX, (v) => {
+    if (reduced) return colBias * 4;
+    return colBias * 6 + v * tile.lean * -14;
+  });
+  const leanTransform = useMotionTemplate`rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+
+  return (
+    <motion.div
+      className="relative aspect-square min-h-0 min-w-0"
+      style={{
+        transformStyle: "preserve-3d",
+        transform: leanTransform,
+        transformOrigin: "center center",
+      }}
+    >
+      <motion.div
+        className="absolute inset-0 overflow-hidden bg-[#DBE2EF]"
+        style={{ transformStyle: "preserve-3d" }}
+        initial={{ opacity: 0, z: 0 }}
+        animate={
+          reduced
+            ? { opacity: 1, z: 0, boxShadow: tile.shadow[0] }
+            : {
+                opacity: tile.opacity,
+                z: tile.depth,
+                boxShadow: tile.shadow,
+              }
+        }
+        transition={
+          reduced
+            ? { duration: 0.35, delay: index * 0.02 }
+            : {
+                opacity: {
+                  duration: tile.duration,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                  delay: tile.delay,
+                },
+                z: {
+                  duration: tile.duration,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                  delay: tile.delay,
+                },
+                boxShadow: {
+                  duration: tile.duration,
+                  repeat: Infinity,
+                  ease: "easeInOut",
+                  delay: tile.delay,
+                },
+              }
+        }
+      >
+        <Image
+          src={tile.src}
+          alt=""
+          fill
+          sizes="12vw"
+          className="object-cover object-top"
+          priority={index < 8}
+        />
+      </motion.div>
+    </motion.div>
   );
 }
 
