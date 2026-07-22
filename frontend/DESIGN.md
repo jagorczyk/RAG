@@ -134,14 +134,16 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
+- **Desktop — `LandingHeroVisual`**: naprzemiennie **galeria 3D** i **pływający fotorealistyczny iPhone** (`PhoneInHand` + `iphone-float-mockup.png`), z płynnym crossfade + scale (~1s). Faza telefonu pokazuje UI Cogniface w otworze ekranu (3/4 perspective).
 - **Galeria 3D — lot przez przestrzeń**: każde zdjęcie ma własną pozycję (`translateX/Y/Z` + `rotateX/Y/Z`) w tunelu z `perspective` / `preserve-3d`; kamera (RAF) leci wzdłuż Z z cruise, inertią wheel/drag i springiem.
 - Mouse parallax (desktop `pointer: fine`): tilt warstw z różną głębokością; hover = lift + scale + soft shadow.
 - Klik → shared layout fullscreen (`GalleryLightbox`); pozostałe kadry: blur, opacity ~30%, cofnięcie w Z.
 - Depth scale: desktop pełny / tablet mniejszy / mobile lekki + swipe.
 - Atmosfera Cogniface: soft bloom, vignette, edge rails — bez purple glow.
-- `prefers-reduced-motion`: płaska siatka + prosty lightbox.
-- Kod: `components/gallery/{Gallery,GalleryItem,GalleryLightbox,useGalleryAnimation,useMouseParallax,galleryData}`.
-- Assets w `public/landing-page-photos/` (źródło: `landing-page-photos/`). Obrazy dekoracyjne — nie są źródłami użytkownika.
+- Mobile header: tylko galeria (mockup telefonu za wąski na `h-52`).
+- `prefers-reduced-motion`: stała galeria / płaska siatka + prosty lightbox — bez morphu do telefonu.
+- Kod: `components/auth/{LandingHeroVisual,PhoneInHand}`, `components/gallery/{Gallery,GalleryItem,GalleryLightbox,useGalleryAnimation,useMouseParallax,galleryData}`.
+- Assets: `public/landing-page-photos/`, `public/iphone-float-mockup.png` (ekran wycięty alpha — UI pod spodem). Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
 

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Gallery } from "@/components/gallery";
+import { LandingHeroVisual } from "@/components/auth/LandingHeroVisual";
 
 type AuthLandingProps = {
   title: string;
@@ -15,7 +16,7 @@ export function AuthLanding({ title, subtitle, children, footer }: AuthLandingPr
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-surface lg:flex-row">
       <div className="relative hidden min-h-0 flex-1 lg:block">
-        <Gallery embedded instanceId="desktop" />
+        <LandingHeroVisual instanceId="desktop" />
       </div>
 
       <div className="relative h-52 shrink-0 overflow-hidden lg:hidden">
