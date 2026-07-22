@@ -1,15 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import {
   motion,
-  useMotionTemplate,
   useMotionValue,
   useReducedMotion,
   useSpring,
   useTransform,
-  type MotionValue,
 } from "motion/react";
 
 const PHOTOS = [
@@ -23,75 +21,68 @@ const PHOTOS = [
   "/collage/08.jpg",
 ] as const;
 
-const COLS = 8;
-const ROWS = 3;
+const NOISE =
+  "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E\")";
 
-type Tile = {
+type Band = {
   id: string;
-  src: string;
-  col: number;
-  row: number;
-  breathe: boolean;
-  phase: number;
-  focus: string;
+  direction: "left" | "right";
+  duration: number;
+  photos: string[];
+  size: "lg" | "md" | "sm";
 };
 
-function buildTiles(): Tile[] {
-  const tiles: Tile[] = [];
-  for (let row = 0; row < ROWS; row++) {
-    for (let col = 0; col < COLS; col++) {
-      const i = row * COLS + col;
-      tiles.push({
-        id: `${row}-${col}`,
-        src: PHOTOS[i % PHOTOS.length],
-        col,
-        row,
-        breathe: (i * 5) % 7 < 3,
-        phase: ((i * 11) % 17) * 0.35,
-        focus: ["object-center", "object-left", "object-right", "object-top"][i % 4],
-      });
-    }
-  }
-  return tiles;
+function bandPhotos(offset: number, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => PHOTOS[(i + offset) % PHOTOS.length]);
 }
 
-const TILES = buildTiles();
+const BANDS: Band[] = [
+  {
+    id: "top",
+    direction: "left",
+    duration: 42,
+    photos: bandPhotos(0, 10),
+    size: "lg",
+  },
+  {
+    id: "mid",
+    direction: "right",
+    duration: 36,
+    photos: bandPhotos(3, 12),
+    size: "md",
+  },
+  {
+    id: "bot",
+    direction: "left",
+    duration: 48,
+    photos: bandPhotos(5, 10),
+    size: "sm",
+  },
+];
 
-const NOISE =
-  "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E\")";
+const SIZE_CLASS = {
+  lg: "h-[42%] min-h-[120px]",
+  md: "h-[32%] min-h-[96px]",
+  sm: "h-[26%] min-h-[80px]",
+} as const;
+
+const TILE_WIDTH = {
+  lg: "w-[min(280px,38vw)]",
+  md: "w-[min(220px,32vw)]",
+  sm: "w-[min(180px,28vw)]",
+} as const;
 
 export function PhotoCollage() {
   const reduced = useReducedMotion();
   const [finePointer, setFinePointer] = useState(false);
   const mx = useMotionValue(0);
   const my = useMotionValue(0);
-  const drift = useMotionValue(0);
-  const springX = useSpring(mx, { stiffness: 55, damping: 18, mass: 0.6 });
-  const springY = useSpring(my, { stiffness: 55, damping: 18, mass: 0.6 });
+  const springX = useSpring(mx, { stiffness: 80, damping: 22, mass: 0.45 });
+  const springY = useSpring(my, { stiffness: 80, damping: 22, mass: 0.45 });
 
-  // Continuous left → right yaw of the wall
-  useEffect(() => {
-    if (reduced) {
-      drift.set(0);
-      return;
-    }
-    let raf = 0;
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = (now - start) / 1000;
-      drift.set(Math.sin(t * 0.35) * 0.85);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [reduced, drift]);
-
-  const yaw = useTransform([springX, drift], ([x, d]) => {
-    if (reduced || !finePointer) return (d as number) * 22;
-    return (x as number) * 48 + (d as number) * 26;
-  });
-  const pitch = useTransform(springY, (v) => (reduced || !finePointer ? -4 : v * -16 - 4));
-  const sceneTransform = useMotionTemplate`perspective(1600px) translateZ(-120px) rotateX(${pitch}deg) rotateY(${yaw}deg)`;
+  const shiftX = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 28));
+  const shiftY = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * 18));
+  const tilt = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 4));
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -115,109 +106,104 @@ export function PhotoCollage() {
 
   return (
     <div
-      className="relative h-full min-h-[220px] w-full overflow-hidden bg-[#07101c]"
+      className="relative h-full min-h-[220px] w-full overflow-hidden bg-[#050b14]"
       onMouseMove={onMove}
       onMouseLeave={onLeave}
       aria-hidden
     >
-      {/* Atmospheric photo field — modern, not radial orbs */}
-      <div className="absolute inset-0 scale-110 opacity-40 blur-2xl saturate-75">
-        <Image src="/collage/02.jpg" alt="" fill className="object-cover" sizes="60vw" priority />
+      <div className="absolute inset-0 scale-110 opacity-30 blur-3xl contrast-125 saturate-50">
+        <Image src="/collage/07.jpg" alt="" fill className="object-cover" sizes="70vw" priority />
       </div>
+      <div className="absolute inset-0 bg-[#050b14]/65" />
       <div
-        className="absolute inset-0"
+        className="absolute inset-0 opacity-80"
         style={{
           background:
-            "linear-gradient(105deg, #07101c 0%, color-mix(in srgb, #112D4E 72%, transparent) 42%, color-mix(in srgb, #3F72AF 18%, #07101c) 100%)",
+            "linear-gradient(160deg, transparent 20%, color-mix(in srgb, #3F72AF 12%, transparent) 55%, transparent 85%)",
         }}
       />
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.22] mix-blend-overlay"
+        className="pointer-events-none absolute inset-0 opacity-[0.18] mix-blend-soft-light"
         style={{ backgroundImage: NOISE }}
       />
 
-      <div
-        className="absolute inset-0 flex items-center justify-center px-3 py-6 lg:px-8 lg:py-10"
-        style={{ perspective: "1600px" }}
+      <motion.div
+        className="absolute inset-0 flex flex-col justify-center gap-3 py-8 lg:gap-4 lg:py-12"
+        style={{ x: shiftX, y: shiftY, rotateZ: tilt }}
       >
-        <motion.div
-          className="grid h-full w-full max-h-[640px] grid-cols-8 grid-rows-3"
-          style={{
-            transformStyle: "preserve-3d",
-            transform: sceneTransform,
-          }}
-        >
-          {TILES.map((tile, index) => (
-            <CylinderTile
-              key={tile.id}
-              tile={tile}
-              yaw={yaw}
-              reduced={!!reduced}
-              priority={index < 8}
-            />
-          ))}
-        </motion.div>
-      </div>
+        {BANDS.map((band, index) => (
+          <MarqueeBand
+            key={band.id}
+            band={band}
+            reduced={!!reduced}
+            parallax={reduced || !finePointer ? 0 : (index - 1) * 12}
+            mouseX={springX}
+          />
+        ))}
+      </motion.div>
+
+      {/* Soft edge masks — cinematic, not 2015 orbs */}
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-[#050b14] to-transparent lg:w-24" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-[#050b14] to-transparent lg:w-24" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[#050b14]/90 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#050b14] to-transparent" />
     </div>
   );
 }
 
-function CylinderTile({
-  tile,
-  yaw,
+function MarqueeBand({
+  band,
   reduced,
-  priority,
+  parallax,
+  mouseX,
 }: {
-  tile: Tile;
-  yaw: MotionValue<number>;
+  band: Band;
   reduced: boolean;
-  priority: boolean;
+  parallax: number;
+  mouseX: ReturnType<typeof useSpring>;
 }) {
-  const mid = (COLS - 1) / 2;
-  const t = (tile.col - mid) / mid; // -1 … 1 left → right
-
-  // Base cylinder: left pages turn toward viewer from left, right from right
-  const transform = useTransform(yaw, (sceneYaw) => {
-    if (reduced) {
-      return "translate3d(0,0,0) rotateY(0deg)";
-    }
-    const localYaw = t * 38 - sceneYaw * 0.55;
-    const arcZ = -Math.abs(t) * 90 + Math.cos((t * Math.PI) / 2) * 36;
-    const lift = (tile.row - 1) * -6;
-    return `translate3d(0px, ${lift}px, ${arcZ}px) rotateY(${localYaw}deg)`;
-  });
-
-  const breathe = useMemo(() => {
-    if (reduced || !tile.breathe) return undefined;
-    return {
-      scale: [1, 1.1, 1],
-      transition: {
-        duration: 6.5 + tile.phase,
-        repeat: Infinity,
-        ease: "easeInOut" as const,
-        delay: tile.phase,
-      },
-    };
-  }, [reduced, tile.breathe, tile.phase]);
+  const rowShift = useTransform(mouseX, (v) => v * parallax);
+  const sequence = [...band.photos, ...band.photos];
+  const from = band.direction === "left" ? "0%" : "-50%";
+  const to = band.direction === "left" ? "-50%" : "0%";
 
   return (
     <motion.div
-      className="relative min-h-0 min-w-0 overflow-hidden bg-[#0d1a2c]"
-      style={{
-        transformStyle: "preserve-3d",
-        transform,
-        zIndex: Math.round((1 - Math.abs(t)) * 30),
-      }}
-      animate={breathe}
+      className={`relative w-full overflow-hidden ${SIZE_CLASS[band.size]}`}
+      style={{ x: rowShift }}
     >
-      <Image
-        src={tile.src}
-        alt=""
-        fill
-        sizes="12vw"
-        className={`object-cover ${tile.focus}`}
-        priority={priority}
-      />
+      <motion.div
+        className="flex h-full w-max"
+        animate={
+          reduced
+            ? { x: from }
+            : {
+                x: [from, to],
+                transition: {
+                  duration: band.duration,
+                  ease: "linear",
+                  repeat: Infinity,
+                },
+              }
+        }
+      >
+        {sequence.map((src, i) => (
+          <div
+            key={`${band.id}-${i}`}
+            className={`relative h-full shrink-0 overflow-hidden ${TILE_WIDTH[band.size]}`}
+          >
+            <Image
+              src={src}
+              alt=""
+              fill
+              sizes="280px"
+              className="object-cover"
+              priority={band.id === "top" && i < 4}
+            />
+            <div className="absolute inset-0 bg-ink/10" />
+          </div>
+        ))}
+      </motion.div>
     </motion.div>
   );
 }

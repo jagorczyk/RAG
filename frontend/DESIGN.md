@@ -134,11 +134,9 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- Gęsta siatka (np. 8×3) ze zdjęć z `public/collage/` (powtórzenia OK).
-- Ściana cylindryczna: obrót **od lewej do prawej** (rotateY wg kolumny + ciągły drift + kursor).
-- Wybrane kafelki wolno się powiększają (breathe).
-- Tło: ciemne, ziarno, rozmycie fotograficzne — bez „orbs” radial gradientów.
-- `prefers-reduced-motion`: bez driftu / 3D.
+- **Marquee strips** (nowoczesny landing): 3 poziome taśmy zdjęć, naprzemienny kierunek L↔P, ciągły linear scroll.
+- Lekki parallax kursora (całość + różny shift per rząd), miękkie maski krawędzi, ciemne tło z blur + grain.
+- Assets w `public/collage/`. `prefers-reduced-motion`: taśmy stoją.
 - Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
