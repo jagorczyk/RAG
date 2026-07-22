@@ -134,9 +134,9 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Marquee strips** (nowoczesny landing): 3 poziome taśmy zdjęć, naprzemienny kierunek L↔P, ciągły linear scroll.
-- Lekki parallax kursora (całość + różny shift per rząd), miękkie maski krawędzi, ciemne tło z blur + grain.
-- Assets w `public/collage/`. `prefers-reduced-motion`: taśmy stoją.
+- **Elegancki kolaż** zdjęć (lekki float), potem **przejście do mockupu telefonu** z UI mobilnym Cogniface (Biblioteka + tab bar).
+- Pętla: kolaż → telefon → kolaż. Tło jasne, brandowe — bez marquee i bez „ściany 3D”.
+- Assets w `public/collage/`. `prefers-reduced-motion`: od razu mockup telefonu.
 - Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)

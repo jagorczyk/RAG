@@ -18,7 +18,7 @@ export function AuthLanding({ title, subtitle, children, footer }: AuthLandingPr
         <PhotoCollage />
       </div>
 
-      <div className="relative h-44 shrink-0 overflow-hidden lg:hidden">
+      <div className="relative h-52 shrink-0 overflow-hidden lg:hidden">
         <PhotoCollage />
       </div>
 
