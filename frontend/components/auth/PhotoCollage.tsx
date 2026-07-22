@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import {
   ChevronRight,
@@ -41,20 +41,70 @@ const FOLDERS = [
   { name: "Archiwum", count: 203, cover: PHOTOS[6] },
 ] as const;
 
-/** Vertical columns on a horizontal cylinder — scrolls left ↔ right (ref: 3D gallery). */
-const COL_COUNT = 9;
-const TILES_PER_COL = 5;
-const ANGLE_STEP = 28;
-const RADIUS = 300;
+type CloudTile = {
+  id: string;
+  src: string;
+  x: number;
+  y: number;
+  z: number;
+  size: number;
+};
+
+/**
+ * Cinema 4D–style photo cloud: planes scattered in X/Y/Z (spherical cluster).
+ * Parent rotates on Y → left/right parallax from depth differences.
+ */
+function buildPhotoCloud(): CloudTile[] {
+  const tiles: CloudTile[] = [];
+  let n = 0;
+  // 3 depth layers (back / mid / front), ring distribution like C4D front+top views
+  const layers = [
+    { z: -120, count: 7, radius: 150, size: 64 },
+    { z: -20, count: 8, radius: 125, size: 72 },
+    { z: 90, count: 6, radius: 95, size: 68 },
+  ];
+
+  for (const layer of layers) {
+    for (let j = 0; j < layer.count; j++) {
+      const t = j / layer.count;
+      const angle = t * Math.PI * 2 + layer.z * 0.01;
+      const jitterR = ((j * 17) % 7) - 3;
+      const jitterZ = ((j * 13) % 11) - 5;
+      const r = layer.radius + jitterR * 4;
+      tiles.push({
+        id: `t-${n}`,
+        src: PHOTOS[n % PHOTOS.length],
+        x: Math.cos(angle) * r,
+        y: Math.sin(angle) * r * 0.62,
+        z: layer.z + jitterZ * 8,
+        size: layer.size,
+      });
+      n += 1;
+    }
+  }
+
+  // A few off-ring cards for organic cloud (like C4D scatter)
+  const extras = [
+    { x: -40, y: -20, z: 40, size: 70 },
+    { x: 55, y: 30, z: -60, size: 62 },
+    { x: 10, y: -70, z: 10, size: 66 },
+  ];
+  for (const e of extras) {
+    tiles.push({
+      id: `t-${n}`,
+      src: PHOTOS[n % PHOTOS.length],
+      ...e,
+    });
+    n += 1;
+  }
+
+  return tiles;
+}
+
+const CLOUD = buildPhotoCloud();
 
 type Phase = "collage" | "phone";
 type PhoneScreen = "photos" | "folders";
-
-function columnPhotos(col: number): string[] {
-  return Array.from({ length: TILES_PER_COL }, (_, row) => {
-    return PHOTOS[(col * 3 + row * 2) % PHOTOS.length];
-  });
-}
 
 export function PhotoCollage() {
   const reduced = useReducedMotion();
@@ -62,13 +112,14 @@ export function PhotoCollage() {
   const [finePointer, setFinePointer] = useState(false);
 
   const mx = useMotionValue(0);
-  const springX = useSpring(mx, { stiffness: 50, damping: 22, mass: 0.55 });
-  const autoScroll = useMotionValue(0);
-  const scroll = useTransform([autoScroll, springX], ([auto, cursor]) => {
+  const springX = useSpring(mx, { stiffness: 45, damping: 20, mass: 0.6 });
+  const autoYaw = useMotionValue(0);
+  const yaw = useTransform([autoYaw, springX], ([auto, cursor]) => {
     if (reduced) return 0;
-    const cursorBoost = finePointer ? (cursor as number) * 32 : 0;
+    const cursorBoost = finePointer ? (cursor as number) * 28 : 0;
     return (auto as number) + cursorBoost;
   });
+  const sceneTransform = useMotionTemplate`rotateY(${yaw}deg)`;
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -78,22 +129,21 @@ export function PhotoCollage() {
     return () => mq.removeEventListener("change", sync);
   }, []);
 
-  // Continuous left ↔ right drift (sine), like the reference gallery scroll
   useEffect(() => {
     if (reduced) {
-      autoScroll.set(0);
+      autoYaw.set(0);
       return;
     }
     let raf = 0;
     const start = performance.now();
     const tick = (now: number) => {
       const t = (now - start) / 1000;
-      autoScroll.set(Math.sin(t * 0.45) * 38);
+      autoYaw.set(Math.sin(t * 0.4) * 32);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [reduced, autoScroll]);
+  }, [reduced, autoYaw]);
 
   useEffect(() => {
     if (reduced) {
@@ -109,7 +159,7 @@ export function PhotoCollage() {
         loop(next === "collage" ? "phone" : "collage", next === "collage" ? 7000 : 5500);
       }, delay);
     };
-    loop("phone", 8000);
+    loop("phone", 8500);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -123,6 +173,11 @@ export function PhotoCollage() {
   };
 
   const onLeave = () => mx.set(0);
+
+  const sortedCloud = useMemo(
+    () => [...CLOUD].sort((a, b) => a.z - b.z),
+    []
+  );
 
   return (
     <div
@@ -151,32 +206,31 @@ export function PhotoCollage() {
           >
             <div
               className="absolute inset-0 flex items-center justify-center"
-              style={{ perspective: 900 }}
+              style={{ perspective: 1000 }}
             >
-              <div
-                className="relative flex h-[min(520px,78%)] items-center justify-center"
+              <motion.div
+                className="relative h-[420px] w-[480px]"
                 style={{
-                  width: "100%",
                   transformStyle: "preserve-3d",
-                  transform: "translateZ(-40px)",
+                  transform: sceneTransform,
                 }}
               >
-                {Array.from({ length: COL_COUNT }, (_, col) => (
-                  <GalleryColumn
-                    key={col}
-                    col={col}
-                    scroll={scroll}
+                {sortedCloud.map((tile, index) => (
+                  <CloudCard
+                    key={tile.id}
+                    tile={tile}
+                    index={index}
+                    yaw={yaw}
                     reduced={!!reduced}
                   />
                 ))}
-              </div>
+              </motion.div>
             </div>
 
-            {/* Soft edge fade */}
-            <div className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-[#F4F1EE] to-transparent lg:w-24" />
-            <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-[#F4F1EE] to-transparent lg:w-24" />
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-[#F4F1EE] to-transparent" />
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#F4F1EE] to-transparent" />
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-14 bg-gradient-to-r from-[#F4F1EE] to-transparent lg:w-20" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-14 bg-gradient-to-l from-[#F4F1EE] to-transparent lg:w-20" />
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-[#F4F1EE] to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-[#F4F1EE] to-transparent" />
 
             <Caption>Biblioteka w ruchu</Caption>
           </motion.div>
@@ -198,51 +252,47 @@ export function PhotoCollage() {
   );
 }
 
-function GalleryColumn({
-  col,
-  scroll,
+function CloudCard({
+  tile,
+  index,
+  yaw,
   reduced,
 }: {
-  col: number;
-  scroll: MotionValue<number>;
+  tile: CloudTile;
+  index: number;
+  yaw: MotionValue<number>;
   reduced: boolean;
 }) {
-  const mid = (COL_COUNT - 1) / 2;
-  const rotateY = useTransform(scroll, (s) => {
-    if (reduced) return (col - mid) * ANGLE_STEP * 0.35;
-    return (col - mid) * ANGLE_STEP + s;
-  });
-  const transform = useMotionTemplate`rotateY(${rotateY}deg) translateZ(${RADIUS}px)`;
-  const photos = columnPhotos(col);
-  const stagger = col % 2 === 1;
+  // Face the camera as the cloud rotates (billboard-ish cancel of parent yaw)
+  const face = useTransform(yaw, (y) => (reduced ? 0 : -y * 0.35));
+  const transform = useMotionTemplate`translate3d(${tile.x}px, ${tile.y}px, ${tile.z}px) rotateY(${face}deg)`;
 
   return (
     <motion.div
-      className="absolute flex flex-col items-center gap-2.5"
+      className="absolute overflow-hidden rounded-[10px] bg-[#DBE2EF] shadow-[0_12px_32px_rgba(17,45,78,0.16)] ring-1 ring-white/50"
       style={{
-        transformStyle: "preserve-3d",
-        transform,
+        width: tile.size,
+        height: tile.size,
         left: "50%",
         top: "50%",
-        marginLeft: -36,
-        marginTop: stagger ? -150 : -180,
+        marginLeft: -tile.size / 2,
+        marginTop: -tile.size / 2,
+        transformStyle: "preserve-3d",
+        transform,
+        zIndex: Math.round(tile.z + 200),
       }}
+      initial={{ opacity: 0, scale: 0.85 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.45, delay: index * 0.03, ease: [0.22, 1, 0.36, 1] }}
     >
-      {photos.map((src, row) => (
-        <div
-          key={`${col}-${row}-${src}`}
-          className="relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-[12px] bg-[#DBE2EF] shadow-[0_10px_28px_rgba(17,45,78,0.14)] ring-1 ring-white/40"
-        >
-          <Image
-            src={src}
-            alt=""
-            fill
-            sizes="72px"
-            className="object-cover object-top"
-            priority={col >= 3 && col <= 5 && row < 3}
-          />
-        </div>
-      ))}
+      <Image
+        src={tile.src}
+        alt=""
+        fill
+        sizes="80px"
+        className="object-cover object-top"
+        priority={index < 10}
+      />
     </motion.div>
   );
 }
