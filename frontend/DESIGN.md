@@ -134,8 +134,9 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Chmura 3D (jak Cinema 4D)**: małe lekko zaokrąglone kwadraty rozrzucone w X/Y/Z (warstwy głębokości), nie płaska siatka.
-- Obrót w lewo ↔ prawo (auto + kursor) daje **parallax** dzięki różnym Z.
+- **Strumień 3D L→P**: większe lekko zaokrąglone kwadraty (~118–152px) w warstwach Z.
+- Przesuwają się od lewej do prawej; pojawiają się i znikają z fade + scale.
+- Różne prędkości / Z dają parallax; lekki tilt od kursora.
 - Potem przejście do mockupu iPhone: siatka → lista folderów.
 - `prefers-reduced-motion`: od razu iPhone.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.

@@ -19,7 +19,6 @@ import {
   useReducedMotion,
   useSpring,
   useTransform,
-  type MotionValue,
 } from "motion/react";
 
 const PHOTOS = [
@@ -41,67 +40,57 @@ const FOLDERS = [
   { name: "Archiwum", count: 203, cover: PHOTOS[6] },
 ] as const;
 
-type CloudTile = {
+type StreamTile = {
   id: string;
   src: string;
-  x: number;
-  y: number;
+  /** Vertical position as % of stage height */
+  yPct: number;
   z: number;
   size: number;
+  /** Seconds for one left→right pass */
+  duration: number;
+  /** Stagger so tiles don't sync */
+  delay: number;
 };
 
 /**
- * Cinema 4D–style photo cloud: planes scattered in X/Y/Z (spherical cluster).
- * Parent rotates on Y → left/right parallax from depth differences.
+ * Larger photo tiles drifting L→R with depth parallax.
+ * Enter/exit with fade + scale so they appear and vanish softly.
  */
-function buildPhotoCloud(): CloudTile[] {
-  const tiles: CloudTile[] = [];
-  let n = 0;
-  // 3 depth layers (back / mid / front), ring distribution like C4D front+top views
-  const layers = [
-    { z: -120, count: 7, radius: 150, size: 64 },
-    { z: -20, count: 8, radius: 125, size: 72 },
-    { z: 90, count: 6, radius: 95, size: 68 },
+function buildPhotoStream(): StreamTile[] {
+  const lanes = [
+    { yPct: 12, z: -140, size: 118, duration: 22 },
+    { yPct: 28, z: -40, size: 138, duration: 16 },
+    { yPct: 46, z: 80, size: 152, duration: 13 },
+    { yPct: 62, z: -90, size: 124, duration: 19 },
+    { yPct: 78, z: 30, size: 142, duration: 15 },
   ];
 
-  for (const layer of layers) {
-    for (let j = 0; j < layer.count; j++) {
-      const t = j / layer.count;
-      const angle = t * Math.PI * 2 + layer.z * 0.01;
-      const jitterR = ((j * 17) % 7) - 3;
-      const jitterZ = ((j * 13) % 11) - 5;
-      const r = layer.radius + jitterR * 4;
+  const tiles: StreamTile[] = [];
+  let n = 0;
+  for (const lane of lanes) {
+    // 2–3 tiles per lane, offset in time
+    const perLane = lane.z > 0 ? 3 : 2;
+    for (let j = 0; j < perLane; j++) {
+      const jitterY = ((n * 19) % 9) - 4;
+      const jitterZ = ((n * 11) % 13) - 6;
+      const sizeJitter = ((n * 7) % 5) * 4;
       tiles.push({
-        id: `t-${n}`,
+        id: `s-${n}`,
         src: PHOTOS[n % PHOTOS.length],
-        x: Math.cos(angle) * r,
-        y: Math.sin(angle) * r * 0.62,
-        z: layer.z + jitterZ * 8,
-        size: layer.size,
+        yPct: lane.yPct + jitterY,
+        z: lane.z + jitterZ * 6,
+        size: lane.size + sizeJitter,
+        duration: lane.duration + ((n * 3) % 5) * 0.6,
+        delay: -(j * (lane.duration / perLane) + n * 0.35),
       });
       n += 1;
     }
   }
-
-  // A few off-ring cards for organic cloud (like C4D scatter)
-  const extras = [
-    { x: -40, y: -20, z: 40, size: 70 },
-    { x: 55, y: 30, z: -60, size: 62 },
-    { x: 10, y: -70, z: 10, size: 66 },
-  ];
-  for (const e of extras) {
-    tiles.push({
-      id: `t-${n}`,
-      src: PHOTOS[n % PHOTOS.length],
-      ...e,
-    });
-    n += 1;
-  }
-
   return tiles;
 }
 
-const CLOUD = buildPhotoCloud();
+const STREAM = buildPhotoStream();
 
 type Phase = "collage" | "phone";
 type PhoneScreen = "photos" | "folders";
@@ -112,14 +101,9 @@ export function PhotoCollage() {
   const [finePointer, setFinePointer] = useState(false);
 
   const mx = useMotionValue(0);
-  const springX = useSpring(mx, { stiffness: 45, damping: 20, mass: 0.6 });
-  const autoYaw = useMotionValue(0);
-  const yaw = useTransform([autoYaw, springX], ([auto, cursor]) => {
-    if (reduced) return 0;
-    const cursorBoost = finePointer ? (cursor as number) * 28 : 0;
-    return (auto as number) + cursorBoost;
-  });
-  const sceneTransform = useMotionTemplate`rotateY(${yaw}deg)`;
+  const springX = useSpring(mx, { stiffness: 40, damping: 22, mass: 0.7 });
+  const tiltY = useTransform(springX, [-0.5, 0.5], [6, -6]);
+  const sceneTilt = useMotionTemplate`rotateY(${tiltY}deg)`;
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -128,22 +112,6 @@ export function PhotoCollage() {
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
-
-  useEffect(() => {
-    if (reduced) {
-      autoYaw.set(0);
-      return;
-    }
-    let raf = 0;
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = (now - start) / 1000;
-      autoYaw.set(Math.sin(t * 0.4) * 32);
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [reduced, autoYaw]);
 
   useEffect(() => {
     if (reduced) {
@@ -159,7 +127,7 @@ export function PhotoCollage() {
         loop(next === "collage" ? "phone" : "collage", next === "collage" ? 7000 : 5500);
       }, delay);
     };
-    loop("phone", 8500);
+    loop("phone", 10000);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -174,8 +142,8 @@ export function PhotoCollage() {
 
   const onLeave = () => mx.set(0);
 
-  const sortedCloud = useMemo(
-    () => [...CLOUD].sort((a, b) => a.z - b.z),
+  const sortedStream = useMemo(
+    () => [...STREAM].sort((a, b) => a.z - b.z),
     []
   );
 
@@ -201,34 +169,24 @@ export function PhotoCollage() {
             className="absolute inset-0"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.94, filter: "blur(8px)" }}
+            exit={{ opacity: 0, scale: 0.96, filter: "blur(8px)" }}
             transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
           >
-            <div
-              className="absolute inset-0 flex items-center justify-center"
-              style={{ perspective: 1000 }}
+            <motion.div
+              className="absolute inset-0"
+              style={{
+                perspective: 1100,
+                transformStyle: "preserve-3d",
+                transform: reduced ? undefined : sceneTilt,
+              }}
             >
-              <motion.div
-                className="relative h-[420px] w-[480px]"
-                style={{
-                  transformStyle: "preserve-3d",
-                  transform: sceneTransform,
-                }}
-              >
-                {sortedCloud.map((tile, index) => (
-                  <CloudCard
-                    key={tile.id}
-                    tile={tile}
-                    index={index}
-                    yaw={yaw}
-                    reduced={!!reduced}
-                  />
-                ))}
-              </motion.div>
-            </div>
+              {sortedStream.map((tile) => (
+                <StreamCard key={tile.id} tile={tile} reduced={!!reduced} />
+              ))}
+            </motion.div>
 
-            <div className="pointer-events-none absolute inset-y-0 left-0 w-14 bg-gradient-to-r from-[#F4F1EE] to-transparent lg:w-20" />
-            <div className="pointer-events-none absolute inset-y-0 right-0 w-14 bg-gradient-to-l from-[#F4F1EE] to-transparent lg:w-20" />
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-[#F4F1EE] to-transparent lg:w-28" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-[#F4F1EE] to-transparent lg:w-28" />
             <div className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-[#F4F1EE] to-transparent" />
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-[#F4F1EE] to-transparent" />
 
@@ -252,48 +210,74 @@ export function PhotoCollage() {
   );
 }
 
-function CloudCard({
-  tile,
-  index,
-  yaw,
-  reduced,
-}: {
-  tile: CloudTile;
-  index: number;
-  yaw: MotionValue<number>;
-  reduced: boolean;
-}) {
-  // Face the camera as the cloud rotates (billboard-ish cancel of parent yaw)
-  const face = useTransform(yaw, (y) => (reduced ? 0 : -y * 0.35));
-  const transform = useMotionTemplate`translate3d(${tile.x}px, ${tile.y}px, ${tile.z}px) rotateY(${face}deg)`;
+function StreamCard({ tile, reduced }: { tile: StreamTile; reduced: boolean }) {
+  // Front tiles cast a stronger shadow; back ones feel softer.
+  const depthShadow =
+    tile.z > 40
+      ? "0 22px 48px rgba(17,45,78,0.22)"
+      : tile.z < -80
+        ? "0 8px 22px rgba(17,45,78,0.1)"
+        : "0 14px 34px rgba(17,45,78,0.16)";
+
+  if (reduced) {
+    return (
+      <div
+        className="absolute overflow-hidden rounded-[14px] bg-[#DBE2EF] ring-1 ring-white/55"
+        style={{
+          width: tile.size,
+          height: tile.size,
+          top: `${tile.yPct}%`,
+          left: `${12 + (tile.size % 40)}%`,
+          boxShadow: depthShadow,
+          zIndex: Math.round(tile.z + 200),
+        }}
+      >
+        <Image src={tile.src} alt="" fill sizes="160px" className="object-cover object-top" />
+      </div>
+    );
+  }
 
   return (
-    <motion.div
-      className="absolute overflow-hidden rounded-[10px] bg-[#DBE2EF] shadow-[0_12px_32px_rgba(17,45,78,0.16)] ring-1 ring-white/50"
+    <div
+      className="absolute left-0 will-change-transform"
       style={{
-        width: tile.size,
-        height: tile.size,
-        left: "50%",
-        top: "50%",
-        marginLeft: -tile.size / 2,
+        top: `${tile.yPct}%`,
         marginTop: -tile.size / 2,
-        transformStyle: "preserve-3d",
-        transform,
+        transform: `translateZ(${tile.z}px)`,
         zIndex: Math.round(tile.z + 200),
       }}
-      initial={{ opacity: 0, scale: 0.85 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.45, delay: index * 0.03, ease: [0.22, 1, 0.36, 1] }}
     >
-      <Image
-        src={tile.src}
-        alt=""
-        fill
-        sizes="80px"
-        className="object-cover object-top"
-        priority={index < 10}
-      />
-    </motion.div>
+      <motion.div
+        className="relative overflow-hidden rounded-[14px] bg-[#DBE2EF] ring-1 ring-white/55"
+        style={{
+          width: tile.size,
+          height: tile.size,
+          boxShadow: depthShadow,
+        }}
+        initial={false}
+        animate={{
+          x: [`calc(-18vw - ${tile.size}px)`, "118vw"],
+          opacity: [0, 1, 1, 0],
+          scale: [0.72, 1, 1, 0.82],
+        }}
+        transition={{
+          duration: tile.duration,
+          delay: tile.delay,
+          repeat: Infinity,
+          ease: "linear",
+          times: [0, 0.1, 0.88, 1],
+        }}
+      >
+        <Image
+          src={tile.src}
+          alt=""
+          fill
+          sizes="160px"
+          className="object-cover object-top"
+          priority
+        />
+      </motion.div>
+    </div>
   );
 }
 
