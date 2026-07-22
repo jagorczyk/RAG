@@ -134,10 +134,10 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Elegancki kolaż** zdjęć (lekki float), potem **przejście do mockupu telefonu** z UI mobilnym Cogniface (Biblioteka + tab bar).
-- Pętla: kolaż → telefon → kolaż. Tło jasne, brandowe — bez marquee i bez „ściany 3D”.
-- Assets w `public/collage/`. `prefers-reduced-motion`: od razu mockup telefonu.
-- Obrazy dekoracyjne — nie są źródłami użytkownika.
+- **Animowany kolaż**: warstwy zdjęć z parallaxem kursora (perspective / translateZ), float + wolne powiększanie.
+- Potem przejście do **mockupu iPhone (iOS)**: Dynamic Island, status bar 9:41, large title, search, tab bar, home indicator.
+- Pętla kolaż ↔ telefon. `prefers-reduced-motion`: od razu iPhone.
+- Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
 
