@@ -66,7 +66,8 @@ export function Gallery({
               key={photo.id}
               photo={photo}
               index={index}
-              progress={animation.progress}
+              count={photos.length}
+              time={animation.time}
               pointerX={animation.pointerX}
               pointerY={animation.pointerY}
               selectedId={selectedId}

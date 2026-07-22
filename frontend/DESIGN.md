@@ -134,10 +134,9 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Galeria 3D (Vision Pro / iOS Photos)**: stos lewitujących zdjęć na osi Z (`translate3d` + `preserve-3d`).
-- Scroll / drag / touch z ineracją (RAF); snap do najbliższego kadru; mouse parallax + hover tilt.
-- Depth of field (blur poza fokusem); glass edge + delikatny bloom w palecie Cogniface.
-- Klik → shared layout do fullscreen; pozostałe kadry się rozmywają i cofają.
+- **Galeria 3D auto L→P**: lewitujące kadry z `translateZ` / lekkim obrotem same płyną od lewej do prawej (RAF), z fade na krawędziach.
+- Opcjonalnie drag/wheel tylko przyspiesza; klik → shared layout fullscreen.
+- Depth bob + mouse parallax; glass edge + bloom w palecie Cogniface.
 - `prefers-reduced-motion`: płaska siatka + prosty lightbox.
 - Kod: `components/gallery/{Gallery,GalleryItem,useGalleryAnimation,galleryData}`.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
