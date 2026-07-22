@@ -134,11 +134,12 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Strumień 3D L→P**: większe lekko zaokrąglone kwadraty (~118–152px) w warstwach Z.
-- Przesuwają się od lewej do prawej; pojawiają się i znikają z fade + scale.
-- Różne prędkości / Z dają parallax; lekki tilt od kursora.
-- Potem przejście do mockupu iPhone: siatka → lista folderów.
-- `prefers-reduced-motion`: od razu iPhone.
+- **Galeria 3D (Vision Pro / iOS Photos)**: stos lewitujących zdjęć na osi Z (`translate3d` + `preserve-3d`).
+- Scroll / drag / touch z ineracją (RAF); snap do najbliższego kadru; mouse parallax + hover tilt.
+- Depth of field (blur poza fokusem); glass edge + delikatny bloom w palecie Cogniface.
+- Klik → shared layout do fullscreen; pozostałe kadry się rozmywają i cofają.
+- `prefers-reduced-motion`: płaska siatka + prosty lightbox.
+- Kod: `components/gallery/{Gallery,GalleryItem,useGalleryAnimation,galleryData}`.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)

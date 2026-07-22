@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { PhotoCollage } from "./PhotoCollage";
+import { Gallery } from "@/components/gallery";
 
 type AuthLandingProps = {
   title: string;
@@ -15,11 +15,11 @@ export function AuthLanding({ title, subtitle, children, footer }: AuthLandingPr
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-surface lg:flex-row">
       <div className="relative hidden min-h-0 flex-1 lg:block">
-        <PhotoCollage />
+        <Gallery embedded />
       </div>
 
       <div className="relative h-52 shrink-0 overflow-hidden lg:hidden">
-        <PhotoCollage />
+        <Gallery embedded />
       </div>
 
       <div className="flex min-h-0 w-full flex-1 flex-col justify-center overflow-y-auto px-5 py-8 sm:px-8 lg:max-w-[42%] lg:px-12 xl:px-16">
