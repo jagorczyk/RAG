@@ -40,126 +40,23 @@ const FOLDERS = [
 ] as const;
 
 /**
- * Rectangular tiles on Z-axis: retreat (back = smaller) / advance (forward = larger).
- * Cursor is only a light scene nudge.
+ * Equal-size grid tiles side by side. Z-axis motion: some retreat (smaller),
+ * some advance (larger). Cursor is only a light scene nudge.
  */
-const TILES: {
+const TILE_MOTION: {
   src: string;
-  x: string;
-  y: string;
-  w: string;
-  h: string;
-  z: number;
   depth: number[];
-  driftX: number[];
-  driftY: number[];
   duration: number;
   delay: number;
 }[] = [
-  {
-    src: PHOTOS[0],
-    x: "8%",
-    y: "10%",
-    w: "32%",
-    h: "38%",
-    z: 3,
-    depth: [20, -80, 20],
-    driftX: [0, 10, 0],
-    driftY: [0, -12, 0],
-    duration: 7.5,
-    delay: 0,
-  },
-  {
-    src: PHOTOS[1],
-    x: "42%",
-    y: "6%",
-    w: "34%",
-    h: "34%",
-    z: 4,
-    depth: [-40, 70, -40],
-    driftX: [0, -14, 0],
-    driftY: [0, 8, 0],
-    duration: 8.8,
-    delay: 0.5,
-  },
-  {
-    src: PHOTOS[2],
-    x: "72%",
-    y: "14%",
-    w: "24%",
-    h: "36%",
-    z: 2,
-    depth: [50, -90, 50],
-    driftX: [0, 8, 0],
-    driftY: [0, -10, 0],
-    duration: 6.8,
-    delay: 1.0,
-  },
-  {
-    src: PHOTOS[3],
-    x: "6%",
-    y: "50%",
-    w: "28%",
-    h: "38%",
-    z: 5,
-    depth: [-70, 55, -70],
-    driftX: [0, 12, 0],
-    driftY: [0, 6, 0],
-    duration: 9.2,
-    delay: 0.3,
-  },
-  {
-    src: PHOTOS[4],
-    x: "38%",
-    y: "42%",
-    w: "36%",
-    h: "46%",
-    z: 6,
-    depth: [30, -100, 30],
-    driftX: [0, -10, 0],
-    driftY: [0, -8, 0],
-    duration: 7.9,
-    delay: 0.7,
-  },
-  {
-    src: PHOTOS[5],
-    x: "74%",
-    y: "52%",
-    w: "22%",
-    h: "32%",
-    z: 3,
-    depth: [-30, 85, -30],
-    driftX: [0, -8, 0],
-    driftY: [0, 12, 0],
-    duration: 6.5,
-    delay: 1.3,
-  },
-  {
-    src: PHOTOS[6],
-    x: "60%",
-    y: "28%",
-    w: "18%",
-    h: "22%",
-    z: 7,
-    depth: [80, -50, 80],
-    driftX: [0, 14, 0],
-    driftY: [0, -6, 0],
-    duration: 5.6,
-    delay: 0.2,
-  },
-  {
-    src: PHOTOS[7],
-    x: "26%",
-    y: "28%",
-    w: "16%",
-    h: "20%",
-    z: 1,
-    depth: [-90, 40, -90],
-    driftX: [0, -6, 0],
-    driftY: [0, 10, 0],
-    duration: 8.1,
-    delay: 1.6,
-  },
+  { src: PHOTOS[0], depth: [0, -90, 0], duration: 7.5, delay: 0 },
+  { src: PHOTOS[1], depth: [0, 75, 0], duration: 8.2, delay: 0.45 },
+  { src: PHOTOS[2], depth: [0, -100, 0], duration: 6.8, delay: 0.9 },
+  { src: PHOTOS[3], depth: [0, 60, 0], duration: 9.0, delay: 0.25 },
+  { src: PHOTOS[4], depth: [0, -85, 0], duration: 7.6, delay: 0.7 },
+  { src: PHOTOS[5], depth: [0, 90, 0], duration: 6.4, delay: 1.1 },
+  { src: PHOTOS[6], depth: [0, -70, 0], duration: 8.5, delay: 0.35 },
+  { src: PHOTOS[7], depth: [0, 80, 0], duration: 7.1, delay: 1.4 },
 ];
 
 type Phase = "collage" | "phone";
@@ -244,74 +141,57 @@ export function PhotoCollage() {
             transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
           >
             <motion.div
-              className="absolute inset-0"
+              className="absolute inset-0 flex items-center justify-center p-8 lg:p-12"
               style={{
                 x: nudgeX,
                 y: nudgeY,
-                perspective: 900,
+                perspective: 1000,
                 transformStyle: "preserve-3d",
               }}
             >
-              {TILES.map((tile, index) => (
-                <motion.div
-                  key={tile.src}
-                  className="absolute overflow-hidden bg-white"
-                  style={{
-                    left: tile.x,
-                    top: tile.y,
-                    width: tile.w,
-                    height: tile.h,
-                    zIndex: tile.z,
-                    boxShadow: "0 18px 48px rgba(17,45,78,0.14)",
-                    transformStyle: "preserve-3d",
-                  }}
-                  initial={{ opacity: 0, z: 0 }}
-                  animate={
-                    reduced
-                      ? { opacity: 1, x: 0, y: 0, z: 0 }
-                      : {
-                          opacity: 1,
-                          x: tile.driftX,
-                          y: tile.driftY,
-                          z: tile.depth,
-                        }
-                  }
-                  transition={
-                    reduced
-                      ? { duration: 0.4, delay: index * 0.05 }
-                      : {
-                          opacity: { duration: 0.5, delay: index * 0.06 },
-                          x: {
-                            duration: tile.duration,
-                            repeat: Infinity,
-                            ease: "easeInOut",
-                            delay: tile.delay,
-                          },
-                          y: {
-                            duration: tile.duration * 1.08,
-                            repeat: Infinity,
-                            ease: "easeInOut",
-                            delay: tile.delay,
-                          },
-                          z: {
-                            duration: tile.duration,
-                            repeat: Infinity,
-                            ease: "easeInOut",
-                            delay: tile.delay,
-                          },
-                        }
-                  }
-                >
-                  <Image
-                    src={tile.src}
-                    alt=""
-                    fill
-                    sizes="30vw"
-                    className="object-cover"
-                    priority={index < 4}
-                  />
-                </motion.div>
-              ))}
+              <div
+                className="grid h-full w-full max-h-[560px] max-w-4xl grid-cols-4 grid-rows-2"
+                style={{ transformStyle: "preserve-3d" }}
+              >
+                {TILE_MOTION.map((tile, index) => (
+                  <motion.div
+                    key={tile.src}
+                    className="relative min-h-0 min-w-0 overflow-hidden bg-[#DBE2EF]"
+                    style={{ transformStyle: "preserve-3d" }}
+                    initial={{ opacity: 0, z: 0 }}
+                    animate={
+                      reduced
+                        ? { opacity: 1, z: 0 }
+                        : {
+                            opacity: 1,
+                            z: tile.depth,
+                          }
+                    }
+                    transition={
+                      reduced
+                        ? { duration: 0.35, delay: index * 0.04 }
+                        : {
+                            opacity: { duration: 0.45, delay: index * 0.05 },
+                            z: {
+                              duration: tile.duration,
+                              repeat: Infinity,
+                              ease: "easeInOut",
+                              delay: tile.delay,
+                            },
+                          }
+                    }
+                  >
+                    <Image
+                      src={tile.src}
+                      alt=""
+                      fill
+                      sizes="25vw"
+                      className="object-cover"
+                      priority={index < 4}
+                    />
+                  </motion.div>
+                ))}
+              </div>
             </motion.div>
             <Caption>Biblioteka w ruchu</Caption>
           </motion.div>
