@@ -134,9 +134,9 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Animowany kolaż**: warstwy zdjęć z parallaxem kursora (perspective / translateZ), float + wolne powiększanie.
-- Potem przejście do **mockupu iPhone (iOS)**: Dynamic Island, status bar 9:41, large title, search, tab bar, home indicator.
-- Pętla kolaż ↔ telefon. `prefers-reduced-motion`: od razu iPhone.
+- **Animowany kolaż (idle-first)**: każde zdjęcie samo dryfuje (x/y), lekko się obraca i powiększa w pętli — bez czekania na kursor.
+- Kursor to tylko lekki nudge całej sceny.
+- Potem przejście do mockupu iPhone (iOS). `prefers-reduced-motion`: od razu iPhone.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
