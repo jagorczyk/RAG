@@ -19,6 +19,7 @@ import {
   useReducedMotion,
   useSpring,
   useTransform,
+  type MotionValue,
 } from "motion/react";
 
 const PHOTOS = [
@@ -40,51 +41,20 @@ const FOLDERS = [
   { name: "Archiwum", count: 203, cover: PHOTOS[6] },
 ] as const;
 
-/**
- * Equal square tiles. Idle Z push/pull + per-tile lean (forward/back).
- * Lean magnitude follows the cursor.
- */
-const COLS = 6;
-const ROWS = 4;
-
-const TILE_MOTION: {
-  src: string;
-  /** +1 leans back (away), -1 leans forward (toward viewer) */
-  lean: 1 | -1;
-  col: number;
-  row: number;
-  depth: number[];
-  opacity: number[];
-  shadow: string[];
-  duration: number;
-  delay: number;
-}[] = Array.from({ length: COLS * ROWS }, (_, i) => {
-  const retreat = i % 2 === 0;
-  return {
-    src: PHOTOS[i % PHOTOS.length],
-    lean: retreat ? 1 : -1,
-    col: i % COLS,
-    row: Math.floor(i / COLS),
-    depth: retreat ? [0, -220, 0] : [0, 140, 0],
-    opacity: retreat ? [1, 0.72, 1] : [1, 1, 1],
-    shadow: retreat
-      ? [
-          "0 8px 24px rgba(17,45,78,0.10)",
-          "0 2px 8px rgba(17,45,78,0.04)",
-          "0 8px 24px rgba(17,45,78,0.10)",
-        ]
-      : [
-          "0 8px 24px rgba(17,45,78,0.10)",
-          "0 28px 60px rgba(17,45,78,0.28)",
-          "0 8px 24px rgba(17,45,78,0.10)",
-        ],
-    duration: 6.4 + (i % 5) * 0.55,
-    delay: (i % 8) * 0.18,
-  };
-});
+/** Vertical columns on a horizontal cylinder — scrolls left ↔ right (ref: 3D gallery). */
+const COL_COUNT = 9;
+const TILES_PER_COL = 5;
+const ANGLE_STEP = 28;
+const RADIUS = 300;
 
 type Phase = "collage" | "phone";
 type PhoneScreen = "photos" | "folders";
+
+function columnPhotos(col: number): string[] {
+  return Array.from({ length: TILES_PER_COL }, (_, row) => {
+    return PHOTOS[(col * 3 + row * 2) % PHOTOS.length];
+  });
+}
 
 export function PhotoCollage() {
   const reduced = useReducedMotion();
@@ -92,12 +62,13 @@ export function PhotoCollage() {
   const [finePointer, setFinePointer] = useState(false);
 
   const mx = useMotionValue(0);
-  const my = useMotionValue(0);
-  const springX = useSpring(mx, { stiffness: 55, damping: 20, mass: 0.5 });
-  const springY = useSpring(my, { stiffness: 55, damping: 20, mass: 0.5 });
-  const nudgeX = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 8));
-  const nudgeY = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * 5));
-  const sceneTransform = useMotionTemplate`translate3d(${nudgeX}px, ${nudgeY}px, 0)`;
+  const springX = useSpring(mx, { stiffness: 50, damping: 22, mass: 0.55 });
+  const autoScroll = useMotionValue(0);
+  const scroll = useTransform([autoScroll, springX], ([auto, cursor]) => {
+    if (reduced) return 0;
+    const cursorBoost = finePointer ? (cursor as number) * 32 : 0;
+    return (auto as number) + cursorBoost;
+  });
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -106,6 +77,23 @@ export function PhotoCollage() {
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
+
+  // Continuous left ↔ right drift (sine), like the reference gallery scroll
+  useEffect(() => {
+    if (reduced) {
+      autoScroll.set(0);
+      return;
+    }
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = (now - start) / 1000;
+      autoScroll.set(Math.sin(t * 0.45) * 38);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [reduced, autoScroll]);
 
   useEffect(() => {
     if (reduced) {
@@ -118,10 +106,10 @@ export function PhotoCollage() {
       timer = setTimeout(() => {
         if (cancelled) return;
         setPhase(next);
-        loop(next === "collage" ? "phone" : "collage", next === "collage" ? 7000 : 5200);
+        loop(next === "collage" ? "phone" : "collage", next === "collage" ? 7000 : 5500);
       }, delay);
     };
-    loop("phone", 7500);
+    loop("phone", 8000);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -132,13 +120,9 @@ export function PhotoCollage() {
     if (reduced || !finePointer || phase !== "collage") return;
     const rect = event.currentTarget.getBoundingClientRect();
     mx.set((event.clientX - rect.left) / rect.width - 0.5);
-    my.set((event.clientY - rect.top) / rect.height - 0.5);
   };
 
-  const onLeave = () => {
-    mx.set(0);
-    my.set(0);
-  };
+  const onLeave = () => mx.set(0);
 
   return (
     <div
@@ -151,7 +135,7 @@ export function PhotoCollage() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 65% 50% at 40% 40%, #E7EEF7 0%, transparent 70%), linear-gradient(180deg, #F9F7F7 0%, #EDE8E3 100%)",
+            "radial-gradient(ellipse 70% 55% at 50% 45%, #E7EEF7 0%, transparent 68%), linear-gradient(180deg, #F9F7F7 0%, #EDE8E3 100%)",
         }}
       />
 
@@ -162,48 +146,38 @@ export function PhotoCollage() {
             className="absolute inset-0"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.92, filter: "blur(8px)" }}
+            exit={{ opacity: 0, scale: 0.94, filter: "blur(8px)" }}
             transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
           >
-            {/* Perspective root — no conflicting Motion transforms here */}
             <div
-              className="absolute inset-0 flex items-center justify-center p-12 lg:p-20"
-              style={{ perspective: 750 }}
+              className="absolute inset-0 flex items-center justify-center"
+              style={{ perspective: 900 }}
             >
-              {/* Cursor tilt / nudge */}
-              <motion.div
-                className="flex h-full w-full items-center justify-center"
+              <div
+                className="relative flex h-[min(520px,78%)] items-center justify-center"
                 style={{
-                  transform: sceneTransform,
+                  width: "100%",
                   transformStyle: "preserve-3d",
+                  transform: "translateZ(-40px)",
                 }}
               >
-                {/* Base pull-back — separate from Motion x/y/rotate */}
-                <div
-                  className="w-full max-w-2xl"
-                  style={{
-                    transform: "translateZ(-140px)",
-                    transformStyle: "preserve-3d",
-                  }}
-                >
-                  <div
-                    className="grid w-full grid-cols-6 gap-0"
-                    style={{ transformStyle: "preserve-3d" }}
-                  >
-                    {TILE_MOTION.map((tile, index) => (
-                      <CollageTile
-                        key={`${tile.src}-${index}`}
-                        tile={tile}
-                        index={index}
-                        springX={springX}
-                        springY={springY}
-                        reduced={!!reduced || !finePointer}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </motion.div>
+                {Array.from({ length: COL_COUNT }, (_, col) => (
+                  <GalleryColumn
+                    key={col}
+                    col={col}
+                    scroll={scroll}
+                    reduced={!!reduced}
+                  />
+                ))}
+              </div>
             </div>
+
+            {/* Soft edge fade */}
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-[#F4F1EE] to-transparent lg:w-24" />
+            <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-[#F4F1EE] to-transparent lg:w-24" />
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-[#F4F1EE] to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#F4F1EE] to-transparent" />
+
             <Caption>Biblioteka w ruchu</Caption>
           </motion.div>
         ) : (
@@ -224,6 +198,55 @@ export function PhotoCollage() {
   );
 }
 
+function GalleryColumn({
+  col,
+  scroll,
+  reduced,
+}: {
+  col: number;
+  scroll: MotionValue<number>;
+  reduced: boolean;
+}) {
+  const mid = (COL_COUNT - 1) / 2;
+  const rotateY = useTransform(scroll, (s) => {
+    if (reduced) return (col - mid) * ANGLE_STEP * 0.35;
+    return (col - mid) * ANGLE_STEP + s;
+  });
+  const transform = useMotionTemplate`rotateY(${rotateY}deg) translateZ(${RADIUS}px)`;
+  const photos = columnPhotos(col);
+  const stagger = col % 2 === 1;
+
+  return (
+    <motion.div
+      className="absolute flex flex-col items-center gap-2.5"
+      style={{
+        transformStyle: "preserve-3d",
+        transform,
+        left: "50%",
+        top: "50%",
+        marginLeft: -36,
+        marginTop: stagger ? -150 : -180,
+      }}
+    >
+      {photos.map((src, row) => (
+        <div
+          key={`${col}-${row}-${src}`}
+          className="relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-[12px] bg-[#DBE2EF] shadow-[0_10px_28px_rgba(17,45,78,0.14)] ring-1 ring-white/40"
+        >
+          <Image
+            src={src}
+            alt=""
+            fill
+            sizes="72px"
+            className="object-cover object-top"
+            priority={col >= 3 && col <= 5 && row < 3}
+          />
+        </div>
+      ))}
+    </motion.div>
+  );
+}
+
 function Caption({ children }: { children: React.ReactNode }) {
   return (
     <motion.p
@@ -234,94 +257,6 @@ function Caption({ children }: { children: React.ReactNode }) {
     >
       {children}
     </motion.p>
-  );
-}
-
-function CollageTile({
-  tile,
-  index,
-  springX,
-  springY,
-  reduced,
-}: {
-  tile: (typeof TILE_MOTION)[number];
-  index: number;
-  springX: ReturnType<typeof useSpring>;
-  springY: ReturnType<typeof useSpring>;
-  reduced: boolean;
-}) {
-  // Base lean: back (+rotateX) or forward (-rotateX). Cursor Y deepens/relaxes it;
-  // cursor X adds a slight side twist, stronger for tiles farther from center.
-  const colBias = (tile.col - (COLS - 1) / 2) / ((COLS - 1) / 2);
-  const rotateX = useTransform(springY, (v) => {
-    if (reduced) return tile.lean * 10;
-    const base = tile.lean * 22;
-    const fromCursor = tile.lean * (v * -28);
-    return base + fromCursor;
-  });
-  const rotateY = useTransform(springX, (v) => {
-    if (reduced) return colBias * 4;
-    return colBias * 6 + v * tile.lean * -14;
-  });
-  const leanTransform = useMotionTemplate`rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
-
-  return (
-    <motion.div
-      className="relative aspect-square min-h-0 min-w-0"
-      style={{
-        transformStyle: "preserve-3d",
-        transform: leanTransform,
-        transformOrigin: "center center",
-      }}
-    >
-      <motion.div
-        className="absolute inset-0 overflow-hidden bg-[#DBE2EF]"
-        style={{ transformStyle: "preserve-3d" }}
-        initial={{ opacity: 0, z: 0 }}
-        animate={
-          reduced
-            ? { opacity: 1, z: 0, boxShadow: tile.shadow[0] }
-            : {
-                opacity: tile.opacity,
-                z: tile.depth,
-                boxShadow: tile.shadow,
-              }
-        }
-        transition={
-          reduced
-            ? { duration: 0.35, delay: index * 0.02 }
-            : {
-                opacity: {
-                  duration: tile.duration,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                  delay: tile.delay,
-                },
-                z: {
-                  duration: tile.duration,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                  delay: tile.delay,
-                },
-                boxShadow: {
-                  duration: tile.duration,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                  delay: tile.delay,
-                },
-              }
-        }
-      >
-        <Image
-          src={tile.src}
-          alt=""
-          fill
-          sizes="12vw"
-          className="object-cover object-top"
-          priority={index < 8}
-        />
-      </motion.div>
-    </motion.div>
   );
 }
 

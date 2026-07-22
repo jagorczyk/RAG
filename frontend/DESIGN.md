@@ -134,11 +134,10 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Siatka równych kwadratów obok siebie** (6×4, mniejsze kafelki, `object-top`).
-- Cała siatka trochę oddalona (`translateZ` na osobnym wrapperze).
-- **Silny 3D**: perspektywa ~750px, Z `0→±140…220→0`, opacity/cień przy głębi.
-- Każde zdjęcie jest **pochylone do tyłu lub do przodu** (`rotateX`); pochylenie i skręt reagują na kursor.
-- Mockup iPhone: zdjęcia → foldery. `prefers-reduced-motion`: od razu iPhone.
+- **3D gallery (ref. scrolling photo gallery)**: małe lekko zaokrąglone kwadraty (`rounded-[12px]`) w pionowych kolumnach na cylindrze.
+- Kolumny **przesuwają się w lewo ↔ prawo** (auto sine + kursor na osi X).
+- Potem przejście do mockupu iPhone: siatka → lista folderów.
+- `prefers-reduced-motion`: od razu iPhone.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
