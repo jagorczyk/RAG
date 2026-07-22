@@ -141,7 +141,7 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 - Atmosfera Cogniface: soft bloom, vignette, edge rails — bez purple glow.
 - `prefers-reduced-motion`: płaska siatka + prosty lightbox.
 - Kod: `components/gallery/{Gallery,GalleryItem,GalleryLightbox,useGalleryAnimation,useMouseParallax,galleryData}`.
-- Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
+- Assets w `public/landing-page-photos/` (źródło: `landing-page-photos/`). Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
 
