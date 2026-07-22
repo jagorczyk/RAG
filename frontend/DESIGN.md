@@ -134,8 +134,8 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Animowany kolaż (idle-first)**: każde zdjęcie samo dryfuje (x/y), lekko się obraca i powiększa w pętli — bez czekania na kursor.
-- Kursor to tylko lekki nudge całej sceny.
+- **Okrągłe zdjęcia** na osi Z: część odsuwa się do tyłu (ujemny `translateZ` → wyglądają mniejszo), część wysuwa do przodu (większe). Efekt powiększania/pomniejszania z perspektywy, nie ze `scale`.
+- Lekki dryf x/y + kursor tylko jako nudge całej sceny.
 - Potem przejście do mockupu iPhone (iOS). `prefers-reduced-motion`: od razu iPhone.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
 

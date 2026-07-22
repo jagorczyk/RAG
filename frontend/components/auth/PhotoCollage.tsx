@@ -24,143 +24,118 @@ const PHOTOS = [
 ] as const;
 
 /**
- * Idle-first collage: each tile has its own continuous float / drift / breathe.
- * Cursor parallax is a light additive nudge only.
+ * Round tiles on a Z-axis: some retreat (back), some advance (forward).
+ * Perspective makes forward look larger and back look smaller.
+ * Cursor is only a light scene nudge.
  */
 const TILES: {
   src: string;
   x: string;
   y: string;
-  w: string;
-  h: string;
-  rotate: number;
+  size: string;
   z: number;
-  floatY: number[];
-  floatX: number[];
-  rot: number[];
-  scale: number[];
+  /** Z keyframes in px — negative = farther (smaller), positive = closer (larger) */
+  depth: number[];
+  driftX: number[];
+  driftY: number[];
   duration: number;
   delay: number;
 }[] = [
   {
     src: PHOTOS[0],
-    x: "8%",
-    y: "12%",
-    w: "31%",
-    h: "40%",
-    rotate: -3,
-    z: 2,
-    floatY: [-10, 8, -10],
-    floatX: [0, 6, 0],
-    rot: [-3, -1, -3],
-    scale: [1, 1.04, 1],
-    duration: 7.2,
+    x: "10%",
+    y: "14%",
+    size: "min(210px, 28%)",
+    z: 3,
+    depth: [20, -80, 20],
+    driftX: [0, 10, 0],
+    driftY: [0, -12, 0],
+    duration: 7.5,
     delay: 0,
   },
   {
     src: PHOTOS[1],
     x: "42%",
     y: "8%",
-    w: "33%",
-    h: "34%",
-    rotate: 2.5,
-    z: 3,
-    floatY: [6, -12, 6],
-    floatX: [0, -8, 0],
-    rot: [2.5, 4.5, 2.5],
-    scale: [1, 1.06, 1],
-    duration: 8.4,
-    delay: 0.4,
+    size: "min(240px, 32%)",
+    z: 4,
+    depth: [-40, 70, -40],
+    driftX: [0, -14, 0],
+    driftY: [0, 8, 0],
+    duration: 8.8,
+    delay: 0.5,
   },
   {
     src: PHOTOS[2],
     x: "72%",
     y: "16%",
-    w: "22%",
-    h: "32%",
-    rotate: -2,
+    size: "min(180px, 24%)",
     z: 2,
-    floatY: [-8, 10, -8],
-    floatX: [4, -4, 4],
-    rot: [-2, 0, -2],
-    scale: [1, 1.05, 1],
-    duration: 6.6,
-    delay: 0.9,
+    depth: [50, -90, 50],
+    driftX: [0, 8, 0],
+    driftY: [0, -10, 0],
+    duration: 6.8,
+    delay: 1.0,
   },
   {
     src: PHOTOS[3],
-    x: "6%",
+    x: "8%",
     y: "52%",
-    w: "28%",
-    h: "36%",
-    rotate: 2,
-    z: 4,
-    floatY: [8, -9, 8],
-    floatX: [-5, 5, -5],
-    rot: [2, 3.5, 2],
-    scale: [1, 1.07, 1],
-    duration: 9.1,
-    delay: 0.2,
+    size: "min(200px, 26%)",
+    z: 5,
+    depth: [-70, 55, -70],
+    driftX: [0, 12, 0],
+    driftY: [0, 6, 0],
+    duration: 9.2,
+    delay: 0.3,
   },
   {
     src: PHOTOS[4],
-    x: "38%",
-    y: "44%",
-    w: "34%",
-    h: "42%",
-    rotate: -2.5,
-    z: 5,
-    floatY: [-12, 7, -12],
-    floatX: [0, 10, 0],
-    rot: [-2.5, -0.5, -2.5],
-    scale: [1, 1.05, 1],
-    duration: 7.8,
-    delay: 0.6,
+    x: "40%",
+    y: "46%",
+    size: "min(250px, 34%)",
+    z: 6,
+    depth: [30, -100, 30],
+    driftX: [0, -10, 0],
+    driftY: [0, -8, 0],
+    duration: 7.9,
+    delay: 0.7,
   },
   {
     src: PHOTOS[5],
     x: "74%",
-    y: "52%",
-    w: "20%",
-    h: "30%",
-    rotate: 3.5,
+    y: "54%",
+    size: "min(170px, 22%)",
     z: 3,
-    floatY: [5, -11, 5],
-    floatX: [-6, 3, -6],
-    rot: [3.5, 5, 3.5],
-    scale: [1, 1.08, 1],
-    duration: 6.9,
-    delay: 1.2,
+    depth: [-30, 85, -30],
+    driftX: [0, -8, 0],
+    driftY: [0, 12, 0],
+    duration: 6.5,
+    delay: 1.3,
   },
   {
     src: PHOTOS[6],
     x: "62%",
-    y: "30%",
-    w: "16%",
-    h: "20%",
-    rotate: -4,
-    z: 6,
-    floatY: [-6, 9, -6],
-    floatX: [7, -7, 7],
-    rot: [-4, -2, -4],
-    scale: [1, 1.1, 1],
-    duration: 5.8,
-    delay: 0.3,
+    y: "32%",
+    size: "min(130px, 17%)",
+    z: 7,
+    depth: [80, -50, 80],
+    driftX: [0, 14, 0],
+    driftY: [0, -6, 0],
+    duration: 5.6,
+    delay: 0.2,
   },
   {
     src: PHOTOS[7],
     x: "28%",
-    y: "28%",
-    w: "15%",
-    h: "18%",
-    rotate: 4,
+    y: "30%",
+    size: "min(120px, 15%)",
     z: 1,
-    floatY: [7, -6, 7],
-    floatX: [-4, 8, -4],
-    rot: [4, 6, 4],
-    scale: [1, 1.09, 1],
-    duration: 8.0,
-    delay: 1.5,
+    depth: [-90, 40, -90],
+    driftX: [0, -6, 0],
+    driftY: [0, 10, 0],
+    duration: 8.1,
+    delay: 1.6,
   },
 ];
 
@@ -173,10 +148,10 @@ export function PhotoCollage() {
 
   const mx = useMotionValue(0);
   const my = useMotionValue(0);
-  const springX = useSpring(mx, { stiffness: 60, damping: 20, mass: 0.5 });
-  const springY = useSpring(my, { stiffness: 60, damping: 20, mass: 0.5 });
-  const nudgeX = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 14));
-  const nudgeY = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * 10));
+  const springX = useSpring(mx, { stiffness: 55, damping: 20, mass: 0.5 });
+  const springY = useSpring(my, { stiffness: 55, damping: 20, mass: 0.5 });
+  const nudgeX = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 12));
+  const nudgeY = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * 8));
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -200,7 +175,7 @@ export function PhotoCollage() {
         loop(next === "collage" ? "phone" : "collage", next === "collage" ? 6000 : 5200);
       }, delay);
     };
-    loop("phone", 7000);
+    loop("phone", 7500);
     return () => {
       cancelled = true;
       clearTimeout(timer);
@@ -241,39 +216,48 @@ export function PhotoCollage() {
             className="absolute inset-0"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.9, filter: "blur(10px)" }}
+            exit={{ opacity: 0, scale: 0.92, filter: "blur(8px)" }}
             transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
           >
-            <motion.div className="absolute inset-0" style={{ x: nudgeX, y: nudgeY }}>
+            <motion.div
+              className="absolute inset-0"
+              style={{
+                x: nudgeX,
+                y: nudgeY,
+                perspective: 900,
+                transformStyle: "preserve-3d",
+              }}
+            >
               {TILES.map((tile, index) => (
                 <motion.div
                   key={tile.src}
-                  className="absolute overflow-hidden rounded-sm bg-white"
+                  className="absolute overflow-hidden rounded-full bg-white"
                   style={{
                     left: tile.x,
                     top: tile.y,
-                    width: tile.w,
-                    height: tile.h,
+                    width: tile.size,
+                    aspectRatio: "1 / 1",
                     zIndex: tile.z,
-                    boxShadow: "0 18px 50px rgba(17,45,78,0.12), 0 2px 8px rgba(17,45,78,0.06)",
+                    boxShadow:
+                      "0 20px 50px rgba(17,45,78,0.14), 0 0 0 3px rgba(255,255,255,0.65)",
+                    transformStyle: "preserve-3d",
                   }}
-                  initial={{ opacity: 0, scale: 0.92, rotate: tile.rotate }}
+                  initial={{ opacity: 0, z: 0 }}
                   animate={
                     reduced
-                      ? { opacity: 1, scale: 1, rotate: tile.rotate, x: 0, y: 0 }
+                      ? { opacity: 1, x: 0, y: 0, z: 0 }
                       : {
                           opacity: 1,
-                          x: tile.floatX,
-                          y: tile.floatY,
-                          rotate: tile.rot,
-                          scale: tile.scale,
+                          x: tile.driftX,
+                          y: tile.driftY,
+                          z: tile.depth,
                         }
                   }
                   transition={
                     reduced
                       ? { duration: 0.4, delay: index * 0.05 }
                       : {
-                          opacity: { duration: 0.55, delay: index * 0.07 },
+                          opacity: { duration: 0.5, delay: index * 0.06 },
                           x: {
                             duration: tile.duration,
                             repeat: Infinity,
@@ -281,22 +265,16 @@ export function PhotoCollage() {
                             delay: tile.delay,
                           },
                           y: {
-                            duration: tile.duration * 1.05,
+                            duration: tile.duration * 1.08,
                             repeat: Infinity,
                             ease: "easeInOut",
                             delay: tile.delay,
                           },
-                          rotate: {
-                            duration: tile.duration * 1.15,
+                          z: {
+                            duration: tile.duration,
                             repeat: Infinity,
                             ease: "easeInOut",
                             delay: tile.delay,
-                          },
-                          scale: {
-                            duration: tile.duration * 0.95,
-                            repeat: Infinity,
-                            ease: "easeInOut",
-                            delay: tile.delay + 0.2,
                           },
                         }
                   }
@@ -305,7 +283,7 @@ export function PhotoCollage() {
                     src={tile.src}
                     alt=""
                     fill
-                    sizes="30vw"
+                    sizes="240px"
                     className="object-cover"
                     priority={index < 4}
                   />
