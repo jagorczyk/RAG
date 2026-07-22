@@ -134,8 +134,9 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- Siatka zdjęć **złączonych obok siebie** (bez luk i rotacji), np. 4×2. Cały kolaż lekko reaguje na kursor (parallax).
-- Assets w `public/collage/`.
+- Karty jak **strony w albumie**: obok siebie w siatce, zaokrąglone rogi (`rounded-2xl`), miękki cień.
+- Cała scena + poszczególne karty w **3D** (perspective, rotateX/Y, translateZ) reagują na kursor; idle float w górę/dół.
+- Assets w `public/collage/`. `prefers-reduced-motion` / touch: bez 3D tilt.
 - Bez overlay badge’y, chipów i copy na kolażu.
 - Obrazy dekoracyjne — nie są źródłami użytkownika.
 
