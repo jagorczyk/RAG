@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { FolderOpen, MessageCircle, Signal, Users, Wifi, BatteryFull } from "lucide-react";
+import {
+  ChevronRight,
+  FolderOpen,
+  MessageCircle,
+  Signal,
+  Users,
+  Wifi,
+  BatteryFull,
+} from "lucide-react";
 import {
   AnimatePresence,
   motion,
@@ -23,18 +31,25 @@ const PHOTOS = [
   "/collage/08.jpg",
 ] as const;
 
+const FOLDERS = [
+  { name: "Wakacje 2024", count: 128, cover: PHOTOS[0] },
+  { name: "Rodzina", count: 86, cover: PHOTOS[1] },
+  { name: "Praca", count: 42, cover: PHOTOS[3] },
+  { name: "Wydarzenia", count: 57, cover: PHOTOS[4] },
+  { name: "Archiwum", count: 203, cover: PHOTOS[6] },
+] as const;
+
 /**
- * Round tiles on a Z-axis: some retreat (back), some advance (forward).
- * Perspective makes forward look larger and back look smaller.
+ * Rectangular tiles on Z-axis: retreat (back = smaller) / advance (forward = larger).
  * Cursor is only a light scene nudge.
  */
 const TILES: {
   src: string;
   x: string;
   y: string;
-  size: string;
+  w: string;
+  h: string;
   z: number;
-  /** Z keyframes in px — negative = farther (smaller), positive = closer (larger) */
   depth: number[];
   driftX: number[];
   driftY: number[];
@@ -43,9 +58,10 @@ const TILES: {
 }[] = [
   {
     src: PHOTOS[0],
-    x: "10%",
-    y: "14%",
-    size: "min(210px, 28%)",
+    x: "8%",
+    y: "10%",
+    w: "32%",
+    h: "38%",
     z: 3,
     depth: [20, -80, 20],
     driftX: [0, 10, 0],
@@ -56,8 +72,9 @@ const TILES: {
   {
     src: PHOTOS[1],
     x: "42%",
-    y: "8%",
-    size: "min(240px, 32%)",
+    y: "6%",
+    w: "34%",
+    h: "34%",
     z: 4,
     depth: [-40, 70, -40],
     driftX: [0, -14, 0],
@@ -68,8 +85,9 @@ const TILES: {
   {
     src: PHOTOS[2],
     x: "72%",
-    y: "16%",
-    size: "min(180px, 24%)",
+    y: "14%",
+    w: "24%",
+    h: "36%",
     z: 2,
     depth: [50, -90, 50],
     driftX: [0, 8, 0],
@@ -79,9 +97,10 @@ const TILES: {
   },
   {
     src: PHOTOS[3],
-    x: "8%",
-    y: "52%",
-    size: "min(200px, 26%)",
+    x: "6%",
+    y: "50%",
+    w: "28%",
+    h: "38%",
     z: 5,
     depth: [-70, 55, -70],
     driftX: [0, 12, 0],
@@ -91,9 +110,10 @@ const TILES: {
   },
   {
     src: PHOTOS[4],
-    x: "40%",
-    y: "46%",
-    size: "min(250px, 34%)",
+    x: "38%",
+    y: "42%",
+    w: "36%",
+    h: "46%",
     z: 6,
     depth: [30, -100, 30],
     driftX: [0, -10, 0],
@@ -104,8 +124,9 @@ const TILES: {
   {
     src: PHOTOS[5],
     x: "74%",
-    y: "54%",
-    size: "min(170px, 22%)",
+    y: "52%",
+    w: "22%",
+    h: "32%",
     z: 3,
     depth: [-30, 85, -30],
     driftX: [0, -8, 0],
@@ -115,9 +136,10 @@ const TILES: {
   },
   {
     src: PHOTOS[6],
-    x: "62%",
-    y: "32%",
-    size: "min(130px, 17%)",
+    x: "60%",
+    y: "28%",
+    w: "18%",
+    h: "22%",
     z: 7,
     depth: [80, -50, 80],
     driftX: [0, 14, 0],
@@ -127,9 +149,10 @@ const TILES: {
   },
   {
     src: PHOTOS[7],
-    x: "28%",
-    y: "30%",
-    size: "min(120px, 15%)",
+    x: "26%",
+    y: "28%",
+    w: "16%",
+    h: "20%",
     z: 1,
     depth: [-90, 40, -90],
     driftX: [0, -6, 0],
@@ -140,6 +163,7 @@ const TILES: {
 ];
 
 type Phase = "collage" | "phone";
+type PhoneScreen = "photos" | "folders";
 
 export function PhotoCollage() {
   const reduced = useReducedMotion();
@@ -172,7 +196,7 @@ export function PhotoCollage() {
       timer = setTimeout(() => {
         if (cancelled) return;
         setPhase(next);
-        loop(next === "collage" ? "phone" : "collage", next === "collage" ? 6000 : 5200);
+        loop(next === "collage" ? "phone" : "collage", next === "collage" ? 7000 : 5200);
       }, delay);
     };
     loop("phone", 7500);
@@ -231,15 +255,14 @@ export function PhotoCollage() {
               {TILES.map((tile, index) => (
                 <motion.div
                   key={tile.src}
-                  className="absolute overflow-hidden rounded-full bg-white"
+                  className="absolute overflow-hidden bg-white"
                   style={{
                     left: tile.x,
                     top: tile.y,
-                    width: tile.size,
-                    aspectRatio: "1 / 1",
+                    width: tile.w,
+                    height: tile.h,
                     zIndex: tile.z,
-                    boxShadow:
-                      "0 20px 50px rgba(17,45,78,0.14), 0 0 0 3px rgba(255,255,255,0.65)",
+                    boxShadow: "0 18px 48px rgba(17,45,78,0.14)",
                     transformStyle: "preserve-3d",
                   }}
                   initial={{ opacity: 0, z: 0 }}
@@ -283,7 +306,7 @@ export function PhotoCollage() {
                     src={tile.src}
                     alt=""
                     fill
-                    sizes="240px"
+                    sizes="30vw"
                     className="object-cover"
                     priority={index < 4}
                   />
@@ -301,7 +324,7 @@ export function PhotoCollage() {
             exit={{ opacity: 0, y: -12, scale: 1.04 }}
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
           >
-            <IPhoneMockup />
+            <IPhoneMockup reduced={!!reduced} />
             <Caption>Cogniface na iOS</Caption>
           </motion.div>
         )}
@@ -323,7 +346,30 @@ function Caption({ children }: { children: React.ReactNode }) {
   );
 }
 
-function IPhoneMockup() {
+function IPhoneMockup({ reduced }: { reduced: boolean }) {
+  const [screen, setScreen] = useState<PhoneScreen>("photos");
+
+  useEffect(() => {
+    if (reduced) {
+      setScreen("folders");
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const loop = (next: PhoneScreen, delay: number) => {
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        setScreen(next);
+        loop(next === "photos" ? "folders" : "photos", 2800);
+      }, delay);
+    };
+    loop("folders", 2200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [reduced]);
+
   return (
     <div className="relative">
       <div
@@ -366,40 +412,91 @@ function IPhoneMockup() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#3F72AF]">
                   Cogniface
                 </p>
-                <h2 className="mt-0.5 text-[28px] font-bold leading-none tracking-tight text-black">
-                  Biblioteka
-                </h2>
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.h2
+                    key={screen}
+                    className="mt-0.5 text-[28px] font-bold leading-none tracking-tight text-black"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.28 }}
+                  >
+                    {screen === "photos" ? "Biblioteka" : "Foldery"}
+                  </motion.h2>
+                </AnimatePresence>
               </div>
 
               <div className="mx-4 mb-3 rounded-xl bg-[#E3E3E8] px-3 py-2 text-[14px] text-[#8E8E93]">
                 Szukaj
               </div>
 
-              <div className="min-h-0 flex-1 overflow-hidden px-4">
-                <div className="grid grid-cols-2 gap-[6px]">
-                  {PHOTOS.slice(0, 6).map((src, i) => (
+              <div className="relative min-h-0 flex-1 overflow-hidden px-4">
+                <AnimatePresence mode="wait" initial={false}>
+                  {screen === "photos" ? (
                     <motion.div
-                      key={src}
-                      className="relative aspect-square overflow-hidden rounded-[10px] bg-[#D1D1D6]"
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.15 + i * 0.05, duration: 0.35 }}
+                      key="photos"
+                      className="absolute inset-x-4 top-0 bottom-0"
+                      initial={{ opacity: 0, x: -28 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -36 }}
+                      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
                     >
-                      <Image src={src} alt="" fill sizes="140px" className="object-cover" />
+                      <div className="grid grid-cols-2 gap-[6px]">
+                        {PHOTOS.slice(0, 6).map((src, i) => (
+                          <motion.div
+                            key={src}
+                            className="relative aspect-square overflow-hidden rounded-[10px] bg-[#D1D1D6]"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.05 + i * 0.04, duration: 0.3 }}
+                          >
+                            <Image src={src} alt="" fill sizes="140px" className="object-cover" />
+                          </motion.div>
+                        ))}
+                      </div>
                     </motion.div>
-                  ))}
-                </div>
-                <motion.div
-                  className="mt-3 rounded-[14px] bg-white px-3.5 py-3 shadow-sm"
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.45, duration: 0.4 }}
-                >
-                  <p className="text-[11px] font-semibold text-[#8E8E93]">Rozmowy</p>
-                  <p className="mt-1 text-[14px] leading-snug text-black">
-                    Na zdjęciu widać dwie osoby obok siebie — w ogrodzie.
-                  </p>
-                </motion.div>
+                  ) : (
+                    <motion.div
+                      key="folders"
+                      className="absolute inset-x-4 top-0 bottom-0 overflow-hidden"
+                      initial={{ opacity: 0, x: 36 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 36 }}
+                      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                    >
+                      <div className="space-y-[6px]">
+                        {FOLDERS.map((folder, i) => (
+                          <motion.div
+                            key={folder.name}
+                            className="flex items-center gap-3 rounded-[12px] bg-white px-2.5 py-2 shadow-sm"
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.08 + i * 0.06, duration: 0.32 }}
+                          >
+                            <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-[8px] bg-[#E3E3E8]">
+                              <Image
+                                src={folder.cover}
+                                alt=""
+                                fill
+                                sizes="44px"
+                                className="object-cover"
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-[15px] font-semibold text-black">
+                                {folder.name}
+                              </p>
+                              <p className="text-[12px] text-[#8E8E93]">
+                                {folder.count} zdjęć
+                              </p>
+                            </div>
+                            <ChevronRight size={18} className="shrink-0 text-[#C7C7CC]" />
+                          </motion.div>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               <div className="border-t border-black/5 bg-[#F9F9F9]/92 backdrop-blur-xl">

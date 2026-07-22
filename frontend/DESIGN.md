@@ -134,9 +134,10 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Okrągłe zdjęcia** na osi Z: część odsuwa się do tyłu (ujemny `translateZ` → wyglądają mniejszo), część wysuwa do przodu (większe). Efekt powiększania/pomniejszania z perspektywy, nie ze `scale`.
+- **Prostokątne zdjęcia** na osi Z: część odsuwa się do tyłu (mniejsze), część wysuwa do przodu (większe). Bez zaokrągleń kafelków.
 - Lekki dryf x/y + kursor tylko jako nudge całej sceny.
-- Potem przejście do mockupu iPhone (iOS). `prefers-reduced-motion`: od razu iPhone.
+- Mockup iPhone (iOS): siatka zdjęć → animowane przejście do **listy folderów** (push L↔P) i z powrotem.
+- `prefers-reduced-motion`: od razu iPhone / foldery.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
