@@ -22,16 +22,16 @@ const PHOTOS = [
   "/collage/08.jpg",
 ] as const;
 
-/** Per-tile 3D depth + which ones slowly “come forward” */
+/** Relative depth — lower = farther from camera */
 const TILE_META = [
-  { depth: 1.15, breathe: true, phase: 0.0 },
-  { depth: 0.75, breathe: false, phase: 0.4 },
-  { depth: 1.35, breathe: true, phase: 1.1 },
-  { depth: 0.9, breathe: false, phase: 0.7 },
-  { depth: 1.05, breathe: true, phase: 2.0 },
-  { depth: 0.7, breathe: false, phase: 1.5 },
-  { depth: 1.4, breathe: true, phase: 0.3 },
-  { depth: 0.85, breathe: true, phase: 2.6 },
+  { depth: 0.85, breathe: true, phase: 0.0 },
+  { depth: 0.45, breathe: false, phase: 0.4 },
+  { depth: 1.0, breathe: true, phase: 1.1 },
+  { depth: 0.55, breathe: false, phase: 0.7 },
+  { depth: 0.75, breathe: true, phase: 2.0 },
+  { depth: 0.4, breathe: false, phase: 1.5 },
+  { depth: 0.95, breathe: true, phase: 0.3 },
+  { depth: 0.5, breathe: true, phase: 2.6 },
 ] as const;
 
 export function PhotoCollage() {
@@ -42,10 +42,10 @@ export function PhotoCollage() {
   const springX = useSpring(mx, { stiffness: 70, damping: 16, mass: 0.55 });
   const springY = useSpring(my, { stiffness: 70, damping: 16, mass: 0.55 });
 
-  const sceneRotateY = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 42));
-  const sceneRotateX = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * -28));
-  const sceneZ = useTransform(springX, (v) => (reduced || !finePointer ? 0 : Math.abs(v) * 40));
-  const sceneTransform = useMotionTemplate`perspective(900px) rotateX(${sceneRotateX}deg) rotateY(${sceneRotateY}deg) translateZ(${sceneZ}px)`;
+  const sceneRotateY = useTransform(springX, (v) => (reduced || !finePointer ? 0 : v * 36));
+  const sceneRotateX = useTransform(springY, (v) => (reduced || !finePointer ? 0 : v * -24));
+  // Keep the whole album pushed back so tiles stay readable
+  const sceneTransform = useMotionTemplate`perspective(1400px) translateZ(-180px) rotateX(${sceneRotateX}deg) rotateY(${sceneRotateY}deg)`;
 
   useEffect(() => {
     const mq = window.matchMedia("(pointer: fine)");
@@ -75,7 +75,7 @@ export function PhotoCollage() {
       aria-hidden
     >
       <div
-        className="pointer-events-none absolute inset-0 opacity-45"
+        className="pointer-events-none absolute inset-0 opacity-40"
         style={{
           background:
             "radial-gradient(ellipse at 35% 25%, #3F72AF 0%, transparent 55%), radial-gradient(ellipse at 85% 75%, #DBE2EF 0%, transparent 42%)",
@@ -83,11 +83,11 @@ export function PhotoCollage() {
       />
 
       <div
-        className="absolute inset-0 flex items-center justify-center"
-        style={{ perspective: "900px" }}
+        className="absolute inset-0 flex items-center justify-center p-6 lg:p-10"
+        style={{ perspective: "1400px" }}
       >
         <motion.div
-          className="grid h-[118%] w-[118%] grid-cols-4 grid-rows-2"
+          className="grid h-full w-full max-h-[560px] max-w-4xl grid-cols-4 grid-rows-2 overflow-visible"
           style={{
             transformStyle: "preserve-3d",
             transform: sceneTransform,
@@ -125,21 +125,21 @@ function CollageTile({
   reduced: boolean;
   priority: boolean;
 }) {
-  const push = meta.depth * 56;
+  const push = meta.depth * 28;
   const x = useTransform(springX, (v) => (reduced ? 0 : v * push));
-  const y = useTransform(springY, (v) => (reduced ? 0 : v * push * 0.85));
-  const z = useTransform(springX, (v) => (reduced ? 0 : meta.depth * 70 + Math.abs(v) * 36));
-  const rotY = useTransform(springX, (v) => (reduced ? 0 : v * 10 * meta.depth));
-  const rotX = useTransform(springY, (v) => (reduced ? 0 : -v * 8 * meta.depth));
+  const y = useTransform(springY, (v) => (reduced ? 0 : v * push * 0.8));
+  // Modest Z so photos stay in frame, not in the viewer's face
+  const z = useTransform(springX, (v) => (reduced ? 0 : meta.depth * 24 + Math.abs(v) * 12));
+  const rotY = useTransform(springX, (v) => (reduced ? 0 : v * 8 * meta.depth));
+  const rotX = useTransform(springY, (v) => (reduced ? 0 : -v * 6 * meta.depth));
   const transform = useMotionTemplate`translate3d(${x}px, ${y}px, ${z}px) rotateX(${rotX}deg) rotateY(${rotY}deg)`;
 
   const breathe = useMemo(() => {
     if (reduced || !meta.breathe) return undefined;
     return {
-      scale: [1, 1.14, 1],
-      z: [0, 28, 0],
+      scale: [1, 1.06, 1],
       transition: {
-        duration: 7.5 + meta.phase,
+        duration: 8 + meta.phase,
         repeat: Infinity,
         ease: "easeInOut" as const,
         delay: meta.phase,
@@ -161,7 +161,7 @@ function CollageTile({
         src={src}
         alt=""
         fill
-        sizes="(max-width: 1024px) 40vw, 28vw"
+        sizes="(max-width: 1024px) 40vw, 22vw"
         className="object-cover"
         priority={priority}
       />
