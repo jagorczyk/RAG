@@ -87,7 +87,7 @@ export function Gallery({
         className={`relative h-full min-h-[220px] w-full overflow-hidden bg-[#F4F1EE] touch-none select-none ${className}`}
         ref={animation.bindStage}
         role="region"
-        aria-label="Galeria zdjęć 3D. Przewiń lub przeciągnij, aby przechodzić między zdjęciami. Kliknij, aby powiększyć."
+        aria-label="Galeria zdjęć 3D. Zdjęcia przesuwają się automatycznie. Kliknij, aby powiększyć."
       >
         {/* Atmosphere: glass wash + bloom */}
         <div
@@ -129,16 +129,14 @@ export function Gallery({
                 key={photo.id}
                 photo={photo}
                 index={index}
-                progress={animation.smoothProgress}
+                count={photos.length}
+                time={animation.time}
                 pointerX={animation.pointerX}
                 pointerY={animation.pointerY}
                 selectedId={selectedId}
                 reducedMotion={false}
                 consumeDragGuard={animation.consumeDragGuard}
-                onSelect={(id) => {
-                  animation.jumpTo(index);
-                  setSelectedId(id);
-                }}
+                onSelect={setSelectedId}
               />
             ))}
           </div>
@@ -155,7 +153,7 @@ export function Gallery({
           className="pointer-events-none absolute bottom-5 left-0 right-0 z-20 flex flex-col items-center gap-2"
         >
           <p className="rounded-full border border-white/50 bg-white/35 px-3.5 py-1.5 text-[0.68rem] font-semibold tracking-[0.06em] text-[#4A6B8A] shadow-[0_8px_24px_rgba(17,45,78,0.08)] backdrop-blur-md">
-            Przewiń · przeciągnij · kliknij
+            Biblioteka w ruchu
           </p>
         </div>
 
