@@ -15,11 +15,11 @@ export function AuthLanding({ title, subtitle, children, footer }: AuthLandingPr
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-surface lg:flex-row">
       <div className="relative hidden min-h-0 flex-1 lg:block">
-        <Gallery embedded />
+        <Gallery embedded instanceId="desktop" />
       </div>
 
       <div className="relative h-52 shrink-0 overflow-hidden lg:hidden">
-        <Gallery embedded />
+        <Gallery embedded instanceId="mobile" />
       </div>
 
       <div className="flex min-h-0 w-full flex-1 flex-col justify-center overflow-y-auto px-5 py-8 sm:px-8 lg:max-w-[42%] lg:px-12 xl:px-16">

@@ -87,7 +87,7 @@ Skala orientacyjna: display ~2rem / 700; headline ~1.25rem / 650; title ~1.0625r
 
 ### Motion
 
-- Landing kolaż: parallax kursora (desktop), delikatny float (mobile).
+- Landing kolaż: lot 3D wzdłuż Z (cruise + inertia), parallax kursora (desktop), delikatniejsza głębia + swipe (mobile).
 - Mikrointerakcje: hover nav, pojawianie wiadomości, sheet — krótkie (`~150–280ms`), ease-out.
 - Nie animować wszystkiego; max 2–3 intentional motions na ekran landing.
 
@@ -134,11 +134,13 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Galeria 3D auto L→P**: lewitujące kadry z `translateZ` / lekkim obrotem same płyną od lewej do prawej (RAF), z fade na krawędziach.
-- Opcjonalnie drag/wheel tylko przyspiesza; klik → shared layout fullscreen.
-- Depth bob + mouse parallax; glass edge + bloom w palecie Cogniface.
+- **Galeria 3D — lot przez przestrzeń**: każde zdjęcie ma własną pozycję (`translateX/Y/Z` + `rotateX/Y/Z`) w tunelu z `perspective` / `preserve-3d`; kamera (RAF) leci wzdłuż Z z cruise, inertią wheel/drag i springiem.
+- Mouse parallax (desktop `pointer: fine`): tilt warstw z różną głębokością; hover = lift + scale + soft shadow.
+- Klik → shared layout fullscreen (`GalleryLightbox`); pozostałe kadry: blur, opacity ~30%, cofnięcie w Z.
+- Depth scale: desktop pełny / tablet mniejszy / mobile lekki + swipe.
+- Atmosfera Cogniface: soft bloom, vignette, edge rails — bez purple glow.
 - `prefers-reduced-motion`: płaska siatka + prosty lightbox.
-- Kod: `components/gallery/{Gallery,GalleryItem,useGalleryAnimation,galleryData}`.
+- Kod: `components/gallery/{Gallery,GalleryItem,GalleryLightbox,useGalleryAnimation,useMouseParallax,galleryData}`.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)
