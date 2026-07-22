@@ -5,6 +5,7 @@ import { useInView } from "react-intersection-observer";
 import {
   motion,
   useMotionTemplate,
+  useMotionValue,
   useMotionValueEvent,
   useTransform,
   type MotionValue,
@@ -43,8 +44,8 @@ export function GalleryItem({
     triggerOnce: true,
     threshold: 0.01,
   });
-  const [hovered, setHovered] = useState(false);
   const [nearFocus, setNearFocus] = useState(index === 0);
+  const hover = useMotionValue(0);
 
   const depth = useTransform(progress, (p) => index - p);
   const z = useTransform(depth, (d) => d * -Z_STEP);
@@ -58,17 +59,15 @@ export function GalleryItem({
     const parallax = (py as number) * (22 + Math.abs(d as number) * 14);
     return base + parallax;
   });
-  const rotateY = useTransform(depth, (d) => {
-    const hoverYaw = hovered && nearFocus ? 6 : 0;
-    return photo.yaw + d * -10 + hoverYaw;
+  const rotateY = useTransform([depth, hover], ([d, h]) => {
+    return photo.yaw + (d as number) * -10 + (h as number) * 6;
   });
-  const rotateX = useTransform(depth, (d) => {
-    const hoverPitch = hovered && nearFocus ? -4 : 0;
-    return photo.pitch + d * 4 + hoverPitch;
+  const rotateX = useTransform([depth, hover], ([d, h]) => {
+    return photo.pitch + (d as number) * 4 + (h as number) * -4;
   });
-  const scale = useTransform(depth, (d) => {
-    const ad = Math.abs(d);
-    const hoverBoost = hovered && nearFocus ? 1.04 : 1;
+  const scale = useTransform([depth, hover], ([d, h]) => {
+    const ad = Math.abs(d as number);
+    const hoverBoost = 1 + (h as number) * 0.04;
     return Math.max(0.72, 1 - ad * 0.08) * hoverBoost;
   });
   const opacity = useTransform(depth, (d) => {
@@ -141,9 +140,10 @@ export function GalleryItem({
         transformStyle: "preserve-3d",
       }}
       transition={{ type: "spring", stiffness: 260, damping: 28, mass: 0.75 }}
-      animate={isDimmed ? { scale: 0.9 } : { scale: 1 }}
-      onHoverStart={() => setHovered(true)}
-      onHoverEnd={() => setHovered(false)}
+      onHoverStart={() => {
+        if (nearFocus) hover.set(1);
+      }}
+      onHoverEnd={() => hover.set(0)}
       onClick={() => {
         if (consumeDragGuard?.()) return;
         if (Math.abs(depth.get()) > 0.65) return;
