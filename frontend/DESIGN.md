@@ -134,11 +134,10 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Siatka równych zdjęć obok siebie** (4×2, ta sama wielkość, bez luk i bez zaokrągleń).
-- Animacja osi Z: start przy `z: 0`, potem część odsuwa się do tyłu (mniejsze), część do przodu (większe).
-- Kursor tylko jako lekki nudge całej sceny.
-- Mockup iPhone: siatka zdjęć → animacja do listy folderów i z powrotem.
-- `prefers-reduced-motion`: od razu iPhone / foldery.
+- **Siatka równych kwadratów obok siebie** (6×4, mniejsze kafelki, `object-top` — widać górę zdjęcia).
+- Cała siatka trochę **oddalona** (`translateZ` + większy padding).
+- Animacja osi Z: start przy `z: 0`, potem część do tyłu / do przodu.
+- Kursor tylko jako lekki nudge. Mockup iPhone: zdjęcia → foldery.
 - Assets w `public/collage/`. Obrazy dekoracyjne — nie są źródłami użytkownika.
 
 ### Panel (prawa)

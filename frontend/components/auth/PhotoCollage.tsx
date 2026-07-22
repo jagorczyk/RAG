@@ -40,24 +40,26 @@ const FOLDERS = [
 ] as const;
 
 /**
- * Equal-size grid tiles side by side. Z-axis motion: some retreat (smaller),
- * some advance (larger). Cursor is only a light scene nudge.
+ * Equal square tiles side by side. Z-axis: retreat / advance for depth.
+ * More tiles, smaller cells, top-cropped faces, grid pulled back.
  */
+const COLS = 6;
+const ROWS = 4;
+
 const TILE_MOTION: {
   src: string;
   depth: number[];
   duration: number;
   delay: number;
-}[] = [
-  { src: PHOTOS[0], depth: [0, -90, 0], duration: 7.5, delay: 0 },
-  { src: PHOTOS[1], depth: [0, 75, 0], duration: 8.2, delay: 0.45 },
-  { src: PHOTOS[2], depth: [0, -100, 0], duration: 6.8, delay: 0.9 },
-  { src: PHOTOS[3], depth: [0, 60, 0], duration: 9.0, delay: 0.25 },
-  { src: PHOTOS[4], depth: [0, -85, 0], duration: 7.6, delay: 0.7 },
-  { src: PHOTOS[5], depth: [0, 90, 0], duration: 6.4, delay: 1.1 },
-  { src: PHOTOS[6], depth: [0, -70, 0], duration: 8.5, delay: 0.35 },
-  { src: PHOTOS[7], depth: [0, 80, 0], duration: 7.1, delay: 1.4 },
-];
+}[] = Array.from({ length: COLS * ROWS }, (_, i) => {
+  const retreat = i % 2 === 0;
+  return {
+    src: PHOTOS[i % PHOTOS.length],
+    depth: retreat ? [0, -110, 0] : [0, 70, 0],
+    duration: 6.4 + (i % 5) * 0.55,
+    delay: (i % 8) * 0.18,
+  };
+});
 
 type Phase = "collage" | "phone";
 type PhoneScreen = "photos" | "folders";
@@ -141,22 +143,23 @@ export function PhotoCollage() {
             transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
           >
             <motion.div
-              className="absolute inset-0 flex items-center justify-center p-8 lg:p-12"
+              className="absolute inset-0 flex items-center justify-center p-12 lg:p-20"
               style={{
                 x: nudgeX,
                 y: nudgeY,
-                perspective: 1000,
+                perspective: 1200,
                 transformStyle: "preserve-3d",
+                transform: "translateZ(-160px)",
               }}
             >
               <div
-                className="grid h-full w-full max-h-[560px] max-w-4xl grid-cols-4 grid-rows-2"
+                className="grid w-full max-w-2xl grid-cols-6 gap-0"
                 style={{ transformStyle: "preserve-3d" }}
               >
                 {TILE_MOTION.map((tile, index) => (
                   <motion.div
-                    key={tile.src}
-                    className="relative min-h-0 min-w-0 overflow-hidden bg-[#DBE2EF]"
+                    key={`${tile.src}-${index}`}
+                    className="relative aspect-square min-h-0 min-w-0 overflow-hidden bg-[#DBE2EF]"
                     style={{ transformStyle: "preserve-3d" }}
                     initial={{ opacity: 0, z: 0 }}
                     animate={
@@ -169,9 +172,9 @@ export function PhotoCollage() {
                     }
                     transition={
                       reduced
-                        ? { duration: 0.35, delay: index * 0.04 }
+                        ? { duration: 0.35, delay: index * 0.02 }
                         : {
-                            opacity: { duration: 0.45, delay: index * 0.05 },
+                            opacity: { duration: 0.4, delay: index * 0.03 },
                             z: {
                               duration: tile.duration,
                               repeat: Infinity,
@@ -185,9 +188,9 @@ export function PhotoCollage() {
                       src={tile.src}
                       alt=""
                       fill
-                      sizes="25vw"
-                      className="object-cover"
-                      priority={index < 4}
+                      sizes="12vw"
+                      className="object-cover object-top"
+                      priority={index < 8}
                     />
                   </motion.div>
                 ))}
