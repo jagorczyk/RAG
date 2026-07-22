@@ -27,7 +27,21 @@ const PHOTOS = [
  * Idle-first collage: each tile has its own continuous float / drift / breathe.
  * Cursor parallax is a light additive nudge only.
  */
-const TILES = [
+const TILES: {
+  src: string;
+  x: string;
+  y: string;
+  w: string;
+  h: string;
+  rotate: number;
+  z: number;
+  floatY: number[];
+  floatX: number[];
+  rot: number[];
+  scale: number[];
+  duration: number;
+  delay: number;
+}[] = [
   {
     src: PHOTOS[0],
     x: "8%",
@@ -148,7 +162,7 @@ const TILES = [
     duration: 8.0,
     delay: 1.5,
   },
-] as const;
+];
 
 type Phase = "collage" | "phone";
 
