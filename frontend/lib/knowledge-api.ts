@@ -52,6 +52,7 @@ export interface KnowledgeEntity {
   displayName: string;
   type: string;
   photos?: EntityPhoto[];
+  faceCropBase64?: string | null;
 }
 
 export interface EntityAppearance {

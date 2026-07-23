@@ -7,5 +7,6 @@ public record EntitySummaryDto(
         UUID id,
         String displayName,
         String type,
-        List<EntityPhotoDto> photos
+        List<EntityPhotoDto> photos,
+        String faceCropBase64
 ) {}

@@ -318,11 +318,13 @@ public class KnowledgeApiController {
     @Transactional(readOnly = true)
     public ResponseEntity<EntitySummaryDto> getEntity(@PathVariable UUID id) {
         KnowledgeEntity entity = requireNamedPersonEntity(id);
+        String faceCropBase64 = faceCropService.cropFaceBase64ForEntity(entity.getId()).orElse(null);
         return ResponseEntity.ok(new EntitySummaryDto(
                 entity.getId(),
                 entity.getDisplayName(),
                 entity.getType(),
-                List.of()
+                List.of(),
+                faceCropBase64
         ));
     }
 
@@ -423,7 +425,8 @@ public class KnowledgeApiController {
                 entity.getId(),
                 entity.getDisplayName(),
                 entity.getType(),
-                loadPhotosForEntity(entity.getId())
+                loadPhotosForEntity(entity.getId()),
+                null
         );
     }
 

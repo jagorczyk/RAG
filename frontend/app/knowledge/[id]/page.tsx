@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Image as ImageIcon, Loader2, User, X } from "lucide-react";
+import { ArrowLeft, Image as ImageIcon, Loader2, X } from "lucide-react";
 import {
   EntityAppearance,
   getEntity,
@@ -10,6 +10,7 @@ import {
   KnowledgeEntity,
 } from "@/lib/knowledge-api";
 import { FilePreview, getFilePreview } from "@/lib/api";
+import { Avatar } from "@/components/ui/Avatar";
 import { FaceAnnotatedImage } from "@/components/ui/FaceAnnotatedImage";
 
 interface EntityAlbumPageProps {
@@ -111,9 +112,18 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
       </header>
       {!isLoading && entity && (
         <div className="flex flex-col items-center px-4 pt-4 pb-2">
-          <span className="mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-soft text-ink">
-            <User size={34} />
-          </span>
+          <Avatar
+            seed={entity.displayName}
+            alt={entity.displayName}
+            src={
+              entity.faceCropBase64
+                ? `data:image/jpeg;base64,${entity.faceCropBase64}`
+                : null
+            }
+            size="lg"
+            className="mb-2 h-14 w-14 text-base"
+            fallbackLabel={entity.displayName}
+          />
           <h2 className="text-xl font-extrabold tracking-tight text-ink">
             {entity.displayName}
           </h2>

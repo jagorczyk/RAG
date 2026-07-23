@@ -30,6 +30,20 @@ public class FaceCropService {
                 .flatMap(embedding -> cropFaceBase64(embedding.getFilePath(), embedding.getBbox()));
     }
 
+    /** First available face crop for an entity (any embedding with a usable bbox). */
+    public Optional<String> cropFaceBase64ForEntity(UUID entityId) {
+        if (entityId == null) {
+            return Optional.empty();
+        }
+        for (FaceEmbedding embedding : faceEmbeddingRepository.findByEntityId(entityId)) {
+            Optional<String> crop = cropFaceBase64(embedding.getFilePath(), embedding.getBbox());
+            if (crop.isPresent()) {
+                return crop;
+            }
+        }
+        return Optional.empty();
+    }
+
     public Optional<String> cropFaceBase64(String filePath, float[] bbox) {
         return cropFaceBytes(filePath, bbox).map(bytes -> java.util.Base64.getEncoder().encodeToString(bytes));
     }
