@@ -25,24 +25,22 @@ const PHOTOS = [
 type PhoneScreen = "chat" | "library";
 
 /**
- * Screen hole in `iphone-float-mockup.png` (1024×1536).
- * Tuned for the 3/4 floating product render.
+ * Screen hole in `iphone-front-mockup.png` (1024×1536).
+ * Front-facing orthographic product render — no perspective warp.
  */
 const SCREEN = {
-  left: "27.8%",
-  top: "13.1%",
-  width: "50.5%",
-  height: "71%",
-  radius: "10.5% / 5%",
-  /** Mild roll only — 3/4 perspective is already in the photo */
-  transform: "rotate(2deg)",
+  left: "23.34%",
+  top: "8.4%",
+  width: "53.22%",
+  height: "78.65%",
+  radius: "12% / 5.5%",
 } as const;
 
 type PhoneInHandProps = {
   className?: string;
 };
 
-/** Floating iPhone product mockup — Cogniface UI composited into punched screen. */
+/** Front-facing iPhone product mockup — Cogniface UI composited into punched screen. */
 export function PhoneInHand({ className = "" }: PhoneInHandProps) {
   const reducedMotionPref = useReducedMotion();
   const reduced = reducedMotionPref === true;
@@ -54,17 +52,12 @@ export function PhoneInHand({ className = "" }: PhoneInHandProps) {
 
   return (
     <div
-      className={`relative mx-auto flex h-full w-full max-w-[480px] items-center justify-center ${className}`}
+      className={`relative mx-auto flex h-full w-full max-w-[420px] items-center justify-center ${className}`}
       aria-hidden
     >
-      <div
-        className="pointer-events-none absolute left-1/2 top-[48%] h-[42%] w-[58%] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-30 blur-3xl"
-        style={{ background: "#3F72AF" }}
-      />
-
       <motion.div
-        className="relative aspect-[1024/1536] h-[min(94%,760px)] w-auto"
-        initial={reduced || !ready ? false : { opacity: 0, y: 24, scale: 0.96 }}
+        className="relative aspect-[1024/1536] h-[min(96%,780px)] w-auto"
+        initial={reduced || !ready ? false : { opacity: 0, y: 20, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
       >
@@ -77,8 +70,6 @@ export function PhoneInHand({ className = "" }: PhoneInHandProps) {
               width: SCREEN.width,
               height: SCREEN.height,
               borderRadius: SCREEN.radius,
-              transform: SCREEN.transform,
-              transformOrigin: "50% 50%",
               boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.06)",
             }}
           >
@@ -87,11 +78,11 @@ export function PhoneInHand({ className = "" }: PhoneInHandProps) {
         )}
 
         <Image
-          src="/iphone-float-mockup.png"
+          src="/iphone-front-mockup.png"
           alt=""
           fill
           priority
-          sizes="(max-width: 1024px) 60vw, 440px"
+          sizes="(max-width: 1024px) 55vw, 400px"
           className="pointer-events-none z-10 object-contain"
         />
       </motion.div>

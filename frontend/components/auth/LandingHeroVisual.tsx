@@ -12,8 +12,9 @@ const COLLAGE_MS = 9000;
 const PHONE_MS = 8000;
 
 /**
- * Auth hero visual: 3D photo collage ↔ floating photorealistic iPhone.
+ * Auth hero visual: 3D photo collage ↔ front-facing photorealistic iPhone.
  * Simultaneous crossfade (both layers stay mounted) for a fluid morph.
+ * Phone phase uses default `bg-surface` — no extra studio backdrop.
  * `prefers-reduced-motion`: collage only.
  */
 export function LandingHeroVisual({ instanceId = "desktop" }: { instanceId?: string }) {
@@ -53,15 +54,7 @@ export function LandingHeroVisual({ instanceId = "desktop" }: { instanceId?: str
   }
 
   return (
-    <div className="relative h-full min-h-0 w-full overflow-hidden bg-[#F4F1EE]">
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(ellipse 70% 55% at 50% 45%, #E7EEF7 0%, transparent 68%), linear-gradient(180deg, #F9F7F7 0%, #EDE8E3 100%)",
-        }}
-      />
-
+    <div className="relative h-full min-h-0 w-full overflow-hidden bg-surface">
       <motion.div
         className="absolute inset-0"
         initial={false}
