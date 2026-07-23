@@ -420,10 +420,10 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
             <button
               type="button"
               onClick={() => router.push("/folders")}
-              className="icon-button -ml-1 shadow-none"
+              className="icon-button -ml-1 h-8 w-8 min-h-8 min-w-8 shadow-none"
               aria-label="Wróć do biblioteki"
             >
-              <ArrowLeft size={20} />
+              <ArrowLeft size={16} />
             </button>
             <h1 className="page-title truncate text-[1.5rem] md:text-[1.875rem]">{folder.name}</h1>
           </div>
