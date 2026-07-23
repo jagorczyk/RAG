@@ -102,3 +102,5 @@ new_frontend/
 *.env
 *.env.local
 
+
+design/
