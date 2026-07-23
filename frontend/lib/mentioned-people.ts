@@ -1,5 +1,6 @@
 import {
   getAllEntities,
+  getEntity,
   getMentionsForFile,
   type KnowledgeEntity,
 } from "./knowledge-api";
@@ -8,6 +9,7 @@ import type { Source } from "./api";
 export type MentionedPerson = {
   id: string;
   displayName: string;
+  /** Face crop (preferred) or fallback photo, JPEG base64 without data-URL prefix. */
   photoBase64?: string;
 };
 
@@ -25,6 +27,23 @@ function nameInAnswer(answer: string, displayName: string): boolean {
   const before = idx === 0 ? " " : hay[idx - 1];
   const after = idx + needle.length >= hay.length ? " " : hay[idx + needle.length];
   return !/\p{L}/u.test(before) && !/\p{L}/u.test(after);
+}
+
+async function attachFaceCrops(people: MentionedPerson[]): Promise<MentionedPerson[]> {
+  if (people.length === 0) return people;
+  await Promise.all(
+    people.map(async (person) => {
+      try {
+        const entity = await getEntity(person.id);
+        if (entity.faceCropBase64) {
+          person.photoBase64 = entity.faceCropBase64;
+        }
+      } catch {
+        /* keep existing photo / initials */
+      }
+    })
+  );
+  return people;
 }
 
 /**
@@ -79,7 +98,7 @@ export async function resolveMentionedPeople(
           byId.set(entity.id, {
             id: entity.id,
             displayName: entity.displayName,
-            photoBase64: entity.photos?.[0]?.imageBase64,
+            photoBase64: entity.faceCropBase64 || entity.photos?.[0]?.imageBase64,
           });
         }
       }
@@ -90,5 +109,6 @@ export async function resolveMentionedPeople(
 
   const all = [...byId.values()];
   const named = all.filter((p) => nameInAnswer(answer, p.displayName));
-  return (named.length > 0 ? named : all).slice(0, 8);
+  const selected = (named.length > 0 ? named : all).slice(0, 8);
+  return attachFaceCrops(selected);
 }

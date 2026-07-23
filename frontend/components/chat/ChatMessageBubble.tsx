@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, ChevronDown, Users } from "lucide-react";
+import { BookOpen, ChevronDown } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import type { Message, QueryEvidence, Source } from "@/lib/api";
 import type { MentionedPerson } from "@/lib/mentioned-people";
@@ -104,43 +104,55 @@ export function ChatMessageBubble({
               <ChevronDown size={14} aria-hidden />
             </button>
           )}
-          {peopleCount > 0 && onPeopleOpen && (
-            <button
-              type="button"
-              onClick={() => onPeopleOpen(mentionedPeople)}
-              className="chip min-h-[var(--touch-min)]"
-              aria-label={`Pokaż ${peopleLabel}`}
-            >
-              <Users size={15} aria-hidden />
-              {peopleLabel}
-              <ChevronDown size={14} aria-hidden />
-            </button>
-          )}
-        </div>
-      )}
-
-      {peopleCount > 0 && !onPeopleOpen && (
-        <div className={`mt-2 flex flex-wrap gap-1.5 ${isUser ? "" : "pl-9"}`}>
-          {mentionedPeople.map((person) => (
-            <Link
-              key={person.id}
-              href={`/knowledge/${person.id}`}
-              className="chip min-h-[var(--touch-min)]"
-            >
-              <Avatar
-                seed={person.id}
-                src={
-                  person.photoBase64
-                    ? `data:image/jpeg;base64,${person.photoBase64}`
-                    : null
-                }
-                fallbackLabel={person.displayName}
-                size="xs"
-                className="!h-5 !w-5"
-              />
-              {person.displayName}
-            </Link>
-          ))}
+          {peopleCount > 0 &&
+            (onPeopleOpen ? (
+              <button
+                type="button"
+                onClick={() => onPeopleOpen(mentionedPeople)}
+                className="chip min-h-[var(--touch-min)]"
+                aria-label={`Pokaż ${peopleLabel}`}
+              >
+                <span className="flex -space-x-1.5" aria-hidden>
+                  {mentionedPeople.slice(0, 3).map((person) => (
+                    <Avatar
+                      key={person.id}
+                      seed={person.id}
+                      src={
+                        person.photoBase64
+                          ? `data:image/jpeg;base64,${person.photoBase64}`
+                          : null
+                      }
+                      fallbackLabel={person.displayName}
+                      size="xs"
+                      className="!h-5 !w-5 ring-1 ring-surface-raised"
+                    />
+                  ))}
+                </span>
+                {peopleLabel}
+                <ChevronDown size={14} aria-hidden />
+              </button>
+            ) : (
+              mentionedPeople.map((person) => (
+                <Link
+                  key={person.id}
+                  href={`/knowledge/${person.id}`}
+                  className="chip min-h-[var(--touch-min)]"
+                >
+                  <Avatar
+                    seed={person.id}
+                    src={
+                      person.photoBase64
+                        ? `data:image/jpeg;base64,${person.photoBase64}`
+                        : null
+                    }
+                    fallbackLabel={person.displayName}
+                    size="xs"
+                    className="!h-5 !w-5"
+                  />
+                  {person.displayName}
+                </Link>
+              ))
+            ))}
         </div>
       )}
     </motion.article>
