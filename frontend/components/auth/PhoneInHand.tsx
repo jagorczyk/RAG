@@ -25,8 +25,7 @@ const PHOTOS = [
 type PhoneScreen = "chat" | "library";
 
 /**
- * Screen hole in `iphone-front-mockup.png` (1024×1536).
- * Front-facing orthographic product render — no perspective warp.
+ * Screen area placement within the iPhone frame (1024×1536 baseline).
  */
 const SCREEN = {
   left: "23.34%",
@@ -61,31 +60,116 @@ export function PhoneInHand({ className = "" }: PhoneInHandProps) {
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
       >
-        {ready && (
-          <div
-            className="absolute z-0 overflow-hidden bg-[#F2F2F7]"
-            style={{
-              left: SCREEN.left,
-              top: SCREEN.top,
-              width: SCREEN.width,
-              height: SCREEN.height,
-              borderRadius: SCREEN.radius,
-              boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.06)",
-            }}
-          >
-            <CognifacePhoneScreen reduced={reduced} />
-          </div>
-        )}
-
-        <Image
-          src="/iphone-front-mockup.png"
-          alt=""
-          fill
-          priority
-          sizes="(max-width: 1024px) 55vw, 400px"
-          className="pointer-events-none z-10 object-contain"
-        />
+        {/* iPhone mockup drawn in CSS (no image asset). */}
+        {ready && <IphoneFrame reduced={reduced} />}
       </motion.div>
+    </div>
+  );
+}
+
+function IphoneFrame({ reduced }: { reduced: boolean }) {
+  const FRAME_RADIUS = "16% / 6.8%";
+
+  return (
+    <div className="absolute inset-0">
+      {/* Soft shadow beneath the phone only. */}
+      <div
+        className="pointer-events-none absolute left-1/2 top-[93%] h-[10%] w-[68%] -translate-x-1/2 rounded-full bg-black/20 blur-2xl"
+        style={{ opacity: reduced ? 0.85 : 1 }}
+      />
+
+      <div
+        className="absolute inset-0 overflow-hidden"
+        style={{
+          borderRadius: FRAME_RADIUS,
+          background:
+            "linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 10%, rgba(0,0,0,0.15) 48%, rgba(0,0,0,0.28) 100%), linear-gradient(90deg, #5a5a60 0%, #151519 18%, #0f0f12 50%, #151519 82%, #5a5a60 100%)",
+          boxShadow:
+            "inset 0 0 0 1px rgba(255,255,255,0.14), inset 0 -12px 40px rgba(0,0,0,0.55)",
+        }}
+      >
+        {/* Subtle metallic edge highlights. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(110deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 35%), linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0) 40%)",
+          }}
+        />
+
+        {/* Side buttons (approximate). */}
+        <div
+          className="pointer-events-none absolute left-[1%] top-[26%] h-[3.2%] w-[2.2%] rounded-[4px] bg-[#2a2a2e]"
+          style={{
+            opacity: 0.95,
+            boxShadow:
+              "inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 -6px 14px rgba(0,0,0,0.25)",
+          }}
+        />
+        <div
+          className="pointer-events-none absolute left-[1.2%] top-[33%] h-[2.6%] w-[2.0%] rounded-[4px] bg-[#26262a]"
+          style={{
+            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+          }}
+        />
+        <div
+          className="pointer-events-none absolute left-[1.2%] top-[39.5%] h-[2.6%] w-[2.0%] rounded-[4px] bg-[#26262a]"
+          style={{
+            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+          }}
+        />
+        <div
+          className="pointer-events-none absolute right-[1%] top-[30%] h-[34%] w-[2.2%] rounded-[10px] bg-[#2a2a2e]"
+          style={{
+            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+          }}
+        />
+
+        {/* Screen (where Cogniface UI renders). */}
+        <div
+          className="absolute z-10 overflow-hidden bg-[#F2F2F7]"
+          style={{
+            left: SCREEN.left,
+            top: SCREEN.top,
+            width: SCREEN.width,
+            height: SCREEN.height,
+            borderRadius: SCREEN.radius,
+            boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.06)",
+          }}
+        >
+          <DynamicIslandOverlay />
+          <CognifacePhoneScreen reduced={reduced} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DynamicIslandOverlay() {
+  // Rendered on top of the UI so the screen stays sharp & readable.
+  return (
+    <div
+      className="pointer-events-none absolute left-1/2 z-20"
+      style={{
+        top: "1.7%",
+        width: "38%",
+        height: "4.2%",
+        transform: "translateX(-50%)",
+        borderRadius: "999px",
+        background:
+          "linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0.55) 100%), #0b0b0e",
+        boxShadow:
+          "inset 0 0 0 1px rgba(255,255,255,0.10), 0 6px 14px rgba(0,0,0,0.25)",
+      }}
+    >
+      <div
+        className="absolute left-1/2 top-[38%] w-[46%] -translate-x-1/2 rounded-full"
+        style={{
+          height: "26%",
+          background: "rgba(0,0,0,0.55)",
+          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+        }}
+      />
     </div>
   );
 }
@@ -118,7 +202,6 @@ function CognifacePhoneScreen({ reduced }: { reduced: boolean }) {
     <div className="relative flex h-full min-h-0 flex-col bg-[#F2F2F7] text-black">
       <div className="relative z-20 flex shrink-0 items-end justify-between px-[9%] pb-[1%] pt-[4.5%] text-[0.55rem] font-semibold leading-none">
         <span className="min-w-[2.2rem]">9:41</span>
-        <div className="absolute left-1/2 top-[18%] h-[22%] w-[34%] -translate-x-1/2 rounded-full bg-black" />
         <div className="flex min-w-[2.6rem] items-center justify-end gap-[0.15rem]">
           <Signal size={9} strokeWidth={2.4} />
           <Wifi size={10} strokeWidth={2.4} />
