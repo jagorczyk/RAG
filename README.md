@@ -4,8 +4,6 @@ Multi-user GraphRAG for a private photo and document library: hybrid retrieval (
 
 Answers are short, grounded in **certain** evidence only. Sources are returned separately — no invented identities or details.
 
-System contract: [`AGENTS.md`](AGENTS.md).
-
 ## Stack
 
 - **Backend:** Java 17, Spring Boot, PostgreSQL + PGVector, JWT, Flyway, RabbitMQ, Redis
@@ -27,20 +25,42 @@ cd frontend && npm install && npm run dev
 
 Set `DEEPINFRA_API_KEY` and a strong `JWT_SECRET` (see env table below). Do not commit `.env` files.
 
-## Inference (short)
+## Flows
 
+### Inference
+
+```mermaid
+flowchart TD
+  Q[User question] --> P[QueryPlanner]
+  P --> R{Mode}
+
+  R -->|visual| V[DynamicVisualMatcher]
+  V -->|MATCH| A[Answer from claims]
+  V -->|empty + fallback| G
+
+  R -->|people| G[GRAPH evidence]
+  R -->|other| H[HYBRID retrieval]
+
+  G --> C[LLM answer]
+  H --> C
+  C --> S[Source attribution]
+  S --> O[content + sources + uncertain]
+  A --> O
 ```
-Question → QueryPlanner (LLM)
-  ├─ visualCondition → DynamicVisualMatcher → claims
-  ├─ people (PERSON) → GRAPH → LLM answer → source attribution
-  └─ otherwise → HYBRID (vector + lexical) → LLM answer
+
+Routing is LLM-only (`QueryPlanner`). Attribution runs **after** the answer; if sources cannot be assigned reliably → `uncertain` and empty `sources`.
+
+### Ingest
+
+```mermaid
+flowchart LR
+  U[Upload] --> P[PENDING + queue]
+  P --> F[Face anchors]
+  F --> V[Structured vision]
+  V --> I[Identity + facts]
+  I --> E[Canonical embedding]
+  E --> D[READY / FAILED]
 ```
-
-Only certain mentions/facts (and visual `MATCH` above threshold) may back an answer. Attribution runs **after** the answer is written; if sources cannot be assigned reliably, the API returns `uncertain` with an empty `sources` list.
-
-## Ingest (short)
-
-Upload → `PENDING` (RabbitMQ) → face anchors → structured vision → identity/facts → canonical embedding → `READY` / `FAILED`.
 
 Disable the broker with `rag.ingest.async-enabled=false`.
 
