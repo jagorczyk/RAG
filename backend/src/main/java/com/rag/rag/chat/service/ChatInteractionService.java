@@ -44,6 +44,8 @@ public class ChatInteractionService {
 
     private static final Pattern DIR_PATH = Pattern.compile("dir://\\S+");
     private static final Pattern AT_FILENAME = Pattern.compile("@[\\w.\\-]+");
+    static final String ATTRIBUTION_FAILURE_ANSWER =
+            "Nie udało się potwierdzić odpowiedzi na podstawie dostępnych zdjęć.";
 
     private final ChatService chatAiService;
     private final ChatMemoryRepository chatMemoryRepository;
@@ -54,9 +56,14 @@ public class ChatInteractionService {
     private final DynamicVisualMatcher dynamicVisualMatcher;
     private final QueryPlanner queryPlanner;
     private final VerifiedVisualAnswerService verifiedVisualAnswerService;
-    private final ClaimAnswerComposer claimAnswerComposer;
+    private final GraphContextReducer graphContextReducer;
+    private final GraphSourceAttributionService graphSourceAttributionService;
+    private final FreeformAnswerRepairService freeformAnswerRepairService;
+    private final GraphGroundedAnswerRegenerationService graphGroundedAnswerRegenerationService;
+    private final LibraryScopeService libraryScopeService;
+    private final LibraryOverviewService libraryOverviewService;
 
-    /** Cap sources shown in UI / stored on the AI turn (GRAPH can otherwise dump all entity photos). */
+    /** Cap un-attributed retrieval sources; verified graph attribution is never truncated. */
     @Value("${rag.answer.max-sources:3}")
     private int maxSources = 3;
 
@@ -77,17 +84,41 @@ public class ChatInteractionService {
         QueryPlan plan = queryPlanner == null
                 ? QueryPlan.fallback(question, List.of())
                 : queryPlanner.plan(question, conversationContext);
+        List<UUID> requestedFolderIds = messageRequest.folderIds() == null
+                ? List.of() : messageRequest.folderIds().stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (!requestedFolderIds.isEmpty()) {
+            List<UUID> validatedFolderIds = libraryScopeService == null
+                    ? List.of() : libraryScopeService.validateFolderIds(requestedFolderIds);
+            if (validatedFolderIds.size() != requestedFolderIds.size()) {
+                return folderScopeDenial(chatId);
+            }
+            plan = plan.withFolderScope(validatedFolderIds,
+                    libraryScopeService.filePathsForFolders(validatedFolderIds));
+        } else if (plan.scopeKind() == QueryPlan.ScopeKind.FOLDER) {
+            List<UUID> validatedFolderIds = libraryScopeService == null
+                    ? List.of() : libraryScopeService.validateFolderIds(plan.folderScope());
+            if (validatedFolderIds.isEmpty()) {
+                return folderScopeDenial(chatId);
+            }
+            plan = plan.withFolderScope(validatedFolderIds,
+                    libraryScopeService.filePathsForFolders(validatedFolderIds));
+        }
         List<String> explicitFileScope = graphQueryService.resolveExplicitFileScope(question);
         if (!explicitFileScope.isEmpty()) {
             plan = plan.withFileScope(explicitFileScope);
-        } else if (graphQueryService.hasExplicitFileReference(question)) {
+        } else if (graphQueryService.hasExplicitFileReference(question)
+                && plan.scopeKind() != QueryPlan.ScopeKind.FOLDER) {
             String denial = "Nie znaleziono wskazanego pliku w Twojej bibliotece.";
             saveAiMessage(chatId, denial, List.of(), List.of(), "NO_EVIDENCE", true);
             return new MessageResponse(denial, List.of(), true, List.of(), "NO_EVIDENCE");
         }
-        log.info("Dynamic query plan: mode={}, visual={}, entities={}, ambiguous={}, fileScope={}",
+        log.info("Dynamic query plan: mode={}, visual={}, entities={}, ambiguous={}, scopeKind={}, folders={}, overview={}, fileScope={}",
                 plan.retrievalMode(), plan.visualCondition(), plan.entities(), plan.ambiguous(),
-                plan.fileScope());
+                plan.scopeKind(), plan.folderScope(), plan.collectionOverview(), plan.fileScope());
+
+        if (plan.collectionOverview()) {
+            return processCollectionOverview(chatId, plan);
+        }
 
         if (plan.visualCondition() && dynamicVisualMatcher != null) {
             // Persist hard visual denial only when text/graph fallback is not allowed.
@@ -105,9 +136,100 @@ public class ChatInteractionService {
         return processTextOrGraphPlan(chatId, plan, conversationContext);
     }
 
+    private MessageResponse folderScopeDenial(UUID chatId) {
+        String denial = "Nie znaleziono wskazanego folderu albo jego nazwa jest niejednoznaczna.";
+        saveAiMessage(chatId, denial, List.of(), List.of(), "NO_EVIDENCE", true);
+        return new MessageResponse(denial, List.of(), true, List.of(), "NO_EVIDENCE");
+    }
+
+    private MessageResponse processCollectionOverview(UUID chatId, QueryPlan plan) {
+        if (libraryOverviewService == null) {
+            String denial = "Nie udało się odczytać zawartości biblioteki.";
+            saveAiMessage(chatId, denial, List.of(), List.of(), "NO_EVIDENCE", true);
+            return new MessageResponse(denial, List.of(), true, List.of(), "NO_EVIDENCE");
+        }
+        LibraryOverviewService.Overview overview = libraryOverviewService.build(plan);
+        if (overview.unavailable()) {
+            saveAiMessage(chatId, overview.inventoryAnswer(), List.of(), List.of(), "NO_EVIDENCE", true);
+            return new MessageResponse(overview.inventoryAnswer(), List.of(), true, List.of(), "NO_EVIDENCE");
+        }
+        if (overview.empty()) {
+            String answer = overview.inventoryAnswer();
+            saveAiMessage(chatId, answer, List.of(), List.of(), plan.retrievalMode().name(), false);
+            return new MessageResponse(answer, List.of(), false, List.of(), plan.retrievalMode().name());
+        }
+
+        String question = answerFacingQuestion(plan);
+        String overviewStyle = """
+                Odpowiedz naturalnie po polsku w 1–3 zdaniach wyłącznie z dowodów INVENTORY.
+                Używaj dokładnych liczb oraz wyłącznie podanych nazw folderów, osób i plików.
+                Nazwy plików są tylko identyfikatorami katalogowymi: nie wnioskuj z nich o scenie,
+                obiektach, osobach, czynnościach ani zawartości pliku.
+                Nazwy plików wymieniaj tylko wtedy, gdy odpowiada to pytaniu albo krótka lista
+                istotnie pomaga. Nie pokazuj ścieżek. Jeśli lista została ograniczona, powiedz
+                dokładnie, ile pozycji pokazano i ile pominięto. Nie dopisuj żadnych obserwacji.
+                """;
+        GraphEvidenceResult answerEvidence = overview.evidence();
+        String prompt = """
+                [Zamknięty inwentarz katalogowy]
+                %s
+
+                %s
+                Pytanie użytkownika: %s
+                """.formatted(answerEvidence.context(), overviewStyle, question);
+
+        String answer = "";
+        RetrievalPathScope.set(plan.fileScope());
+        RetrievalQueryContext.set(retrievalQueryForPlan(plan));
+        RetrievalQueryContext.setDisabled(true);
+        try {
+            Result<String> result = chatAiService.answer(chatId, answerPrompt(prompt));
+            answer = result == null || result.content() == null ? "" : result.content().trim();
+        } catch (Exception e) {
+            log.warn("Collection overview answer failed: {}", e.getMessage());
+        } finally {
+            RetrievalPathScope.clear();
+            RetrievalQueryContext.clear();
+        }
+
+        GraphSourceAttributionService.Attribution attribution = null;
+        if (!answer.isBlank() && graphSourceAttributionService != null) {
+            attribution = graphSourceAttributionService.attributeCollection(
+                    question, answer, answerEvidence, 1);
+        }
+        if ((attribution == null || !attribution.reliable())
+                && graphGroundedAnswerRegenerationService != null
+                && !answerEvidence.context().isBlank()) {
+            String regenerated = graphGroundedAnswerRegenerationService.regenerate(
+                    question, answerEvidence.context());
+            if (regenerated != null && !regenerated.isBlank() && graphSourceAttributionService != null) {
+                GraphSourceAttributionService.Attribution retry =
+                        graphSourceAttributionService.attributeCollection(
+                                question, regenerated, answerEvidence, 1);
+                if (retry.reliable()) {
+                    answer = regenerated;
+                    attribution = retry;
+                }
+            }
+        }
+
+        boolean useFallback = attribution == null || !attribution.reliable();
+        if (useFallback) {
+            answer = overview.inventoryAnswer();
+        }
+        List<SourceDto> sources = List.of();
+        String cleaned = removeTechnicalReferences(answer, sources);
+        if (cleaned.isBlank()) cleaned = overview.inventoryAnswer();
+        List<QueryEvidenceDto> evidence = List.of();
+        boolean uncertain = plan.ambiguous();
+        syncGroundedAnswerToMemory(chatId, cleaned);
+        saveAiMessage(chatId, cleaned, sources, evidence, plan.retrievalMode().name(), uncertain);
+        return new MessageResponse(cleaned, sources, uncertain, evidence, plan.retrievalMode().name());
+    }
+
     private MessageResponse processTextOrGraphPlan(UUID chatId, QueryPlan plan, String conversationContext) {
         GraphEvidenceResult graphEvidence = ChatRetrievalPolicy.needsGraphEvidence(plan)
-                ? graphQueryService.buildEvidence(plan.entities(), plan.fileScope(), plan.entityMatchMode())
+                ? buildGraphEvidence(plan)
                 : new GraphEvidenceResult("", List.of());
         // Co-presence is a set operation on planner output: when ALL_SAME_FILE has no
         // intersection evidence, never let the LLM or hybrid retrieval affirm a joint photo.
@@ -124,11 +246,27 @@ public class ChatInteractionService {
         // formulates natural Polish. Immutable claim short-circuit is disabled on this branch
         // (preferClaimAnswer → false). Post-answer grounding still blocks essays/denials.
 
-        String graphContext = graphEvidence.context() == null ? "" : graphEvidence.context();
+        String questionForModel = answerFacingQuestion(plan);
+        String originalQuestion = plan.question() == null ? "" : plan.question().trim();
+        String recentTurns = compactConversationContext(conversationContext);
+        // Free-form: soft style cue only — do not re-impose stiff planner answerInstruction templates.
+        String answerStyle = freeformAnswerStyle();
+
+        GraphContextReducer.Selection graphSelection = graphContextReducer == null
+                ? new GraphContextReducer.Selection(graphEvidence.context(), graphEvidence.certainPaths(), false,
+                0, 0, 0, 0)
+                : graphContextReducer.select(graphEvidence, questionForModel, answerStyle + recentTurns);
+        String graphContext = graphSelection.context();
+        GraphEvidenceResult answerEvidence = graphSelection.hasEvidence()
+                ? new GraphEvidenceResult(graphContext, graphSelection.selectedPaths(), graphEvidence.claims(),
+                graphEvidence.photos())
+                : new GraphEvidenceResult("", List.of());
+
         // Pinned @file: always force-load embedding JSON for those paths. Short queries like
         // "co wiesz o @x.jpg" often miss vector/lexical recall even when the index has a full photo dump.
         List<String> fileScope = plan.fileScope() == null ? List.of() : plan.fileScope();
-        if (!fileScope.isEmpty() && ingestionService != null) {
+        if (!fileScope.isEmpty() && ingestionService != null
+                && effectiveMode != QueryPlan.RetrievalMode.GRAPH) {
             String indexBlock = ingestionService.formatEmbeddingContextForPaths(fileScope);
             if (indexBlock != null && !indexBlock.isBlank()) {
                 graphContext = graphContext.isBlank()
@@ -140,12 +278,6 @@ public class ChatInteractionService {
                 log.warn("No embedding index text for fileScope paths={}", fileScope);
             }
         }
-        String questionForModel = answerFacingQuestion(plan);
-        String originalQuestion = plan.question() == null ? "" : plan.question().trim();
-        String recentTurns = compactConversationContext(conversationContext);
-        // Free-form: soft style cue only — do not re-impose stiff planner answerInstruction templates.
-        String answerStyle = freeformAnswerStyle();
-
         String prompt;
         if (graphMissFallback && graphContext.isBlank()) {
             // GRAPH without certain people evidence — hybrid only; refuse if retrieval empty.
@@ -190,7 +322,10 @@ public class ChatInteractionService {
         RetrievalPathScope.set(retrievalScope);
         // Include bare filenames in the retrieval query so lexical recall hits the pinned file.
         RetrievalQueryContext.set(retrievalQueryForPlan(plan));
-        RetrievalQueryContext.setDisabled(false);
+        // A complete GRAPH packet is the source of truth. Hybrid remains the fallback only when
+        // the graph is empty, and stays enabled for HYBRID/DOCUMENT plans.
+        RetrievalQueryContext.setDisabled(effectiveMode == QueryPlan.RetrievalMode.GRAPH
+                && graphEvidence.hasEvidence());
         Result<String> result;
         try {
             result = chatAiService.answer(chatId, answerPrompt(prompt));
@@ -203,28 +338,65 @@ public class ChatInteractionService {
         if (answer == null || answer.isBlank()) {
             answer = "Nie udało się przygotować odpowiedzi na podstawie dostępnych danych.";
         }
-        List<SourceDto> sources = mergeSources(result, plan, graphEvidence, effectiveMode);
+        List<SourceDto> sources = mergeSources(result, plan, answerEvidence, effectiveMode);
         // Grounding uses post-filter sources (certain graph / allowed hybrid), not raw retrieval hits.
-        boolean noGrounding = ChatRetrievalPolicy.lacksGrounding(graphEvidence, !sources.isEmpty());
+        boolean noGrounding = ChatRetrievalPolicy.lacksGrounding(answerEvidence, !sources.isEmpty());
         if (noGrounding) {
             answer = "Nie znaleziono informacji w dokumentach.";
             sources = List.of();
         } else {
             // Freeform GraphRAG: keep model prose unless hard failure (denial/essay/speculative/safety).
             // Recovery roster only for those failures — never for ordinary free-form photo answers.
+            if (ChatAnswerGrounding.isHardFailureShape(answer)
+                    && answerEvidence.hasEvidence()
+                    && freeformAnswerRepairService != null) {
+                String repaired = freeformAnswerRepairService.repair(
+                        questionForModel, answerEvidence.context(), answer);
+                if (repaired != null && !repaired.isBlank()) {
+                    answer = repaired;
+                }
+            }
             boolean preferPhotoRoster = (plan.fileScope() != null && !plan.fileScope().isEmpty())
-                    || (graphEvidence.certainPaths() != null && graphEvidence.certainPaths().size() == 1);
+                    || (answerEvidence.certainPaths() != null && answerEvidence.certainPaths().size() == 1);
             boolean entityScoped = ChatRetrievalPolicy.hasNamedEntities(plan) && !preferPhotoRoster;
             List<String> recoveryNames;
             if (entityScoped) {
                 recoveryNames = plan.entities();
             } else {
-                List<String> paths = rosterPaths(plan, graphEvidence, sources);
+                List<String> paths = rosterPaths(plan, answerEvidence, sources);
                 recoveryNames = graphQueryService.certainParticipantNamesForPaths(paths);
             }
-            boolean hasCertain = graphEvidence.hasEvidence() || !sources.isEmpty();
+            boolean hasCertain = answerEvidence.hasEvidence() || !sources.isEmpty();
             answer = ChatAnswerGrounding.resolveGroundedAnswer(
                     answer, recoveryNames, hasCertain, entityScoped);
+        }
+        GraphSourceAttributionService.Attribution attribution = attributionForFinalAnswerSources(
+                questionForModel, answer, answerEvidence);
+        boolean attributionFailure = false;
+        if (attribution != null) {
+            if (!hasAttributedPaths(attribution) && graphGroundedAnswerRegenerationService != null) {
+                String regenerated = graphGroundedAnswerRegenerationService.regenerate(
+                        questionForModel, answerEvidence.context());
+                if (regenerated != null && !regenerated.isBlank()) {
+                    GraphSourceAttributionService.Attribution retryAttribution =
+                            graphSourceAttributionService.attribute(
+                                    questionForModel, regenerated, answerEvidence);
+                    if (hasAttributedPaths(retryAttribution)) {
+                        answer = regenerated;
+                        attribution = retryAttribution;
+                        log.info("Recovered an ungrounded graph answer with one bounded regeneration");
+                    }
+                }
+            }
+            // Typed graph evidence is authoritative here: after post-answer attribution do not
+            // re-add retrieval hits and do not truncate evidence that supports the final prose.
+            sources = hasAttributedPaths(attribution)
+                    ? exactAttributedGraphSources(attribution.paths(), plan.fileScope())
+                    : List.of();
+            attributionFailure = sources.isEmpty();
+            if (attributionFailure) {
+                answer = ATTRIBUTION_FAILURE_ANSWER;
+            }
         }
         String cleaned = removeTechnicalReferences(answer, sources);
         syncGroundedAnswerToMemory(chatId, cleaned);
@@ -239,72 +411,47 @@ public class ChatInteractionService {
         boolean uncertain = plan.ambiguous()
                 || graphMissFallback
                 || noGrounding
+                || attributionFailure
                 || sources.isEmpty();
-        String answerKind = noGrounding ? "NO_EVIDENCE" : effectiveMode.name();
+        String answerKind = noGrounding || attributionFailure ? "NO_EVIDENCE" : effectiveMode.name();
         saveAiMessage(chatId, cleaned, sources, sourceEvidence, answerKind, uncertain);
         return new MessageResponse(cleaned, sources, uncertain, sourceEvidence, answerKind);
     }
 
-    /**
-     * GRAPH claim path: LLM only picks claim IDs; answer prose is immutable statementPl.
-     * @return null when no grounded claim prose — caller continues with free-form LLM
-     */
-    private MessageResponse tryClaimGraphAnswer(
-            UUID chatId, QueryPlan plan, GraphEvidenceResult graphEvidence,
-            QueryPlan.RetrievalMode effectiveMode) {
-        String questionForModel = answerFacingQuestion(plan);
-        ClaimAnswerComposer.ClaimAnswerResult claimResult = claimAnswerComposer.answerFromClaims(
-                questionForModel, graphEvidence.claims(), plan.entities());
-        if (!claimResult.hasGroundedProse()) {
-            // Free-form LLM + grounding remains the fallback (PR1 safety/roster detectors apply).
+    private GraphEvidenceResult buildGraphEvidence(QueryPlan plan) {
+        if (plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH
+                && plan.entities().isEmpty()
+                && plan.fileScope().isEmpty()) {
+            return graphQueryService.buildEvidence(plan);
+        }
+        return graphQueryService.buildEvidence(plan.entities(), plan.fileScope(), plan.entityMatchMode());
+    }
+
+    private GraphSourceAttributionService.Attribution attributionForFinalAnswerSources(
+            String question, String answer, GraphEvidenceResult evidence) {
+        if (evidence == null || evidence.photos().isEmpty()
+                || graphSourceAttributionService == null) {
             return null;
         }
-        List<String> preferredPaths = !claimResult.usedFilePaths().isEmpty()
-                ? claimResult.usedFilePaths()
-                : graphEvidence.certainPaths();
-        return finishGroundedGraphAnswer(chatId, plan, graphEvidence, effectiveMode,
-                claimResult.answer(), preferredPaths);
+        return graphSourceAttributionService.attribute(question, answer, evidence);
     }
 
-    private MessageResponse finishGroundedGraphAnswer(
-            UUID chatId, QueryPlan plan, GraphEvidenceResult graphEvidence,
-            QueryPlan.RetrievalMode effectiveMode, String answer, List<String> preferredPaths) {
+    private static boolean hasAttributedPaths(GraphSourceAttributionService.Attribution attribution) {
+        return attribution != null && attribution.reliable()
+                && attribution.paths() != null && !attribution.paths().isEmpty();
+    }
+
+    private List<SourceDto> exactAttributedGraphSources(List<String> paths, List<String> fileScope) {
+        if (paths == null || paths.isEmpty()) return List.of();
         Map<String, SourceDto> unique = new LinkedHashMap<>();
-        List<String> fileScope = plan.fileScope();
-        List<String> paths = preferredPaths == null ? List.of() : preferredPaths;
         for (String path : paths) {
-            if (path == null || path.isBlank()) {
+            if (path == null || path.isBlank() || !RetrievalPathScope.pathInScope(path, fileScope)) {
                 continue;
             }
-            if (!RetrievalPathScope.pathInScope(path, fileScope)) {
-                continue;
-            }
-            putSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0), true);
+            putSource(unique,
+                    ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0), true);
         }
-        // Fall back to all certain graph paths if preferred set was empty/filtered out.
-        if (unique.isEmpty()) {
-            for (String path : graphEvidence.certainPaths()) {
-                if (RetrievalPathScope.pathInScope(path, fileScope)) {
-                    putSource(unique, ingestionService.createGraphFactSourceDto(path, fileName(path), 1.0), true);
-                }
-            }
-        }
-        List<SourceDto> sources = limitSources(List.copyOf(unique.values()));
-        String cleaned = removeTechnicalReferences(answer, sources);
-        if (cleaned == null || cleaned.isBlank()) {
-            cleaned = ClaimAnswerComposer.EMPTY_FALLBACK;
-        }
-        syncGroundedAnswerToMemory(chatId, cleaned);
-        List<QueryEvidenceDto> sourceEvidence = sources.stream()
-                .map(source -> new QueryEvidenceDto(source.path(),
-                        java.math.BigDecimal.valueOf(source.score() == null ? 0.0 : source.score()),
-                        List.of("Potwierdzony fakt z grafu wiedzy."),
-                        "CONFIRMED"))
-                .toList();
-        boolean uncertain = plan.ambiguous() || sources.isEmpty();
-        String answerKind = sources.isEmpty() ? "NO_EVIDENCE" : effectiveMode.name();
-        saveAiMessage(chatId, cleaned, sources, sourceEvidence, answerKind, uncertain);
-        return new MessageResponse(cleaned, sources, uncertain, sourceEvidence, answerKind);
+        return List.copyOf(unique.values());
     }
 
     /**
@@ -535,8 +682,10 @@ public class ChatInteractionService {
                 [Jak odpowiadać]
                 Odpowiedz naturalnie i swobodnie po polsku na podstawie kontekstu poniżej.
                 Ułóż własną płynną wypowiedź — nie kopiuj claimów, nie pisz raportu ani listy.
-                Rozwiń opis, gdy pytanie jest otwarte. Tylko fakty z kontekstu.
-                Bez spekulacji, esejów encyklopedycznych, nazw plików i score.
+                Zwróć zwykły tekst, zawsze od jednego do trzech krótkich zdań.
+                Tylko fakty zapisane wprost w kontekście; bez ocen, nastroju i domyślnej atmosfery.
+                Różne zdjęcia lub sceny opisuj oddzielnie, nie jako jedną równoczesną sytuację.
+                Bez spekulacji, esejów encyklopedycznych, Markdownu, nazw plików i score.
                 """;
     }
 
@@ -597,9 +746,9 @@ public class ChatInteractionService {
     }
 
     private String answerPrompt(String context) {
-        // SystemMessage already carries ANSWER_INSTRUCTIONS — do not re-paste the full rulebook
-        // into the user turn (that made the model answer like a compliance checklist).
-        return freeformAnswerStyle() + "\n" + context;
+        // SystemMessage carries the hard answer contract; the user turn already contains one
+        // compact style cue. Do not duplicate either block.
+        return context == null ? "" : context;
     }
 
     /**
@@ -684,6 +833,7 @@ public class ChatInteractionService {
         }
         cleaned = DIR_PATH.matcher(cleaned).replaceAll("");
         cleaned = AT_FILENAME.matcher(cleaned).replaceAll("");
+        cleaned = cleaned.replaceAll("\\[(?:E\\d+\\.\\d+|A\\.\\d+|[ICG]\\d*\\.\\d+)\\]\\s*", "");
         cleaned = cleaned.replaceAll("(?i)\\b(źródło|zrodlo|plik|source)\\s*[:=]\\s*\\S+", "");
         cleaned = cleaned.replaceAll("[ \\t]+", " ").replaceAll("\\n{3,}", "\n\n").trim();
         return ChatAnswerGrounding.cleanEmptyQuoteArtifacts(cleaned);

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
   MessageSquare,
@@ -20,6 +19,9 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { getChats, createChat, Chat, renameChat } from "@/lib/api";
 import { getStoredUser } from "@/lib/auth";
+import { CognifaceLogo } from "@/components/brand/CognifaceLogo";
+import { Avatar } from "@/components/ui/Avatar";
+import { SearchField } from "@/components/ui/SearchField";
 
 function groupChats(chats: Chat[]) {
   const now = new Date();
@@ -48,6 +50,7 @@ export function Sidebar() {
   const [isLoadingChats, setIsLoadingChats] = useState(true);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [chatQuery, setChatQuery] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
 
   const pathname = usePathname();
@@ -144,8 +147,19 @@ export function Sidebar() {
   const isFoldersActive = pathname.startsWith("/folders");
   const isKnowledgeActive = pathname.startsWith("/knowledge");
   const isSettingsActive = pathname.startsWith("/settings");
-  const groups = useMemo(() => groupChats(chats), [chats]);
-  const initials = (user?.displayName || user?.email || "?").slice(0, 1).toUpperCase();
+  const groups = useMemo(() => {
+    const needle = chatQuery.trim().toLocaleLowerCase("pl");
+    const filtered = needle
+      ? chats.filter((c) => c.title.toLocaleLowerCase("pl").includes(needle))
+      : chats;
+    return groupChats(filtered);
+  }, [chats, chatQuery]);
+  const filteredChats = useMemo(() => {
+    const needle = chatQuery.trim().toLocaleLowerCase("pl");
+    if (!needle) return chats;
+    return chats.filter((c) => c.title.toLocaleLowerCase("pl").includes(needle));
+  }, [chats, chatQuery]);
+  const userSeed = user?.email || "cogniface-user";
 
   return (
     <>
@@ -159,7 +173,7 @@ export function Sidebar() {
       )}
       <aside
         className={`absolute inset-y-0 left-0 z-[var(--z-sticky)] flex h-full shrink-0 flex-col border-r border-border bg-sidebar transition-transform duration-200 md:relative md:transition-none ${
-          isOpen ? "w-56 translate-x-0" : "w-12 -translate-x-full md:translate-x-0"
+          isOpen ? "w-64 translate-x-0" : "w-12 -translate-x-full md:translate-x-0"
         }`}
         style={{ transitionTimingFunction: "var(--ease-out)" }}
         aria-label="Nawigacja boczna"
@@ -170,14 +184,7 @@ export function Sidebar() {
             className={`flex min-w-0 items-center gap-2 ${isOpen ? "flex-1" : "mx-auto justify-center"}`}
             title="Cogniface"
           >
-            <Image
-              src="/logo_rag.png"
-              alt="Cogniface"
-              width={24}
-              height={24}
-              priority
-              className="h-6 w-6 object-contain"
-            />
+            <CognifaceLogo className="h-6 w-6 shrink-0 text-accent" />
             <AnimatePresence>
               {isOpen && (
                 <motion.p
@@ -250,30 +257,60 @@ export function Sidebar() {
 
           <div className="my-3 border-t border-border" />
 
-          <div className="mb-2">
-            <button
-              type="button"
-              onClick={handleCreateChat}
-              disabled={isCreating}
-              className={`btn-primary w-full ${!isOpen ? "px-0 py-2.5" : "py-2.5"}`}
-              title="Nowa rozmowa"
-            >
-              {isCreating ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <Plus size={18} />
-              )}
-              {isOpen && <span>Nowa rozmowa</span>}
-            </button>
-            {createError && isOpen && (
-              <p className="mt-2 text-xs text-error" role="alert">
-                {createError}
-              </p>
-            )}
-          </div>
+          {isOpen && (
+            <div className="mb-2 flex items-center gap-1 px-1">
+              <p className="section-caption min-w-0 flex-1 px-1">Rozmowy</p>
+              <button
+                type="button"
+                onClick={handleCreateChat}
+                disabled={isCreating}
+                className="touch-target btn-ghost shrink-0 rounded-full p-1.5"
+                title="Nowa rozmowa"
+                aria-label="Nowa rozmowa"
+              >
+                {isCreating ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Plus size={18} />
+                )}
+              </button>
+            </div>
+          )}
+          {!isOpen && (
+            <div className="mb-2">
+              <button
+                type="button"
+                onClick={handleCreateChat}
+                disabled={isCreating}
+                className="nav-item w-full justify-center px-0"
+                title="Nowa rozmowa"
+                aria-label="Nowa rozmowa"
+              >
+                {isCreating ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Plus size={18} />
+                )}
+              </button>
+            </div>
+          )}
+          {createError && isOpen && (
+            <p className="mb-2 px-2 text-xs text-error" role="alert">
+              {createError}
+            </p>
+          )}
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {isOpen && <p className="section-caption px-2">Rozmowy</p>}
+          {isOpen && (
+            <SearchField
+              value={chatQuery}
+              onChange={setChatQuery}
+              placeholder="Szukaj rozmów"
+              aria-label="Szukaj rozmów"
+              className="mb-2"
+            />
+          )}
+
+          <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto pe-0.5">
             <ul className="space-y-0.5">
               {isLoadingChats && isOpen && (
                 <>
@@ -285,8 +322,10 @@ export function Sidebar() {
                   </li>
                 </>
               )}
-              {!isLoadingChats && chats.length === 0 && isOpen && (
-                <li className="px-2 py-3 text-xs text-ink-muted">Brak rozmów</li>
+              {!isLoadingChats && filteredChats.length === 0 && isOpen && (
+                <li className="px-2 py-3 text-xs text-ink-muted">
+                  {chatQuery.trim() ? "Brak wyników" : "Brak rozmów"}
+                </li>
               )}
               {isOpen
                 ? groups.map((group) => (
@@ -313,7 +352,7 @@ export function Sidebar() {
                       </ul>
                     </li>
                   ))
-                : chats.map((chat) => (
+                : filteredChats.map((chat) => (
                     <ChatRow
                       key={chat.id}
                       chat={chat}
@@ -335,30 +374,18 @@ export function Sidebar() {
 
           <div className="mt-2 border-t border-border pt-2">
             {isOpen && user && (
-              <div className="mb-1 flex items-center gap-2 px-2 py-1.5">
-                <span
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-on-accent"
-                  aria-hidden
-                >
-                  {initials}
-                </span>
+              <div className="mb-1 flex items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-2">
+                <Avatar seed={userSeed} fallbackLabel={user.email} size="sm" />
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-ink">
-                    {user.displayName?.trim() || "Profil"}
-                  </p>
-                  <p className="truncate text-xs text-ink-muted" title={user.email}>
+                  <p className="truncate text-sm font-medium text-ink" title={user.email}>
                     {user.email}
                   </p>
                 </div>
               </div>
             )}
             {!isOpen && (
-              <div
-                className="mx-auto mb-1 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-xs font-bold text-on-accent"
-                title={user?.email || "Profil"}
-                aria-hidden
-              >
-                {initials}
+              <div className="mx-auto mb-1" title={user?.email || "Profil"}>
+                <Avatar seed={userSeed} fallbackLabel={user?.email || "?"} size="sm" />
               </div>
             )}
             <Link
@@ -458,12 +485,13 @@ function ChatRow({
             {isOpen && <span className="truncate text-sm">{chat.title}</span>}
           </Link>
           {isOpen && (
-            <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-hover:opacity-100">
+            <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
               <button
                 type="button"
                 onClick={(e) => onStartEdit(e, chat)}
-                className="rounded p-1 text-ink-muted hover:bg-soft hover:text-ink"
+                className="rounded-md p-1.5 text-ink-muted hover:bg-soft hover:text-ink"
                 title="Zmień nazwę"
+                aria-label={`Zmień nazwę: ${chat.title}`}
               >
                 <Edit2 size={13} />
               </button>

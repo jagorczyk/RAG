@@ -37,6 +37,12 @@ public class Fact {
 
     private String object;
 
+    @Column(name = "statement_pl", columnDefinition = "text")
+    private String statementPl;
+
+    @Column(name = "evidence_origin")
+    private String evidenceOrigin;
+
     @Column(nullable = false)
     private String filePath;
 

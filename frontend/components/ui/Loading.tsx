@@ -11,13 +11,13 @@ export function Loading({
 }) {
   return (
     <div
-      className={`flex flex-col items-center justify-center p-5 ${className}`}
+      className={`flex flex-col items-center justify-center p-8 ${className}`}
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <Loader2 size={18} className="animate-spin text-ink" aria-hidden />
-      <p className="mt-1.5 text-xs text-ink-muted">{label}</p>
+      <Loader2 size={20} className="animate-spin text-accent" aria-hidden />
+      <p className="mt-3 text-sm text-ink-muted">{label}</p>
     </div>
   );
 }
@@ -31,7 +31,7 @@ export function Skeleton({
 }) {
   return (
     <div
-      className={`skeleton mb-2.5 w-full ${className}`}
+      className={`skeleton mb-2 w-full ${className}`}
       style={{ height: typeof height === "number" ? `${height}px` : height }}
       aria-hidden
     />

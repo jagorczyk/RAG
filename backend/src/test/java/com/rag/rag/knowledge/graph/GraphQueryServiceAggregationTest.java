@@ -54,7 +54,6 @@ class GraphQueryServiceAggregationTest {
     @BeforeEach
     void setUp() {
         ReflectionTestUtils.setField(service, "minFactConfidence", 0.75);
-        ReflectionTestUtils.setField(service, "maxContextFiles", 5);
         igor = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Igor").type("PERSON").ownerId(ownerId).build();
         anna = KnowledgeEntity.builder().id(UUID.randomUUID()).displayName("Anna").type("PERSON").ownerId(ownerId).build();
         lenient().when(currentUserService.findUserId()).thenReturn(Optional.of(ownerId));
@@ -91,6 +90,51 @@ class GraphQueryServiceAggregationTest {
         assertTrue(evidence.context().contains("=== Zdjęcie 2 ==="));
         assertFalse(evidence.context().contains("dir://a.jpg"));
         assertFalse(evidence.context().contains("structured_vision="));
+    }
+
+    @Test
+    void buildEvidenceDoesNotDropPhotosAfterTheFormerFiveFileLimit() {
+        List<EntityMention> mentions = java.util.stream.IntStream.rangeClosed(1, 7)
+                .mapToObj(index -> confirmed(igor, "dir://photo-" + index + ".jpg"))
+                .toList();
+        when(mentionRepository.findByEntityId(igor.getId())).thenReturn(mentions);
+        for (EntityMention mention : mentions) {
+            when(mentionRepository.findByFilePath(mention.getFilePath())).thenReturn(List.of(mention));
+            when(factRepository.findByFilePath(mention.getFilePath())).thenReturn(List.of());
+        }
+
+        GraphEvidenceResult evidence = service.buildEvidence(
+                List.of("Igor"), List.of(), EntityMatchMode.ANY);
+
+        assertEquals(7, evidence.certainPaths().size());
+        assertEquals(7, evidence.photos().size());
+        assertTrue(evidence.context().contains("=== Zdjęcie 7 ==="));
+        assertFalse(evidence.context().contains("pominięto"));
+    }
+
+    @Test
+    void unscopedGraphPlanLoadsAllOwnedPhotosWithCertainPeople() {
+        EntityMention first = confirmed(igor, "dir://one.jpg");
+        EntityMention second = confirmed(anna, "dir://two.jpg");
+        List<FileEntity> files = List.of(
+                FileEntity.builder().path(first.getFilePath()).fileType("image/jpeg").ownerId(ownerId).build(),
+                FileEntity.builder().path(second.getFilePath()).fileType("image/jpeg").ownerId(ownerId).build());
+        when(fileRepository.findAllByOwnerId(ownerId)).thenReturn(files);
+        when(mentionRepository.findByFilePathIn(List.of(first.getFilePath(), second.getFilePath())))
+                .thenReturn(List.of(first, second));
+        when(fileRepository.findAllByPathInAndOwnerId(any(), any())).thenReturn(files);
+        when(factRepository.findByFilePathIn(any())).thenReturn(List.of());
+
+        var plan = new com.rag.rag.chat.service.QueryPlan(
+                "Kto pojawia się najczęściej?", List.of(), List.of(), "osoby w bibliotece",
+                "osoby", false, false, com.rag.rag.chat.service.QueryPlan.RetrievalMode.GRAPH,
+                EntityMatchMode.ANY, "");
+        GraphEvidenceResult evidence = service.buildEvidence(plan);
+
+        assertEquals(List.of("dir://one.jpg", "dir://two.jpg"), evidence.certainPaths());
+        assertTrue(evidence.context().contains("Podsumowanie grafu"));
+        assertTrue(evidence.context().contains("Igor występuje na jednym pewnym zdjęciu"));
+        assertTrue(evidence.context().contains("Anna występuje na jednym pewnym zdjęciu"));
     }
 
     @Test

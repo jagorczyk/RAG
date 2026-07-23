@@ -87,7 +87,7 @@ public class IdentityResolutionService {
             FactStatementRewriter factStatementRewriter,
             FileRepository fileRepository,
             CurrentUserService currentUserService,
-            @Qualifier("chatLanguageModel") ChatLanguageModel chatModel,
+            @Qualifier("structuredControlLanguageModel") ChatLanguageModel chatModel,
             IdentityMatchCacheService identityMatchCacheService,
             ObjectProvider<CanonicalEmbeddingRefreshService> embeddingRefreshProvider
     ) {
@@ -609,7 +609,7 @@ public class IdentityResolutionService {
             String oldLabel = mention.getLabel();
             mention.setLabel(label);
             mentionRepository.save(mention);
-            syncFactObjectLabelsForMention(mention, label, oldLabel);
+            syncFactObjectLabelsForMention(mention, label);
         }
         if (factStatementRewriter != null) {
             factStatementRewriter.rewriteFactsForMention(mention);
@@ -647,7 +647,7 @@ public class IdentityResolutionService {
                 mention.setLabel(newName);
                 mentionRepository.save(mention);
             }
-            syncFactObjectLabelsForMention(mention, newName, oldName);
+            syncFactObjectLabelsForMention(mention, newName);
             if (factStatementRewriter != null) {
                 factStatementRewriter.rewriteFactsForMention(mention);
             }
@@ -666,25 +666,14 @@ public class IdentityResolutionService {
         }
     }
 
-    private void syncFactObjectLabelsForMention(EntityMention mention, String newLabel, String oldLabel) {
+    private void syncFactObjectLabelsForMention(EntityMention mention, String newLabel) {
         if (mention == null || mention.getId() == null || newLabel == null || mention.getFilePath() == null) {
             return;
         }
         for (Fact fact : factRepository.findByFilePath(mention.getFilePath())) {
             boolean isTarget = fact.getTargetMention() != null
                     && mention.getId().equals(fact.getTargetMention().getId());
-            boolean objectIsStalePlaceholder = fact.getObject() != null && (
-                    isGenericLabel(fact.getObject())
-                            || (oldLabel != null && oldLabel.equalsIgnoreCase(fact.getObject()))
-            );
             if (isTarget) {
-                fact.setObject(newLabel);
-                factRepository.save(fact);
-            } else if (objectIsStalePlaceholder
-                    && fact.getTargetMention() == null
-                    && fact.getMention() != null
-                    && mention.getId().equals(fact.getMention().getId())) {
-                // Subject fact with vision placeholder object and no linked target — keep in sync.
                 fact.setObject(newLabel);
                 factRepository.save(fact);
             }

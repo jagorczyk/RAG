@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MessageCircle, Plus, MoreHorizontal, Loader2 } from "lucide-react";
+import { MessageCircle, Plus, MoreHorizontal, Loader2, CloudOff } from "lucide-react";
 import { createChat, getChats, renameChat, type Chat } from "@/lib/api";
 import { SearchField } from "@/components/ui/SearchField";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -147,7 +147,7 @@ export default function ChatsPage() {
         {loading && <Loading label="Ładowanie rozmów" />}
         {error && (
           <EmptyState
-            icon="☁️"
+            icon={<CloudOff size={22} aria-hidden />}
             title="Brak połączenia"
             description="Nie udało się pobrać rozmów. Sprawdź połączenie z serwerem."
             action={
@@ -160,7 +160,7 @@ export default function ChatsPage() {
 
         {!loading && !error && sections.length === 0 && (
           <EmptyState
-            icon="💬"
+            icon={<MessageCircle size={22} aria-hidden />}
             title={query ? "Brak wyników" : "Zacznij pierwszą rozmowę"}
             description={
               query
@@ -195,7 +195,7 @@ export default function ChatsPage() {
                           <MessageCircle size={18} />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-bold text-ink">
+                          <span className="block truncate text-sm font-semibold text-ink">
                             {chat.title || "Nowa rozmowa"}
                           </span>
                           <span className="mt-0.5 block text-xs text-ink-muted">
@@ -205,7 +205,7 @@ export default function ChatsPage() {
                       </button>
                       <button
                         type="button"
-                        className="touch-target shrink-0 text-ink-muted opacity-70 transition-opacity hover:opacity-100"
+                        className="touch-target shrink-0 rounded-md text-ink-muted opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                         aria-label={`Zmień nazwę ${chat.title || "rozmowy"}`}
                         onClick={() => {
                           setNewName(chat.title === "Nowa rozmowa" ? "" : chat.title);
@@ -227,6 +227,23 @@ export default function ChatsPage() {
         onClose={() => !renaming && setRenameTarget(null)}
         title="Zmień nazwę rozmowy"
         description="Nowa nazwa widoczna na liście rozmów."
+        footer={
+          <>
+            <Button
+              label="Anuluj"
+              secondary
+              disabled={renaming}
+              onClick={() => setRenameTarget(null)}
+              className="min-w-[7rem]"
+            />
+            <Button
+              label={renaming ? "Zapisuję…" : "Zapisz"}
+              disabled={!newName.trim() || renaming}
+              onClick={handleRename}
+              className="min-w-[7rem]"
+            />
+          </>
+        }
       >
         <input
           autoFocus
@@ -238,19 +255,6 @@ export default function ChatsPage() {
             if (e.key === "Enter" && newName.trim()) handleRename();
           }}
         />
-        <div className="mt-3.5 flex gap-2">
-          <Button
-            label="Anuluj"
-            secondary
-            disabled={renaming}
-            onClick={() => setRenameTarget(null)}
-          />
-          <Button
-            label={renaming ? "Zapisuję…" : "Zapisz"}
-            disabled={!newName.trim() || renaming}
-            onClick={handleRename}
-          />
-        </div>
       </BottomSheet>
     </div>
   );

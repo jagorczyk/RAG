@@ -13,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -167,6 +168,71 @@ class StructuredVisionExtractorTest {
         assertNotNull(result.resultDto());
         assertNotNull(result.resultDto().getEntities());
         assertFalse(result.resultDto().getEntities().isEmpty());
+    }
+
+    @Test
+    void extractRepairsMojibakeAndMissingOpeningEntityObject() {
+        String broken = "{\"entities\":[{\"label\":\"person 1\",\"type\":\"PERSON\","
+                + "\"actions\":[\"u\u00C5\u009Bmiecha si\u00C4\u0099\"],\"nearby_text\":[\"53\"]},"
+                + "\"label\":\"kurtka\",\"type\":\"CLOTHING\",\"visual_cues\":[\"niebieska\"]}],"
+                + "\"relations\":[],\"scene\":\"pok\u00C3\u00B3j z szafkami\","
+                + "\"scene_summary\":\"M\u00C4\u0099\u00C5\u00BCczyzna ma podniesion\u00C4\u0085 r\u00C4\u0099k\u00C4\u0099.\"}";
+        stubVision(broken);
+
+        StructuredVisionExtractor.ExtractionResult result = extractor.extract("img", "image/jpeg");
+
+        assertTrue(result.isStructured());
+        assertEquals(2, result.resultDto().getEntities().size());
+        assertEquals("u\u015Bmiecha si\u0119", result.resultDto().getEntities().get(0).getActions().get(0));
+        assertEquals("pok\u00F3j z szafkami", result.resultDto().getScene());
+        assertEquals("M\u0119\u017Cczyzna ma podniesion\u0105 r\u0119k\u0119.", result.resultDto().getSceneSummary());
+    }
+
+    @Test
+    void keepsFaceAnchorOnlyAsTechnicalJoinField() {
+        String json = """
+                {
+                  "entities": [{
+                    "label": "person 1",
+                    "type": "PERSON",
+                    "face_anchor_id": "face_1",
+                    "actions": ["stoi", "face_1 patrzy w kamerę"],
+                    "nearby_text": ["face_1", "WYJŚCIE"],
+                    "visual_cues": ["czarna marynarka"]
+                  }],
+                  "relations": [],
+                  "scene": "grupa na zewnątrz",
+                  "scene_summary": "Na zdjęciu stoi grupa. Nad twarzą widać face_1.",
+                  "visible_texts": [
+                    {"text":"face_1","near_entity_label":"person 1"},
+                    {"text":"WYJŚCIE"}
+                  ]
+                }
+                """;
+        stubVision(json);
+
+        StructuredVisionExtractor.ExtractionResult result =
+                extractor.extract("img", "image/jpeg", Set.of("face_1"));
+
+        assertTrue(result.isStructured());
+        assertEquals("face_1", result.resultDto().getEntities().get(0).getFaceAnchorId());
+        assertEquals(List.of("stoi"), result.resultDto().getEntities().get(0).getActions());
+        assertEquals(List.of("WYJŚCIE"), result.resultDto().getEntities().get(0).getNearbyText());
+        assertEquals("Na zdjęciu stoi grupa.", result.resultDto().getSceneSummary());
+        assertEquals(1, result.resultDto().getVisibleTexts().size());
+        assertEquals("WYJŚCIE", result.resultDto().getVisibleTexts().get(0).getText());
+    }
+
+    @Test
+    void removesFaceAnchorsFromUnstructuredSearchableFallback() {
+        stubVision("Osoba oznaczona jako face_1 stoi przed budynkiem.");
+
+        StructuredVisionExtractor.ExtractionResult result =
+                extractor.extract("img", "image/jpeg", Set.of("face_1"));
+
+        assertFalse(result.isStructured());
+        assertFalse(result.rawText().contains("face_1"));
+        assertTrue(result.rawText().contains("stoi przed budynkiem"));
     }
 
     @Test

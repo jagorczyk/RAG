@@ -7,6 +7,8 @@ import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphQueryService;
+import com.rag.rag.knowledge.graph.GroundedVisualClaim;
+import com.rag.rag.knowledge.graph.EntityVisualAnchor;
 import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.UserMessage;
@@ -50,7 +52,7 @@ public class DynamicVisualMatcher {
     private int maxVisionAnalyses = 12;
 
     public DynamicVisualMatcher(FileRepository fileRepository, GraphQueryService graphQueryService,
-                                @Qualifier("chatLanguageModel") ChatLanguageModel chatModel,
+                                @Qualifier("structuredControlLanguageModel") ChatLanguageModel chatModel,
                                 @Qualifier("visionModel") ChatLanguageModel visionModel,
                                 ImageCandidateRetriever candidateRetriever) {
         this.fileRepository = fileRepository;
@@ -65,16 +67,19 @@ public class DynamicVisualMatcher {
         String condition = plan.condition().isBlank() ? plan.question() : plan.condition();
         List<VisualQueryMatch> evidence = new ArrayList<>();
         int visionAnalyses = 0;
+        boolean exactFileQuestion = plan.fileScope() != null && !plan.fileScope().isEmpty();
         for (Candidate candidate : findCandidates(plan)) {
-            VisualMatchDecision decision = evaluateStoredContext(condition, candidate.file());
-            if (needsVisionVerification(decision, candidate.file()) && visionAnalyses++ < maxVisionAnalyses) {
-                decision = evaluateImage(condition, candidate.file(), decision);
+            VisualMatchDecision decision = evaluateStoredContext(condition, candidate.file(), plan);
+            boolean verifyPixels = !exactFileQuestion || needsVisionVerification(decision, candidate.file());
+            if (verifyPixels && visionAnalyses++ < maxVisionAnalyses) {
+                decision = evaluateImage(condition, candidate.file(), decision, plan.entities());
             }
             if (decision.decision() == VisualMatchDecision.Decision.MATCH
-                    && decision.confidence().doubleValue() >= visionAcceptConfidence) {
+                    && decision.confidence().doubleValue() >= visionAcceptConfidence
+                    && !decision.claims().isEmpty()) {
                 evidence.add(new VisualQueryMatch(candidate.file().getPath(), decision.confidence(), decision.reasons(),
                         VisualMatchDecision.Decision.MATCH, decision.missingEvidence(),
-                        candidate.retrievalScore(), candidate.entityConfidence()));
+                        candidate.retrievalScore(), candidate.entityConfidence(), decision.claims()));
             }
         }
         return evidence.stream().sorted(Comparator.comparing(VisualQueryMatch::confidence).reversed()
@@ -85,6 +90,22 @@ public class DynamicVisualMatcher {
         Map<String, Candidate> candidates = new LinkedHashMap<>();
         boolean requireJointFile = plan.entityMatchMode() == EntityMatchMode.ALL_SAME_FILE
                 && plan.entities() != null && !plan.entities().isEmpty();
+        // A user-selected @file is a hard scope, never merely a ranking boost.
+        if (plan.fileScope() != null && !plan.fileScope().isEmpty()) {
+            Set<String> jointAllowed = requireJointFile
+                    ? new LinkedHashSet<>(graphQueryService.imagePathsForAllEntities(plan.entities()))
+                    : null;
+            for (String path : plan.fileScope()) {
+                if (jointAllowed != null && !jointAllowed.contains(path)) continue;
+                add(candidates, path, BigDecimal.ONE,
+                        graphQueryService.entityConfidenceForFile(plan.entities(), path));
+            }
+            return candidates.values().stream()
+                    .filter(candidate -> isImage(candidate.file()))
+                    .sorted(Comparator.comparing(candidate -> candidate.file().getPath()))
+                    .limit(Math.max(0, maxCandidates))
+                    .toList();
+        }
         // Intersection (not union) when co-presence of all named entities is required.
         List<String> entityPaths = requireJointFile
                 ? graphQueryService.imagePathsForAllEntities(plan.entities())
@@ -92,11 +113,6 @@ public class DynamicVisualMatcher {
         Set<String> jointAllowed = requireJointFile
                 ? new LinkedHashSet<>(entityPaths)
                 : null;
-
-        for (String path : plan.fileScope()) {
-            if (jointAllowed != null && !jointAllowed.contains(path)) continue;
-            add(candidates, path, BigDecimal.ONE, BigDecimal.ONE);
-        }
         for (String path : entityPaths) {
             add(candidates, path, BigDecimal.ZERO, graphQueryService.entityConfidenceForFile(plan.entities(), path));
         }
@@ -115,43 +131,60 @@ public class DynamicVisualMatcher {
                 new Candidate(file, retrievalScore, entityConfidence), Candidate::merge));
     }
 
-    private VisualMatchDecision evaluateStoredContext(String condition, FileEntity file) {
+    private VisualMatchDecision evaluateStoredContext(String condition, FileEntity file, QueryPlan plan) {
+        List<GroundedVisualClaim> claims = graphQueryService.certainClaimsForFile(file.getPath(), plan.entities());
+        if (!plan.entities().isEmpty() && claims.isEmpty()) {
+            return uncertain("Brak pewnego faktu przypisanego do wskazanej osoby");
+        }
         String context = trim(graphQueryService.buildFullContextForFile(file.getPath()));
         if (context.isBlank()) return uncertain("No stored visual evidence");
         String prompt = """
                 Evaluate whether this image evidence proves the requested condition. Bind every claimed property to
                 the entity identified by the supplied evidence. Do not use knowledge not present in the evidence.
+                Write reasons and missingEvidence in Polish.
                 Return JSON only: {"decision":"MATCH|NO_MATCH|UNCERTAIN","confidence":0.0,
                 "reasons":["..."],"missingEvidence":["..."]}.
                 Condition: %s
+                Certain claims: %s
                 File evidence: %s
-                """.formatted(condition, context);
-        return parseDecision(generateText(prompt), "Stored evidence could not be evaluated");
+                """.formatted(condition, claims, context);
+        VisualMatchDecision parsed = parseDecision(generateText(prompt), "Stored evidence could not be evaluated");
+        if (parsed.decision() != VisualMatchDecision.Decision.MATCH) return parsed;
+        return new VisualMatchDecision(parsed.decision(), parsed.confidence(), parsed.reasons(),
+                parsed.missingEvidence(), claims);
     }
 
-    private VisualMatchDecision evaluateImage(String condition, FileEntity file, VisualMatchDecision previous) {
+    private VisualMatchDecision evaluateImage(String condition, FileEntity file, VisualMatchDecision previous,
+                                              List<String> requestedEntities) {
         if (visionModel == null || file.getImageData() == null || file.getImageData().length == 0) return previous;
+        List<EntityVisualAnchor> anchors = graphQueryService.certainEntityAnchorsForFile(file.getPath(), requestedEntities);
         String prompt = """
                 Determine whether this image proves the requested condition. Attribute evidence only to the entity
-                supported by the supplied context; do not infer an identity that is not evidenced. Return JSON only:
-                {"decision":"MATCH|NO_MATCH|UNCERTAIN","confidence":0.0,"reasons":["..."],"missingEvidence":["..."]}.
+                supported by a supplied certain face bbox; do not infer an identity from appearance.
+                Every positive answer must contain at least one atomic Polish claim. Return JSON only:
+                {"decision":"MATCH|NO_MATCH|UNCERTAIN","confidence":0.0,"reasons":["..."],
+                "missingEvidence":["..."],"claims":[{"entity":"canonical name","predicate":"open predicate",
+                "value":"optional value","statementPl":"one short Polish evidence sentence","confidence":0.0}]}.
                 Condition: %s
+                Certain identity anchors (name and face bbox): %s
                 Supporting context: %s
-                """.formatted(condition, trim(graphQueryService.buildFullContextForFile(file.getPath())));
+                """.formatted(condition, anchors, trim(graphQueryService.buildFullContextForFile(file.getPath())));
         try {
+            byte[] verificationImage = EvidenceImageRenderer.render(file.getImageData(), anchors);
             String response = visionModel.generate(UserMessage.from(TextContent.from(prompt),
-                    ImageContent.from(Base64.getEncoder().encodeToString(file.getImageData()), imageMime(file.getFileType())))).content().text();
-            return parseDecision(response, "Image verification could not be completed");
+                    ImageContent.from(Base64.getEncoder().encodeToString(verificationImage), "image/jpeg"))).content().text();
+            return parsePixelDecision(response, file, anchors);
         } catch (Exception exception) {
             log.warn("Visual verification failed for {}: {}", file.getPath(), exception.getMessage());
-            return previous;
+            return uncertain("Image verification could not be completed");
         }
     }
 
     private boolean needsVisionVerification(VisualMatchDecision decision, FileEntity file) {
         return file.getImageData() != null && file.getImageData().length > 0
                 && (decision.decision() != VisualMatchDecision.Decision.MATCH
-                || decision.confidence().doubleValue() < contextAcceptConfidence);
+                || decision.confidence().doubleValue() < contextAcceptConfidence
+                || decision.claims().isEmpty());
     }
 
     private VisualMatchDecision parseDecision(String response, String reason) {
@@ -164,6 +197,50 @@ public class DynamicVisualMatcher {
         } catch (Exception ignored) {
             return uncertain(reason);
         }
+    }
+
+    private VisualMatchDecision parsePixelDecision(String response, FileEntity file,
+                                                    List<EntityVisualAnchor> anchors) {
+        try {
+            JsonNode root = objectMapper.readTree(extractJson(response));
+            VisualMatchDecision.Decision decision = VisualMatchDecision.Decision.valueOf(
+                    root.path("decision").asText("UNCERTAIN").toUpperCase(Locale.ROOT));
+            BigDecimal confidence = bounded(root.path("confidence").asDouble());
+            List<GroundedVisualClaim> claims = new ArrayList<>();
+            JsonNode claimNodes = root.path("claims");
+            if (claimNodes.isArray()) {
+                int index = 0;
+                for (JsonNode claim : claimNodes) {
+                    String entity = claim.path("entity").asText("").trim();
+                    String predicate = claim.path("predicate").asText("").trim();
+                    String value = claim.path("value").asText("").trim();
+                    String statement = claim.path("statementPl").asText("").trim();
+                    EntityVisualAnchor anchor = anchors.stream()
+                            .filter(item -> item.entityName() != null && item.entityName().equalsIgnoreCase(entity))
+                            .findFirst().orElse(null);
+                    // Named claims require a certain identity bbox. Unnamed scene claims may omit an entity.
+                    if (!entity.isBlank() && anchor == null) continue;
+                    if (predicate.isBlank() || statement.isBlank()) continue;
+                    index++;
+                    claims.add(new GroundedVisualClaim("P-" + file.getId() + "-" + index,
+                            anchor == null ? null : anchor.mentionId(), entity, predicate, value, statement,
+                            file.getPath(), bounded(claim.path("confidence").asDouble(confidence.doubleValue())),
+                            "PIXEL_VERIFICATION", anchor == null ? "" : anchor.faceAnchorId()));
+                }
+            }
+            if (decision == VisualMatchDecision.Decision.MATCH && claims.isEmpty()) {
+                return new VisualMatchDecision(VisualMatchDecision.Decision.UNCERTAIN, BigDecimal.ZERO,
+                        List.of(), List.of("Brak claimu przypisanego do pewnego dowodu"), List.of());
+            }
+            return new VisualMatchDecision(decision, confidence, strings(root.path("reasons")),
+                    strings(root.path("missingEvidence")), claims);
+        } catch (Exception ignored) {
+            return uncertain("Image verification could not be evaluated");
+        }
+    }
+
+    private BigDecimal bounded(double value) {
+        return BigDecimal.valueOf(Math.max(0, Math.min(1, value)));
     }
 
     private String generateText(String prompt) { try { return chatModel.generate(prompt); } catch (Exception exception) { return ""; } }

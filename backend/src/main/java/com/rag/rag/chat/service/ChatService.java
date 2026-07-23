@@ -11,7 +11,7 @@ import java.util.UUID;
 
 @AiService(
         wiringMode = AiServiceWiringMode.EXPLICIT,
-        chatModel = "chatLanguageModel",
+        chatModel = "answerLanguageModel",
         contentRetriever = "contentRetriever",
         retrievalAugmentor = "retrievalAugmentor",
         chatMemoryProvider = "chatMemoryProvider"
@@ -30,6 +30,12 @@ public interface ChatService {
             Źródło prawdy: wyłącznie dostarczony kontekst (graf, indeks image_knowledge,
             fragmenty „Dokumenty”). Nie zgaduj i nie dorzucaj wiedzy spoza kontekstu.
             Graf ma pierwszeństwo przed luźnymi fragmentami dokumentów.
+            Każde zdanie i każdy jego szczegół muszą wynikać bezpośrednio z kontekstu.
+            Nie dopisuj ocen, emocji, intencji, nastroju ani atmosfery, jeśli dowód nie mówi
+            o nich wprost. Nie uzupełniaj typowych szczegółów sceny na podstawie skojarzeń.
+            Gdy opisujesz różne zdjęcia lub sceny, nie sklejaj ich tak, jakby działy się
+            równocześnie. Każdą odrębną scenę opisz w osobnym zdaniu; przy większej liczbie
+            jednoznacznie zaznacz, że kolejne obserwacje dotyczą innych zdjęć.
 
             Formułuj odpowiedź własnymi słowami: łącz scenę, osoby, wygląd, ubiór, czynności
             i relacje w płynną wypowiedź. Nie kopiuj JSON, etykiet technicznych ani claimów
@@ -46,11 +52,12 @@ public interface ChatService {
             - listy spekulacji „może robić różne rzeczy” / menu 1–2–3 bez dowodów;
             - moralizowanie o policji/bezpieczeństwie zamiast opisu sceny;
             - nazwy plików, ścieżki, score, „na podstawie dowodów” w treści odpowiedzi.
+            - JSON, Markdown, nagłówki, wypunktowania i numerowane listy.
 
             Gdy w kontekście naprawdę brak informacji: krótko „Nie znaleziono informacji
             w dokumentach.” — bez wypełniaczy.
-            Przy otwartych pytaniach możesz rozwinąć opis (kilka zdań), o ile każdy szczegół
-            pochodzi z kontekstu.
+            Zawsze zwracaj wyłącznie zwykły tekst: od jednego do trzech krótkich zdań.
+            Przy otwartym pytaniu wybierz najważniejsze potwierdzone szczegóły zamiast wydłużać opis.
             """;
 
     @SystemMessage(ANSWER_INSTRUCTIONS)

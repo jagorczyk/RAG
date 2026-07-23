@@ -19,6 +19,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -70,7 +71,7 @@ class GraphQueryServiceCertainSourcesTest {
                 .id(UUID.randomUUID()).entity(animal).filePath("dir://photo.jpg")
                 .label("animal 1").confidence(new BigDecimal("0.900")).status(MentionStatus.CONFIRMED).build();
 
-        when(mentionRepository.findByFilePath("dir://photo.jpg"))
+        when(mentionRepository.findByFilePathIn(List.of("dir://photo.jpg")))
                 .thenReturn(List.of(confirmedIgor, suggested, pendingPerson, confirmedAnimal));
         when(mentionEvidencePolicy.isCertain(confirmedIgor)).thenReturn(true);
         when(mentionEvidencePolicy.isCertain(suggested)).thenReturn(false);
@@ -81,6 +82,8 @@ class GraphQueryServiceCertainSourcesTest {
         List<String> names = service.certainParticipantNamesForPaths(List.of("dir://photo.jpg"));
 
         assertEquals(List.of("Igor"), names);
+        assertEquals(Map.of("dir://photo.jpg", List.of("Igor")),
+                service.certainParticipantNamesByPath(List.of("dir://photo.jpg")));
         assertFalse(names.contains("person 1"));
         assertFalse(names.contains("animal 1"));
     }
@@ -167,7 +170,7 @@ class GraphQueryServiceCertainSourcesTest {
     }
 
     @Test
-    void relationWithUncertainTargetIsNotCertainGraphEvidence() {
+    void relationWithCertainSubjectKeepsAnonymousUncertainTarget() {
         EntityMention subject = confirmed(entity, "dir://relation.jpg");
         EntityMention target = EntityMention.builder().id(UUID.randomUUID())
                 .filePath("dir://relation.jpg").label("person 2")
@@ -177,9 +180,8 @@ class GraphQueryServiceCertainSourcesTest {
                 .confidence(new BigDecimal("0.900")).build();
         when(factRepository.findByFilePath("dir://relation.jpg")).thenReturn(List.of(relation));
         when(mentionEvidencePolicy.isCertain(subject)).thenReturn(true);
-        when(mentionEvidencePolicy.isCertain(target)).thenReturn(false);
 
-        assertTrue(service.getCertainFactsForFile("dir://relation.jpg").isEmpty());
+        assertEquals(List.of(relation), service.getCertainFactsForFile("dir://relation.jpg"));
     }
 
     @Test
@@ -257,7 +259,8 @@ class GraphQueryServiceCertainSourcesTest {
         assertTrue(evidence.hasEvidence());
         assertEquals(List.of("dir://shared.jpg"), evidence.certainPaths());
         assertFalse(evidence.certainPaths().contains("dir://only-igor.jpg"));
-        assertTrue(evidence.context().contains("współwystępowanie"));
+        assertTrue(evidence.context().contains("Igor"));
+        assertTrue(evidence.context().contains("Anna"));
     }
 
     private EntityMention confirmed(KnowledgeEntity owner, String path) {

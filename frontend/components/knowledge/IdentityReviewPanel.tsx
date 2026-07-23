@@ -6,7 +6,7 @@ import {
   splitSuggestion,
   SuggestionMention,
 } from "@/lib/knowledge-api";
-import { Check, X, User, ShieldAlert } from "lucide-react";
+import { Check, X, User, ShieldAlert, CloudOff } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 function FaceSnippet({ mention }: { mention: SuggestionMention }) {
@@ -95,7 +95,7 @@ export function IdentityReviewPanel() {
   if (error) {
     return (
       <EmptyState
-        icon="☁️"
+        icon={<CloudOff size={22} aria-hidden />}
         title="Nie udało się wczytać sugestii tożsamości"
         description="Sprawdź połączenie z serwerem i spróbuj ponownie."
         action={

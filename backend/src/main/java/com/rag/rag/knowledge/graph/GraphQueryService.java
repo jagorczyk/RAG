@@ -1,6 +1,7 @@
 package com.rag.rag.knowledge.graph;
 
 import com.rag.rag.auth.security.CurrentUserService;
+import com.rag.rag.chat.service.QueryPlan;
 import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.entity.EntityMention;
@@ -20,10 +21,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -54,10 +58,6 @@ public class GraphQueryService {
 
     @Value("${rag.graph.min-fact-confidence:0.75}")
     private double minFactConfidence = 0.75;
-
-    /** Max photo dumps injected into the answer prompt (sources capped separately). */
-    @Value("${rag.graph.max-context-files:5}")
-    private int maxContextFiles = 5;
 
     /** Canonical display names of certain human (PERSON) entities in the workspace. */
     @Transactional(readOnly = true)
@@ -232,21 +232,35 @@ public class GraphQueryService {
     }
 
     @Transactional(readOnly = true)
+    public GraphEvidenceResult buildEvidence(QueryPlan plan) {
+        if (plan == null) {
+            return new GraphEvidenceResult("", List.of());
+        }
+        boolean includeAllOwnedPeople = plan.retrievalMode() == QueryPlan.RetrievalMode.GRAPH
+                && plan.entities().isEmpty()
+                && plan.fileScope().isEmpty();
+        return buildEvidence(plan.entities(), plan.fileScope(), plan.entityMatchMode(), includeAllOwnedPeople);
+    }
+
+    @Transactional(readOnly = true)
     public GraphEvidenceResult buildEvidence(List<String> entityNames, List<String> fileScope,
                                              EntityMatchMode entityMatchMode) {
+        return buildEvidence(entityNames, fileScope, entityMatchMode, false);
+    }
+
+    private GraphEvidenceResult buildEvidence(List<String> entityNames, List<String> fileScope,
+                                              EntityMatchMode entityMatchMode,
+                                              boolean includeAllOwnedPeople) {
         List<String> validatedEntities = validateEntityNames(entityNames);
         List<String> validatedScope = validateFilePaths(fileScope);
         EntityMatchMode mode = entityMatchMode == null ? EntityMatchMode.ANY : entityMatchMode;
         LinkedHashSet<String> certainPaths = new LinkedHashSet<>();
-        List<String> contexts = new ArrayList<>();
 
-        if (mode == EntityMatchMode.ALL_SAME_FILE && !validatedEntities.isEmpty()) {
+        if (includeAllOwnedPeople) {
+            certainPaths.addAll(allOwnedImagePathsWithCertainPeople());
+        } else if (mode == EntityMatchMode.ALL_SAME_FILE && !validatedEntities.isEmpty()) {
             certainPaths.addAll(imagePathsForAllEntities(validatedEntities));
             if (!validatedScope.isEmpty()) certainPaths.retainAll(validatedScope);
-            if (!certainPaths.isEmpty()) {
-                contexts.add("- współwystępowanie=" + String.join(", ", validatedEntities)
-                        + "; pliki=" + certainPaths.size());
-            }
         } else {
             if (!validatedEntities.isEmpty()) {
                 certainPaths.addAll(imagePathsForEntities(validatedEntities));
@@ -261,43 +275,140 @@ public class GraphQueryService {
             }
         }
 
-        // Per-photo graph snapshot in natural Polish — no paths/raw JSON in the answer prompt.
-        int contextLimit = Math.max(1, maxContextFiles);
-        int index = 1;
-        int included = 0;
-        for (String path : certainPaths) {
-            if (included >= contextLimit) {
-                int omitted = certainPaths.size() - included;
-                contexts.add("(pominięto " + omitted + " dalszych zdjęć w kontekście; limit " + contextLimit + ")");
-                break;
-            }
-            String fileContext = buildFullContextForFile(path);
-            if (!fileContext.isBlank()) {
-                contexts.add("=== Zdjęcie " + index + " ===\n" + fileContext);
-            } else {
-                contexts.add("=== Zdjęcie " + index + " ===\n(brak szczegółów grafu dla tego pliku)");
-            }
-            index++;
-            included++;
-        }
+        return assembleEvidence(List.copyOf(certainPaths), validatedEntities, includeAllOwnedPeople);
+    }
 
-        // Claims only for files included in the prompt dump (keeps selection set focused).
-        List<String> claimPaths = certainPaths.stream().limit(contextLimit).toList();
-        List<GroundedVisualClaim> claims = claimPaths.stream()
-                .flatMap(path -> certainClaimsForFile(path, validatedEntities).stream())
-                .distinct()
+    private List<String> allOwnedImagePathsWithCertainPeople() {
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        if (ownerId == null) return List.of();
+        List<String> imagePaths = fileRepository.findAllByOwnerId(ownerId).stream()
+                .filter(file -> file.getFileType() != null
+                        && file.getFileType().toLowerCase(Locale.ROOT).startsWith("image/"))
+                .map(FileEntity::getPath)
+                .filter(path -> path != null && !path.isBlank())
+                .sorted()
                 .toList();
-        if (!claims.isEmpty()) {
-            StringBuilder claimBlock = new StringBuilder("=== Claimy grafu ===\n");
-            for (GroundedVisualClaim claim : claims) {
-                if (claim == null || claim.statementPl() == null || claim.statementPl().isBlank()) {
-                    continue;
-                }
-                claimBlock.append("- ").append(claim.id()).append(": ").append(claim.statementPl()).append('\n');
-            }
-            contexts.add(claimBlock.toString().trim());
+        if (imagePaths.isEmpty()) return List.of();
+        Set<String> certain = mentionRepository.findByFilePathIn(imagePaths).stream()
+                .filter(this::isCertainMention)
+                .filter(mention -> isPersonEntity(mention.getEntity()))
+                .map(EntityMention::getFilePath)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        return imagePaths.stream().filter(certain::contains).toList();
+    }
+
+    private GraphEvidenceResult assembleEvidence(List<String> paths, List<String> requestedEntities,
+                                                 boolean includeAggregates) {
+        if (paths == null || paths.isEmpty()) {
+            return new GraphEvidenceResult("", List.of(), List.of(), List.of());
         }
-        return new GraphEvidenceResult(String.join("\n", contexts), List.copyOf(certainPaths), claims);
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        if (ownerId == null) return new GraphEvidenceResult("", List.of());
+
+        List<FileEntity> batchFiles = fileRepository.findAllByPathInAndOwnerId(paths, ownerId);
+        if (batchFiles == null || batchFiles.isEmpty()) {
+            batchFiles = paths.stream()
+                    .map(path -> fileRepository.findByPathAndOwnerId(path, ownerId).orElse(null))
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+        }
+        Map<String, FileEntity> filesByPath = batchFiles.stream()
+                .collect(java.util.stream.Collectors.toMap(FileEntity::getPath, file -> file,
+                        (first, ignored) -> first, LinkedHashMap::new));
+        List<EntityMention> batchMentions = mentionRepository.findByFilePathIn(paths);
+        if (batchMentions == null || batchMentions.isEmpty()) {
+            batchMentions = paths.stream().flatMap(path -> mentionRepository.findByFilePath(path).stream()).toList();
+        }
+        Map<String, List<EntityMention>> mentionsByPath = batchMentions.stream()
+                .collect(java.util.stream.Collectors.groupingBy(EntityMention::getFilePath,
+                        LinkedHashMap::new, java.util.stream.Collectors.toList()));
+        List<Fact> batchFacts = factRepository.findByFilePathIn(paths);
+        if (batchFacts == null || batchFacts.isEmpty()) {
+            batchFacts = paths.stream().flatMap(path -> factRepository.findByFilePath(path).stream()).toList();
+        }
+        Map<String, List<Fact>> factsByPath = batchFacts.stream()
+                .collect(java.util.stream.Collectors.groupingBy(Fact::getFilePath,
+                        LinkedHashMap::new, java.util.stream.Collectors.toList()));
+
+        List<GraphPhotoEvidence> photos = new ArrayList<>();
+        List<GroundedVisualClaim> claims = new ArrayList<>();
+        Map<String, Integer> participantCounts = new LinkedHashMap<>();
+        int photoIndex = 0;
+        for (String path : paths) {
+            FileEntity file = filesByPath.get(path);
+            if (file == null) continue;
+            photoIndex++;
+            List<EntityMention> mentions = mentionsByPath.getOrDefault(path, List.of()).stream()
+                    .filter(this::isCertainMention)
+                    .filter(mention -> mention.getEntity() == null || isPersonEntity(mention.getEntity()))
+                    .toList();
+            List<Fact> facts = factsByPath.getOrDefault(path, List.of()).stream()
+                    .filter(this::isCertainFact)
+                    .sorted(Comparator.comparing(Fact::getCreatedAt,
+                            Comparator.nullsLast(Comparator.naturalOrder())))
+                    .toList();
+            String rendered = buildFullContextForFile(file, mentions, facts);
+            List<GraphEvidenceItem> items = evidenceItems(photoIndex, path, rendered);
+            photos.add(new GraphPhotoEvidence(String.valueOf(photoIndex), path, items));
+
+            mentions.stream().map(this::mentionDisplayName)
+                    .filter(name -> name != null && !name.isBlank())
+                    .filter(name -> !identityResolutionService.isGenericPersonLabel(name))
+                    .distinct()
+                    .forEach(name -> participantCounts.merge(name, 1, Integer::sum));
+            facts.stream()
+                    .filter(fact -> fact.getMention() != null && fact.getMention().getEntity() != null)
+                    .filter(fact -> requestedEntities.isEmpty() || requestedEntities.stream().anyMatch(name ->
+                            fact.getMention().getEntity().getDisplayName().equalsIgnoreCase(name)))
+                    .map(this::toClaim)
+                    .forEach(claims::add);
+        }
+        if (includeAggregates && !participantCounts.isEmpty()) {
+            List<GraphEvidenceItem> aggregateItems = new ArrayList<>();
+            int index = 0;
+            for (Map.Entry<String, Integer> entry : participantCounts.entrySet()) {
+                index++;
+                aggregateItems.add(new GraphEvidenceItem("A." + index, GraphEvidenceItem.Kind.AGGREGATE,
+                        aggregateStatement(entry.getKey(), entry.getValue()), ""));
+            }
+            photos.add(0, new GraphPhotoEvidence("G", "", aggregateItems));
+        }
+        String context = photos.stream().map(GraphPhotoEvidence::render)
+                .filter(value -> !value.isBlank())
+                .collect(java.util.stream.Collectors.joining("\n"));
+        return new GraphEvidenceResult(context, paths, claims.stream().distinct().toList(), photos);
+    }
+
+    private static String aggregateStatement(String name, int count) {
+        if (count == 1) {
+            return name + " występuje na jednym pewnym zdjęciu.";
+        }
+        return name + " występuje na " + count + " pewnych zdjęciach.";
+    }
+
+    private List<GraphEvidenceItem> evidenceItems(int photoIndex, String path, String rendered) {
+        if (rendered == null || rendered.isBlank()) return List.of();
+        List<GraphEvidenceItem> items = new ArrayList<>();
+        int itemIndex = 0;
+        for (String rawLine : rendered.lines().toList()) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.isBlank() || "Fakty:".equals(line)) continue;
+            if (line.startsWith("- ")) line = line.substring(2).trim();
+            GraphEvidenceItem.Kind kind = line.startsWith("Uczestnicy:")
+                    ? GraphEvidenceItem.Kind.PARTICIPANTS
+                    : line.startsWith("Scena:") || line.startsWith("Otoczenie:")
+                    || line.startsWith("Oświetlenie:") || line.startsWith("Tło:")
+                    || line.startsWith("Podsumowanie:")
+                    ? GraphEvidenceItem.Kind.SCENE
+                    : line.startsWith("Widoczny tekst:")
+                    ? GraphEvidenceItem.Kind.TEXT
+                    : rawLine.trim().startsWith("-")
+                    ? GraphEvidenceItem.Kind.FACT
+                    : GraphEvidenceItem.Kind.MENTION;
+            itemIndex++;
+            items.add(new GraphEvidenceItem("E" + photoIndex + "." + itemIndex, kind, line, path));
+        }
+        return List.copyOf(items);
     }
 
     @Transactional(readOnly = true)
@@ -319,32 +430,46 @@ public class GraphQueryService {
      */
     @Transactional(readOnly = true)
     public List<String> certainParticipantNamesForPaths(List<String> filePaths) {
-        if (filePaths == null || filePaths.isEmpty()) {
-            return List.of();
-        }
         LinkedHashSet<String> names = new LinkedHashSet<>();
-        for (String path : filePaths) {
-            if (path == null || path.isBlank()) {
+        certainParticipantNamesByPath(filePaths).values().forEach(names::addAll);
+        return names.stream().sorted(String.CASE_INSENSITIVE_ORDER).toList();
+    }
+
+    /**
+     * Bulk variant used by catalog overviews. It applies exactly the same certainty and
+     * canonical-identity policy as graph answers without issuing one query per file.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, List<String>> certainParticipantNamesByPath(Collection<String> filePaths) {
+        if (filePaths == null || filePaths.isEmpty()) {
+            return Map.of();
+        }
+        List<String> paths = filePaths.stream()
+                .filter(path -> path != null && !path.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+        if (paths.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, LinkedHashSet<String>> namesByPath = new LinkedHashMap<>();
+        for (EntityMention mention : mentionRepository.findByFilePathIn(paths)) {
+            if (!isCertainMention(mention) || mention.getEntity() == null
+                    || !isPersonEntity(mention.getEntity())) {
                 continue;
             }
-            for (EntityMention mention : mentionRepository.findByFilePath(path)) {
-                if (!isCertainMention(mention) || mention.getEntity() == null) {
-                    continue;
-                }
-                if (!isPersonEntity(mention.getEntity())) {
-                    continue;
-                }
-                String displayName = mention.getEntity().getDisplayName();
-                if (displayName == null || displayName.isBlank()) {
-                    continue;
-                }
-                if (identityResolutionService.isGenericPersonLabel(displayName)) {
-                    continue;
-                }
-                names.add(displayName.trim());
+            String displayName = mention.getEntity().getDisplayName();
+            if (displayName == null || displayName.isBlank()
+                    || identityResolutionService.isGenericPersonLabel(displayName)) {
+                continue;
             }
+            namesByPath.computeIfAbsent(mention.getFilePath(), ignored -> new LinkedHashSet<>())
+                    .add(displayName.trim());
         }
-        return List.copyOf(names);
+        Map<String, List<String>> result = new LinkedHashMap<>();
+        namesByPath.forEach((path, names) -> result.put(path,
+                names.stream().sorted(String.CASE_INSENSITIVE_ORDER).toList()));
+        return Map.copyOf(result);
     }
 
     /**
@@ -389,13 +514,19 @@ public class GraphQueryService {
     public String buildFullContextForFile(String filePath) {
         if (filePath == null || filePath.isBlank()) return "";
         UUID ownerId = currentUserService.findUserId().orElse(null);
-        if (ownerId == null || fileRepository.findByPathAndOwnerId(filePath, ownerId).isEmpty()) return "";
-        StringBuilder context = new StringBuilder();
-        // Certain identity-linked human mentions and facts only (AGENTS.md people path).
+        if (ownerId == null) return "";
+        Optional<FileEntity> ownedFile = fileRepository.findByPathAndOwnerId(filePath, ownerId);
+        if (ownedFile.isEmpty()) return "";
         List<EntityMention> mentions = mentionRepository.findByFilePath(filePath).stream()
                 .filter(this::isCertainMention)
                 .filter(mention -> mention.getEntity() == null || isPersonEntity(mention.getEntity()))
                 .toList();
+        return buildFullContextForFile(ownedFile.get(), mentions, getCertainFactsForFile(filePath));
+    }
+
+    private String buildFullContextForFile(FileEntity file, List<EntityMention> mentions, List<Fact> facts) {
+        StringBuilder context = new StringBuilder();
+        // Certain identity-linked human mentions and facts only (AGENTS.md people path).
         List<String> participantNames = mentions.stream()
                 .map(this::mentionDisplayName)
                 .filter(name -> name != null && !name.isBlank())
@@ -408,7 +539,6 @@ public class GraphQueryService {
         for (EntityMention mention : mentions) {
             appendMention(context, mention);
         }
-        List<Fact> facts = getCertainFactsForFile(filePath);
         if (!facts.isEmpty()) {
             context.append("Fakty:\n");
             for (Fact fact : facts) {
@@ -416,7 +546,7 @@ public class GraphQueryService {
             }
         }
         // Scene/summary only — never dump raw structured_vision JSON (person 1 noise + token bloat).
-        fileRepository.findByPath(filePath).ifPresent(file -> appendFileContext(context, file));
+        appendFileContext(context, file);
         return context.toString();
     }
 
@@ -584,6 +714,28 @@ public class GraphQueryService {
         appendSceneAttributes(context, file.getSceneAttributes());
         if (file.getImageSummary() != null && !file.getImageSummary().isBlank()) {
             context.append("Podsumowanie: ").append(file.getImageSummary().trim()).append('\n');
+        }
+        appendVisibleTexts(context, file.getVisibleTexts());
+    }
+
+    private void appendVisibleTexts(StringBuilder context, String visibleTextsJson) {
+        if (visibleTextsJson == null || visibleTextsJson.isBlank()) return;
+        try {
+            com.fasterxml.jackson.databind.JsonNode root =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(visibleTextsJson);
+            if (!root.isArray()) return;
+            LinkedHashSet<String> texts = new LinkedHashSet<>();
+            root.forEach(node -> {
+                String value = node.isTextual()
+                        ? node.asText("").trim()
+                        : node.path("text").asText("").trim();
+                if (!value.isBlank()) texts.add(value);
+            });
+            if (!texts.isEmpty()) {
+                context.append("Widoczny tekst: ").append(String.join(", ", texts)).append('\n');
+            }
+        } catch (Exception ignored) {
+            // Malformed optional text JSON must not break an otherwise certain photo graph.
         }
     }
 

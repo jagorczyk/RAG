@@ -5,6 +5,9 @@ import { BookOpen, ChevronDown, Users } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import type { Message, QueryEvidence, Source } from "@/lib/api";
 import type { MentionedPerson } from "@/lib/mentioned-people";
+import { CognifaceLogo } from "@/components/brand/CognifaceLogo";
+import { Avatar } from "@/components/ui/Avatar";
+import { getStoredUser } from "@/lib/auth";
 
 interface ChatMessageBubbleProps {
   message: Message;
@@ -33,6 +36,8 @@ export function ChatMessageBubble({
   const reduced = useReducedMotion();
   const sourceCount = sources?.length ?? 0;
   const peopleCount = mentionedPeople.length;
+  const user = getStoredUser();
+  const userSeed = user?.email || "you";
 
   const sourceLabel =
     sourceCount === 1
@@ -50,32 +55,43 @@ export function ChatMessageBubble({
 
   return (
     <motion.article
-      className={`mb-3 flex flex-col ${isUser ? "items-end" : "items-start"}`}
-      initial={reduced ? { opacity: 0 } : { opacity: 0, y: 10 }}
+      className={`mb-4 flex flex-col ${isUser ? "items-end" : "items-start"}`}
+      initial={reduced ? { opacity: 0 } : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{
-        duration: reduced ? 0.01 : 0.18,
-        delay: reduced ? 0 : Math.min(index, 8) * 0.03,
+        duration: reduced ? 0.01 : 0.2,
+        delay: reduced ? 0 : Math.min(index, 8) * 0.025,
         ease: [0.22, 1, 0.36, 1],
       }}
     >
       {isUser ? (
-        <div className="max-w-[86%] rounded-[14px] rounded-br-[4px] bg-accent px-2.5 py-1.5 text-[0.9375rem] leading-[1.4] text-on-accent">
-          <div className="whitespace-pre-wrap text-pretty">{children}</div>
+        <div className="flex max-w-[min(86%,32rem)] items-end gap-2">
+          <div className="rounded-[var(--radius-lg)] rounded-br-md bg-soft px-3.5 py-2.5 text-[0.9375rem] leading-[1.45] text-ink shadow-sm">
+            <div className="whitespace-pre-wrap text-pretty">{children}</div>
+          </div>
+          <Avatar seed={userSeed} fallbackLabel={user?.email || "Ty"} size="xs" className="mb-0.5" />
         </div>
       ) : (
-        <div className="max-w-[94%] py-0.5 text-[0.9375rem] leading-[1.4] text-ink">
-          <div className="whitespace-pre-wrap text-pretty">{children}</div>
-          {uncertain && (
-            <p className="mt-2 text-xs font-semibold text-warning" role="status">
-              Odpowiedź może być niepewna — sprawdź źródła.
-            </p>
-          )}
+        <div className="flex max-w-[min(94%,40rem)] gap-2.5 py-0.5 text-[0.9375rem] leading-[1.45] text-ink">
+          <span
+            className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface-raised shadow-sm"
+            aria-hidden
+          >
+            <CognifaceLogo className="h-4 w-4 text-accent" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="whitespace-pre-wrap text-pretty">{children}</div>
+            {uncertain && (
+              <p className="mt-2 text-xs font-semibold text-warning" role="status">
+                Odpowiedź może być niepewna — sprawdź źródła.
+              </p>
+            )}
+          </div>
         </div>
       )}
 
       {(sourceCount > 0 || peopleCount > 0) && (
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className={`mt-2 flex flex-wrap gap-2 ${isUser ? "" : "pl-9"}`}>
           {sourceCount > 0 && onSourcesOpen && (
             <button
               type="button"
@@ -104,14 +120,24 @@ export function ChatMessageBubble({
       )}
 
       {peopleCount > 0 && !onPeopleOpen && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div className={`mt-2 flex flex-wrap gap-1.5 ${isUser ? "" : "pl-9"}`}>
           {mentionedPeople.map((person) => (
             <Link
               key={person.id}
               href={`/knowledge/${person.id}`}
               className="chip min-h-[var(--touch-min)]"
             >
-              <Users size={14} aria-hidden />
+              <Avatar
+                seed={person.id}
+                src={
+                  person.photoBase64
+                    ? `data:image/jpeg;base64,${person.photoBase64}`
+                    : null
+                }
+                fallbackLabel={person.displayName}
+                size="xs"
+                className="!h-5 !w-5"
+              />
               {person.displayName}
             </Link>
           ))}
@@ -123,9 +149,15 @@ export function ChatMessageBubble({
 
 export function TypingIndicator() {
   return (
-    <div className="mb-3 flex items-start" role="status" aria-live="polite">
+    <div className="mb-4 flex items-start gap-2.5 pl-0" role="status" aria-live="polite">
+      <span
+        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-surface-raised shadow-sm"
+        aria-hidden
+      >
+        <CognifaceLogo className="h-4 w-4 text-accent" />
+      </span>
       <span className="sr-only">Asystent pisze</span>
-      <div className="flex gap-1 py-1.5" aria-hidden>
+      <div className="flex gap-1 py-2" aria-hidden>
         {[0, 1, 2].map((i) => (
           <span
             key={i}

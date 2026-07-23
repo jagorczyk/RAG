@@ -1,5 +1,6 @@
 package com.rag.rag.chat.service;
 
+import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -30,6 +31,7 @@ public final class ChatAnswerGrounding {
             ",\\s*([,.;:!?])");
     private static final Pattern MULTI_SPACE = Pattern.compile("[ \\t]{2,}");
     private static final Pattern SPACE_BEFORE_PUNCT = Pattern.compile(" +([,.;:!?])");
+    private static final Pattern LIST_LINE = Pattern.compile("(?m)^\\s*(?:[-*•]|\\d+[.)])\\s+");
 
     private ChatAnswerGrounding() {
     }
@@ -547,7 +549,30 @@ public final class ChatAnswerGrounding {
                 || isEnglishAssistantNonAnswer(modelAnswer)
                 || isSpeculativeHypothesisList(modelAnswer)
                 || isSafetyOrOfftopicLecture(modelAnswer)
-                || isGeneralKnowledgeEssay(modelAnswer);
+                || isGeneralKnowledgeEssay(modelAnswer)
+                || hasInvalidAnswerStructure(modelAnswer);
+    }
+
+    /** Technical output contract only; it does not inspect the question or route intent. */
+    public static boolean hasInvalidAnswerStructure(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return false;
+        }
+        String trimmed = answer.trim();
+        if (trimmed.startsWith("```") || trimmed.startsWith("{") || trimmed.startsWith("[")
+                || LIST_LINE.matcher(trimmed).find()) {
+            return true;
+        }
+        BreakIterator iterator = BreakIterator.getSentenceInstance(Locale.forLanguageTag("pl-PL"));
+        iterator.setText(trimmed);
+        int count = 0;
+        int start = iterator.first();
+        for (int end = iterator.next(); end != BreakIterator.DONE; start = end, end = iterator.next()) {
+            if (!trimmed.substring(start, end).isBlank() && ++count > 3) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

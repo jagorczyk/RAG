@@ -1,5 +1,6 @@
 package com.rag.rag.core.config;
 
+import com.rag.rag.core.retrieval.ImageKnowledgeDocumentSplitter;
 import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.Tokenizer;
@@ -105,8 +106,10 @@ public class EmbeddingConfiguration {
             EmbeddingStore<TextSegment> embeddingStore,
             Tokenizer tokenizer
     ) {
+        var recursiveSplitter = DocumentSplitters.recursive(
+                ingestionSegmentSize, ingestionOverlap, tokenizer);
         return EmbeddingStoreIngestor.builder()
-                .documentSplitter(DocumentSplitters.recursive(ingestionSegmentSize, ingestionOverlap, tokenizer))
+                .documentSplitter(new ImageKnowledgeDocumentSplitter(recursiveSplitter))
                 .embeddingModel(embeddingModel)
                 .embeddingStore(embeddingStore)
                 .build();

@@ -22,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 class QueryPlannerTest {
     @Mock private GraphQueryService graphQueryService;
     @Mock private ChatLanguageModel chatModel;
+    @Mock private LibraryScopeService libraryScopeService;
 
     @BeforeEach
     void stubTextResolve() {
@@ -150,5 +151,62 @@ class QueryPlannerTest {
         assertTrue(prompt.contains("HYBRID"));
         assertEquals(QueryPlan.RetrievalMode.GRAPH, plan.retrievalMode());
         assertEquals(List.of("Igor"), plan.entities());
+    }
+
+    @Test
+    void plansACompleteFolderOverviewWithoutChangingNonPersonHybridRouting() {
+        var folderId = java.util.UUID.randomUUID();
+        when(graphQueryService.availableEntityNames()).thenReturn(List.of());
+        when(libraryScopeService.availableFolderNames()).thenReturn(List.of("Wakacje 2024"));
+        when(libraryScopeService.resolveFolderNames(List.of("Wakacje 2024")))
+                .thenReturn(new LibraryScopeService.FolderResolution(
+                        List.of(folderId), false, false));
+        when(graphQueryService.validateFilePaths(List.of())).thenReturn(List.of());
+        when(chatModel.generate(anyString())).thenReturn("""
+                {"entities":[],"fileScope":[],"folderNames":["Wakacje 2024"],
+                "scopeKind":"FOLDER","collectionOverview":true,
+                "retrievalQuery":"podsumowanie zawartości folderu Wakacje 2024",
+                "condition":"inwentarz i opis zawartości folderu",
+                "visualCondition":false,"ambiguous":false,"retrievalMode":"HYBRID",
+                "entityMatchMode":"ANY","answerInstruction":"Odpowiedz krótko po polsku."}
+                """);
+
+        QueryPlan plan = new QueryPlanner(graphQueryService, chatModel, libraryScopeService)
+                .plan("Co znajduje się w folderze Wakacje 2024?");
+
+        assertEquals(QueryPlan.RetrievalMode.HYBRID, plan.retrievalMode());
+        assertEquals(QueryPlan.ScopeKind.FOLDER, plan.scopeKind());
+        assertEquals(List.of(folderId), plan.folderScope());
+        assertTrue(plan.collectionOverview());
+    }
+
+    @Test
+    void unnamedVisualSearchIsNotRoutedToCatalogOverview() {
+        when(graphQueryService.availableEntityNames()).thenReturn(List.of("Igor", "Olek"));
+        when(libraryScopeService.availableFolderNames()).thenReturn(List.of("Wakacje"));
+        when(libraryScopeService.resolveFolderNames(List.of()))
+                .thenReturn(LibraryScopeService.FolderResolution.empty());
+        when(graphQueryService.validateEntityNames(List.of())).thenReturn(List.of());
+        when(graphQueryService.validateFilePaths(List.of())).thenReturn(List.of());
+        when(graphQueryService.resolveEntityNamesFromText(anyString())).thenReturn(List.of());
+        when(chatModel.generate(anyString())).thenReturn("""
+                {"entities":[],"fileScope":[],"folderNames":[],
+                "scopeKind":"UNRESTRICTED","collectionOverview":false,
+                "retrievalQuery":"osoba w czerwonej kurtce",
+                "condition":"znajdź osobę w czerwonej kurtce",
+                "visualCondition":true,"ambiguous":false,
+                "retrievalMode":"VISUAL_VALIDATION","entityMatchMode":"ANY",
+                "answerInstruction":"Odpowiedz z dowodów wizualnych."}
+                """);
+
+        QueryPlan plan = new QueryPlanner(graphQueryService, chatModel, libraryScopeService)
+                .plan("Kto ma czerwoną kurtkę?");
+
+        assertFalse(plan.collectionOverview());
+        assertTrue(plan.visualCondition());
+        assertEquals(QueryPlan.RetrievalMode.VISUAL_VALIDATION, plan.retrievalMode());
+        ArgumentCaptor<String> prompt = ArgumentCaptor.forClass(String.class);
+        verify(chatModel).generate(prompt.capture());
+        assertTrue(prompt.getValue().contains("również wtedy, gdy pytanie nie"));
     }
 }

@@ -35,6 +35,14 @@ public class EntityMention {
     @Column(nullable = false)
     private String label;
 
+    /** Stable label emitted by vision, retained when the user-facing identity changes. */
+    @Column(name = "vision_label")
+    private String visionLabel;
+
+    /** Identifier of the detector bbox used to bind vision facts to a face. */
+    @Column(name = "face_anchor_id")
+    private String faceAnchorId;
+
     @Column(name = "entity_type")
     @Builder.Default
     private String entityType = "PERSON";

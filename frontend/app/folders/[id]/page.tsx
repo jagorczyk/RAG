@@ -34,6 +34,7 @@ import { useRouter } from "next/navigation";
 import { ImagePreview } from "@/components/ui/ImagePreview";
 import { LoadingBar } from "@/components/ui/LoadingBar";
 import { ViewModeToggle } from "@/components/ui/ViewModeToggle";
+import { FadeModal } from "@/components/ui/FadeModal";
 import { FileItemActions } from "@/components/folders/FileItemActions";
 import { useViewMode } from "@/hooks/useViewMode";
 import {
@@ -59,7 +60,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
-  const [entityTag, setEntityTag] = useState("");
   const [ingestionProgress, setIngestionProgress] = useState<UploadProgress | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [previewFile, setPreviewFile] = useState<FilePreview | null>(null);
@@ -164,9 +164,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
     });
 
     try {
-      const skipIdentityPrompt = entityTag.trim().length > 0;
-      const tag = entityTag.trim().length > 0 ? entityTag : undefined;
-
       // Bounded parallel uploads: start multiple HTTP+ingest cycles at once.
       const settled = await mapWithConcurrency(
         filesToUpload,
@@ -178,7 +175,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
             return await uploadFileToFolderTracked(
               id,
               file,
-              tag,
+              undefined,
               (update) => {
                 ratios[index] = update.ratio;
                 phases[index] = update.phase;
@@ -233,7 +230,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
       const folderFiles = await getFilesInFolder(folder.name);
       setFiles(folderFiles);
 
-      if (!skipIdentityPrompt && uploadResults.length > 0) {
+      if (uploadResults.length > 0) {
         const imageUrlByPath = new Map(
           folderFiles
             .filter((file) => file.type.includes("image") && file.url)
@@ -464,14 +461,6 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
             </label>
           </div>
         </div>
-        <input
-          type="text"
-          placeholder="Tag osoby (opcjonalnie) — pomiń potwierdzenie tożsamości"
-          value={entityTag}
-          onChange={(e) => setEntityTag(e.target.value)}
-          className="input-field !min-h-10"
-          disabled={isUploading}
-        />
       </header>
 
       <div className="page-body">
@@ -509,7 +498,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
               <span className="text-right">Akcje</span>
             </div>
           ) : files.length > 0 ? (
-            <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+            <div className="flex items-center gap-2.5 border-b border-border bg-soft/60 px-4 py-2.5">
               <input
                 type="checkbox"
                 className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
@@ -517,7 +506,7 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
                 onChange={toggleSelectAll}
                 aria-label="Zaznacz wszystkie"
               />
-              <span className="text-xs text-ink-muted">Zaznacz wszystkie</span>
+              <span className="text-xs font-medium text-ink-muted">Zaznacz wszystkie</span>
             </div>
           ) : null}
 
@@ -625,70 +614,80 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
             ))
           ) : (
             <div className="item-grid">
-              {files.map((file) => (
-                <div
-                  key={file.id}
-                  className={`item-grid-card group ${
-                    selectedIds.has(file.id) ? "is-selected" : ""
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    className="item-grid-checkbox h-4 w-4 rounded border-border text-accent focus:ring-accent"
-                    checked={selectedIds.has(file.id)}
-                    onChange={() => toggleSelect(file.id)}
-                    aria-label={`Zaznacz ${file.name}`}
-                  />
-                  <button
-                    type="button"
-                    className="item-grid-icon"
-                    onClick={() => {
-                      if (file.type.includes("image") && file.url) {
-                        openFilePreview(file);
-                      }
-                    }}
-                    title={file.name}
+              {files.map((file) => {
+                const isImage = file.type.includes("image");
+                const canPreview = Boolean(file.url && (isImage || file.type.includes("pdf") || file.type.includes("text")));
+                return (
+                  <div
+                    key={file.id}
+                    className={`item-grid-card group ${
+                      selectedIds.has(file.id) ? "is-selected" : ""
+                    }`}
                   >
-                    {file.type.includes("image") && file.url ? (
-                      <img
-                        src={file.url}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    ) : file.type.includes("image") ? (
-                      <ImageIcon size={24} />
-                    ) : (
-                      <FileText size={24} />
-                    )}
-                  </button>
-                  {editingFileId === file.id ? (
-                    <div className="flex w-full items-center gap-1 rounded-[6px] border border-border-strong bg-surface-raised px-2 py-1">
-                      <input
-                        ref={editInputRef}
-                        type="text"
-                        value={editValue}
-                        onChange={(e) => setEditValue(e.target.value)}
-                        onKeyDown={handleFileKeyDown}
-                        onBlur={saveFileRename}
-                        className="min-w-0 flex-1 bg-transparent text-xs text-ink outline-none"
-                      />
+                    <div className="item-grid-thumb">
+                      <label className="item-grid-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(file.id)}
+                          onChange={() => toggleSelect(file.id)}
+                          aria-label={`Zaznacz ${file.name}`}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="item-grid-icon"
+                        onClick={() => {
+                          if (canPreview) openFilePreview(file);
+                        }}
+                        title={file.name}
+                        aria-label={
+                          canPreview ? `Otwórz podgląd ${file.name}` : file.name
+                        }
+                      >
+                        {isImage && file.url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={file.url} alt="" loading="lazy" />
+                        ) : isImage ? (
+                          <ImageIcon size={28} strokeWidth={1.6} aria-hidden />
+                        ) : (
+                          <FileText size={28} strokeWidth={1.6} aria-hidden />
+                        )}
+                      </button>
+                      <div className="item-grid-actions">
+                        <FileItemActions
+                          file={file}
+                          onRename={startEditingFile}
+                          onEmbeddings={openFileEmbeddings}
+                          onPreview={openFilePreview}
+                          compact
+                        />
+                      </div>
                     </div>
-                  ) : (
-                    <span className="item-grid-name" title={file.name}>
-                      {file.name}
-                    </span>
-                  )}
-                  <div className="item-grid-actions">
-                    <FileItemActions
-                      file={file}
-                      onRename={startEditingFile}
-                      onEmbeddings={openFileEmbeddings}
-                      onPreview={openFilePreview}
-                      compact
-                    />
+                    {editingFileId === file.id ? (
+                      <div className="flex w-full items-center gap-1 rounded-[var(--radius-sm)] border border-border-strong bg-surface-raised px-2 py-1.5">
+                        <input
+                          ref={editInputRef}
+                          type="text"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={handleFileKeyDown}
+                          onBlur={saveFileRename}
+                          className="min-w-0 flex-1 bg-transparent text-xs text-ink outline-none"
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        <span className="item-grid-name" title={file.name}>
+                          {file.name}
+                        </span>
+                        <span className="item-grid-meta">
+                          {isImage ? "Zdjęcie" : file.type.split("/").pop()?.toUpperCase() || "Plik"}
+                        </span>
+                      </>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -729,54 +728,37 @@ export default function FolderDetailPage({ params }: FolderDetailPageProps) {
         </div>
       )}
 
-      {showMoveModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="move-dialog-title"
-        >
-          <div className="w-full max-w-md overflow-hidden rounded-[14px] border border-border bg-surface-raised shadow-md">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h3 id="move-dialog-title" className="text-base font-semibold text-ink">
-                Przenieś do folderu
-              </h3>
+      <FadeModal
+        open={showMoveModal}
+        onClose={() => setShowMoveModal(false)}
+        variant="card"
+        title="Przenieś do folderu"
+        description="Wybierz folder docelowy dla zaznaczonych plików."
+        flush
+      >
+        {allFolders.filter((f) => f.id !== id).length === 0 ? (
+          <p className="px-3 py-8 text-center text-sm text-ink-muted">
+            Brak innych folderów docelowych.
+          </p>
+        ) : (
+          allFolders
+            .filter((f) => f.id !== id)
+            .map((f) => (
               <button
+                key={f.id}
                 type="button"
-                onClick={() => setShowMoveModal(false)}
-                className="btn-ghost p-1"
+                onClick={() => handleMoveFiles(f)}
+                className="modal-option !justify-start gap-3"
               >
-                <X size={18} />
+                <span className="sheet-action-icon">
+                  <FolderOpen size={16} />
+                </span>
+                <span className="min-w-0 flex-1 truncate font-semibold text-ink">{f.name}</span>
+                <ChevronRight size={16} className="shrink-0 text-ink-muted" />
               </button>
-            </div>
-            <div className="max-h-[60vh] overflow-y-auto p-2">
-              {allFolders
-                .filter((f) => f.id !== id)
-                .map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => handleMoveFiles(f)}
-                    className="flex w-full items-center justify-between rounded-[10px] px-3 py-2.5 text-left transition-colors hover:bg-accent-subtle/50"
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-accent-muted text-accent">
-                        <FolderOpen size={16} />
-                      </span>
-                      <span className="font-medium text-ink">{f.name}</span>
-                    </span>
-                    <ChevronRight size={16} className="text-ink-muted" />
-                  </button>
-                ))}
-              {allFolders.length <= 1 && (
-                <p className="px-4 py-8 text-center text-sm text-ink-muted">
-                  Brak innych folderów docelowych.
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+            ))
+        )}
+      </FadeModal>
 
       {previewFile && (
         <ImagePreview preview={previewFile} onClose={() => setPreviewFile(null)} />

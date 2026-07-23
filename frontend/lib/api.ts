@@ -432,13 +432,17 @@ export async function getMessagesForChat(chatId: string): Promise<Message[]> {
   }));
 }
 
-export async function sendMessage(chatId: string, content: string): Promise<Message> {
+export async function sendMessage(
+  chatId: string,
+  content: string,
+  folderIds: string[] = []
+): Promise<Message> {
   const response = await apiFetch(`${BASE_URL}/api/chat/${chatId}/send`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ message: content })
+    body: JSON.stringify({ message: content, folderIds })
   });
   
   if (!response.ok) {

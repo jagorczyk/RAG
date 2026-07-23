@@ -1,5 +1,6 @@
 package com.rag.rag.core.retrieval;
 
+import com.rag.rag.auth.security.CurrentUserService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -28,6 +30,7 @@ public class LexicalEmbeddingSearch {
     private static final Pattern SAFE_TOKEN = Pattern.compile("^[\\p{L}\\p{N}_./-]{2,64}$");
 
     private final JdbcTemplate jdbcTemplate;
+    private final CurrentUserService currentUserService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${rag.retrieval.lexical-max-results:40}")
@@ -49,25 +52,43 @@ public class LexicalEmbeddingSearch {
             return List.of();
         }
 
+        String tsQuery = tokens.stream()
+                .map(token -> token.replaceAll("[^\\p{L}\\p{N}_]", ""))
+                .filter(token -> !token.isBlank())
+                .map(token -> token + ":*")
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(" | "));
+        if (tsQuery.isBlank()) return List.of();
+
         StringBuilder sql = new StringBuilder("""
-                SELECT text, metadata::text AS metadata
+                SELECT text, metadata::text AS metadata,
+                       ts_rank_cd(
+                         to_tsvector('simple', LOWER(COALESCE(text, '') || ' ' ||
+                           COALESCE(metadata->>'filename', '') || ' ' || COALESCE(metadata->>'path', ''))),
+                         to_tsquery('simple', ?)
+                       ) AS lexical_rank
                 FROM embeddings
-                WHERE (
+                WHERE (to_tsvector('simple', LOWER(COALESCE(text, '') || ' ' ||
+                         COALESCE(metadata->>'filename', '') || ' ' || COALESCE(metadata->>'path', '')))
+                       @@ to_tsquery('simple', ?)
                 """);
         List<Object> params = new ArrayList<>();
+        params.add(tsQuery);
+        params.add(tsQuery);
         for (int i = 0; i < tokens.size(); i++) {
-            if (i > 0) {
-                sql.append(" OR ");
-            }
-            sql.append("(LOWER(COALESCE(text, '')) LIKE ?")
-                    .append(" OR LOWER(COALESCE(metadata->>'filename', '')) LIKE ?")
-                    .append(" OR LOWER(COALESCE(metadata->>'path', '')) LIKE ?)");
+            sql.append(" OR LOWER(COALESCE(metadata->>'filename', '')) LIKE ?")
+                    .append(" OR LOWER(COALESCE(metadata->>'path', '')) LIKE ?");
             String pattern = "%" + escapeLike(tokens.get(i).toLowerCase(Locale.ROOT)) + "%";
-            params.add(pattern);
             params.add(pattern);
             params.add(pattern);
         }
         sql.append(')');
+
+        UUID ownerId = currentUserService.findUserId().orElse(null);
+        if (ownerId != null) {
+            sql.append(" AND metadata->>'owner_id' = ?");
+            params.add(ownerId.toString());
+        }
 
         if (pathFilter != null && !pathFilter.isEmpty()) {
             // Exact paths use =; folder-style entries (trailing slash or no filename extension)
@@ -90,7 +111,7 @@ public class LexicalEmbeddingSearch {
             sql.append(')');
         }
 
-        sql.append(" LIMIT ?");
+        sql.append(" ORDER BY lexical_rank DESC LIMIT ?");
         params.add(Math.max(maxResults * 3, maxResults));
 
         try {

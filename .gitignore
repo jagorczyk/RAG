@@ -88,6 +88,7 @@ revert_listings.py
 # Local-only docs / samples (not on GitHub)
 # =========================
 *.md
+!/README.md
 !/AGENTS.md
 !/DESIGN.md
 !/frontend/AGENTS.md

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Image from "next/image";
 import { useInView } from "react-intersection-observer";
 import {
@@ -58,6 +59,25 @@ export function GalleryItem({
     mass: 0.55,
   });
 
+  /** Entrance 0→1 — spring always settles; cards fly in from depth. */
+  const intro = useSpring(reducedMotion ? 1 : 0, {
+    stiffness: 100,
+    damping: 20,
+    mass: 0.7,
+  });
+
+  useEffect(() => {
+    if (reducedMotion) {
+      intro.jump(1);
+      return;
+    }
+    intro.jump(0);
+    const timer = window.setTimeout(() => {
+      intro.set(1);
+    }, 50 + index * 45);
+    return () => window.clearTimeout(timer);
+  }, [index, intro, reducedMotion]);
+
   const isSelected = selectedId === photo.id;
   const isDimmed = selectedId !== null && !isSelected;
   const widthPx = Math.round(200 * photo.size);
@@ -69,56 +89,76 @@ export function GalleryItem({
       const depthFade = 1 + Math.max(0, -relZ) * 0.00012;
       const parallax =
         (px as number) * (26 + photo.depth * 38) * (ds as number);
-      return photo.x * (ds as number) * depthFade + parallax + (h as number) * (px as number) * 6;
+      return (
+        photo.x * (ds as number) * depthFade +
+        parallax +
+        (h as number) * (px as number) * 6
+      );
     }
   );
 
   const y = useTransform(
-    [cameraZ, pointerY, depthScale, hover],
-    ([cz, py, ds, h]) => {
+    [cameraZ, pointerY, depthScale, hover, intro],
+    ([cz, py, ds, h, i]) => {
       const relZ = wrapRelative(photo.z - (cz as number), GALLERY_TUNNEL);
       const depthFade = 1 + Math.max(0, -relZ) * 0.0001;
       const parallax =
         (py as number) * (20 + photo.depth * 32) * (ds as number);
-      return photo.y * (ds as number) * depthFade + parallax + (h as number) * -16;
+      const base =
+        photo.y * (ds as number) * depthFade +
+        parallax +
+        (h as number) * -16;
+      return base + (1 - (i as number)) * 20;
     }
   );
 
-  const z = useTransform([cameraZ, depthScale, hover], ([cz, ds, h]) => {
-    const relZ = wrapRelative(photo.z - (cz as number), GALLERY_TUNNEL);
-    // Clamp so perspective never blows cards to multi-thousand-px boxes
-    const clamped = Math.max(-900, Math.min(280, relZ));
-    return clamped * (ds as number) + (h as number) * 32;
-  });
+  const z = useTransform(
+    [cameraZ, depthScale, hover, intro],
+    ([cz, ds, h, i]) => {
+      const relZ = wrapRelative(photo.z - (cz as number), GALLERY_TUNNEL);
+      const clamped = Math.max(-900, Math.min(280, relZ));
+      const settled = clamped * (ds as number) + (h as number) * 32;
+      return settled + (1 - (i as number)) * -280;
+    }
+  );
 
   const zDimmed = useTransform(z, (vz) => vz - 160);
 
   const rotateX = useTransform(
-    [pointerY, hover, depthScale],
-    ([py, h, ds]) =>
+    [pointerY, hover, depthScale, intro],
+    ([py, h, ds, i]) =>
       photo.rotateX * (ds as number) +
       (py as number) * -9 * photo.depth +
-      (h as number) * -4
+      (h as number) * -4 +
+      (1 - (i as number)) * 6
   );
 
   const rotateY = useTransform(
-    [pointerX, hover, depthScale],
-    ([px, h, ds]) =>
+    [pointerX, hover, depthScale, intro],
+    ([px, h, ds, i]) =>
       photo.rotateY * (ds as number) +
       (px as number) * 11 * photo.depth +
-      (h as number) * 5
+      (h as number) * 5 +
+      (1 - (i as number)) * (index % 2 === 0 ? -8 : 8)
   );
 
   const rotateZ = useTransform(hover, (h) => photo.rotateZ + h * 1.2);
-  const scale = useTransform(hover, (h) => 1 + h * 0.055);
 
-  const opacity = useTransform(cameraZ, (cz) => {
-    const relZ = wrapRelative(photo.z - cz, GALLERY_TUNNEL);
-    if (relZ < -980) return 0;
-    if (relZ < -560) return (relZ + 980) / 420;
-    if (relZ > 420) return 0;
-    if (relZ > 160) return 1 - (relZ - 160) / 260;
-    return 1;
+  const scale = useTransform([hover, intro], ([h, i]) => {
+    const hoverScale = 1 + (h as number) * 0.055;
+    return hoverScale * (0.72 + 0.28 * (i as number));
+  });
+
+  const opacity = useTransform([cameraZ, intro], ([cz, i]) => {
+    const relZ = wrapRelative(photo.z - (cz as number), GALLERY_TUNNEL);
+    let base = 1;
+    if (relZ < -980) base = 0;
+    else if (relZ < -560) base = (relZ + 980) / 420;
+    else if (relZ > 420) base = 0;
+    else if (relZ > 160) base = 1 - (relZ - 160) / 260;
+    // Floor at 0.05 so cards never fully vanish if spring stalls mid-frame
+    const enter = 0.05 + 0.95 * (i as number);
+    return base * enter;
   });
 
   const blurPx = useTransform(cameraZ, (cz) => {

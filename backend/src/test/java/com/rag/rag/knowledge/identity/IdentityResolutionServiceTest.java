@@ -9,6 +9,7 @@ import com.rag.rag.knowledge.entity.EntityMention;
 import com.rag.rag.knowledge.entity.IdentityEvidenceSource;
 import com.rag.rag.knowledge.entity.KnowledgeEntity;
 import com.rag.rag.knowledge.entity.MentionStatus;
+import com.rag.rag.knowledge.fact.Fact;
 import com.rag.rag.knowledge.repository.EntityAliasRepository;
 import com.rag.rag.knowledge.repository.EntityMentionRepository;
 import com.rag.rag.knowledge.repository.FaceEmbeddingRepository;
@@ -422,6 +423,31 @@ class IdentityResolutionServiceTest {
         assertEquals(MentionStatus.CONFIRMED, sourceMention.getStatus());
         verify(entityRepository).delete(source);
         verify(faceEmbeddingRepository).relinkEntity(sourceId, target);
+    }
+
+    @Test
+    void assigningSubjectIdentityDoesNotRewriteItsUnlinkedObjectIntoSelfRelation() {
+        UUID mentionId = UUID.randomUUID();
+        EntityMention mention = EntityMention.builder()
+                .id(mentionId)
+                .label("person 2")
+                .entityType("PERSON")
+                .filePath("dir://photo.jpeg")
+                .build();
+        Fact spatialFact = Fact.builder()
+                .id(UUID.randomUUID())
+                .mention(mention)
+                .action("obok")
+                .object("person 2")
+                .filePath("dir://photo.jpeg")
+                .build();
+        when(mentionRepository.findById(mentionId)).thenReturn(Optional.of(mention));
+        when(factRepository.findByFilePath("dir://photo.jpeg")).thenReturn(List.of(spatialFact));
+
+        service.afterMentionIdentityAssigned(mentionId, null, "Mario");
+
+        assertEquals("person 2", spatialFact.getObject());
+        verify(factRepository, never()).save(spatialFact);
     }
 
     @Test

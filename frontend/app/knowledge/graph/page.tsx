@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Network } from "lucide-react";
+import { Loader2, Network, CloudOff, UserRound } from "lucide-react";
 import { getPersonRelationGraph, PersonRelationGraph as GraphData } from "@/lib/knowledge-api";
 import { PersonRelationGraph } from "@/components/knowledge/PersonRelationGraph";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -75,7 +75,7 @@ export default function PersonGraphPage() {
           </div>
         ) : error ? (
           <EmptyState
-            icon="☁️"
+            icon={<CloudOff size={22} aria-hidden />}
             title="Nie udało się wczytać mapy"
             description={error}
             action={
@@ -86,7 +86,7 @@ export default function PersonGraphPage() {
           />
         ) : graph && graph.nodes.length === 0 ? (
           <EmptyState
-            icon="👤"
+            icon={<UserRound size={22} aria-hidden />}
             title="Brak nazwanych osób"
             description="Dodaj i potwierdź tożsamości na zdjęciach, aby zobaczyć mapę relacji."
             action={

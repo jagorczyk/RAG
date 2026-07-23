@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { Gallery } from "@/components/gallery";
 import { LandingHeroVisual } from "@/components/auth/LandingHeroVisual";
+import { CognifaceLogo } from "@/components/brand/CognifaceLogo";
 
 type AuthLandingProps = {
   title: string;
@@ -24,17 +24,10 @@ export function AuthLanding({ title, subtitle, children, footer }: AuthLandingPr
       </div>
 
       <div className="flex min-h-0 w-full flex-1 flex-col justify-center overflow-y-auto px-5 py-8 sm:px-8 lg:max-w-[42%] lg:px-12 xl:px-16">
-        <div className="mx-auto w-full max-w-md">
+        <div className="mx-auto w-full max-w-md [animation:fade-in_0.35s_var(--ease-out)]">
           <div className="mb-8">
             <div className="mb-5 flex items-center gap-3">
-              <Image
-                src="/logo_rag.png"
-                alt=""
-                width={40}
-                height={40}
-                className="h-10 w-10 object-contain"
-                priority
-              />
+              <CognifaceLogo className="h-10 w-10 text-accent" />
               <p className="font-display text-2xl font-bold tracking-tight text-ink">
                 Cogniface
               </p>

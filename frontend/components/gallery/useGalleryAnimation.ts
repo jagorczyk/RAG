@@ -25,6 +25,8 @@ type Options = {
   reducedMotion?: boolean;
   /** Cruise speed in world units / second (positive = fly toward viewer). */
   cruiseSpeed?: number;
+  /** Hold camera still while cards fly into place (ms). */
+  introHoldMs?: number;
 };
 
 const FRICTION = 0.925;
@@ -46,11 +48,12 @@ export function useGalleryAnimation({
   enabled = true,
   reducedMotion = false,
   cruiseSpeed = 72,
+  introHoldMs = 1100,
 }: Options): GalleryAnimationApi {
   const [stage, setStage] = useState<HTMLElement | null>(null);
 
   const cameraZ = useMotionValue(0);
-  const velocity = useMotionValue(cruiseSpeed);
+  const velocity = useMotionValue(0);
   const depthScale = useMotionValue(1);
   const isDragging = useMotionValue(0);
 
@@ -70,8 +73,9 @@ export function useGalleryAnimation({
     null
   );
   const userUntilRef = useRef(0);
-  const velRef = useRef(cruiseSpeed);
+  const velRef = useRef(0);
   const camRef = useRef(0);
+  const cruiseStartRef = useRef(0);
 
   const consumeDragGuard = useCallback(() => {
     const moved = didDragRef.current;
@@ -112,9 +116,11 @@ export function useGalleryAnimation({
     }
 
     let alive = true;
-    lastTsRef.current = performance.now();
-    velRef.current = cruiseSpeed;
-    velocity.set(cruiseSpeed);
+    const startedAt = performance.now();
+    lastTsRef.current = startedAt;
+    cruiseStartRef.current = startedAt + introHoldMs;
+    velRef.current = 0;
+    velocity.set(0);
 
     const tick = (now: number) => {
       if (!alive) return;
@@ -122,11 +128,13 @@ export function useGalleryAnimation({
       lastTsRef.current = now;
 
       const userActive = draggingRef.current || now < userUntilRef.current;
+      const introDone = now >= cruiseStartRef.current;
 
       if (!userActive) {
-        // Ease velocity back toward cruise (spring-like lerp)
-        const target = cruiseSpeed;
-        velRef.current += (target - velRef.current) * Math.min(1, dt * 2.4);
+        const target = introDone ? cruiseSpeed : 0;
+        // Ease into cruise after intro hold
+        const ease = introDone ? Math.min(1, dt * 2.4) : Math.min(1, dt * 3.2);
+        velRef.current += (target - velRef.current) * ease;
       } else if (!draggingRef.current) {
         // Coast with friction after gesture
         velRef.current *= Math.pow(FRICTION, dt * 60);
@@ -146,7 +154,7 @@ export function useGalleryAnimation({
       alive = false;
       cancelAnimationFrame(rafRef.current);
     };
-  }, [cameraZ, cruiseSpeed, enabled, itemCount, reducedMotion, velocity]);
+  }, [cameraZ, cruiseSpeed, enabled, introHoldMs, itemCount, reducedMotion, velocity]);
 
   useEffect(() => {
     if (!stage || !enabled || reducedMotion) return;

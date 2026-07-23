@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Collection;
 import java.util.UUID;
 
 @Repository
@@ -15,6 +16,9 @@ public interface EntityMentionRepository extends JpaRepository<EntityMention, UU
 
     @EntityGraph(attributePaths = "entity")
     List<EntityMention> findByFilePath(String filePath);
+
+    @EntityGraph(attributePaths = "entity")
+    List<EntityMention> findByFilePathIn(Collection<String> filePaths);
 
     @EntityGraph(attributePaths = "entity")
     List<EntityMention> findByEntityId(UUID entityId);

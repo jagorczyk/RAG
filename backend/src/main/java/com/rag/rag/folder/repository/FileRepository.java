@@ -18,6 +18,8 @@ public interface FileRepository extends JpaRepository<FileEntity, Long> {
 
     Optional<FileEntity> findByPathAndOwnerId(String path, UUID ownerId);
 
+    List<FileEntity> findAllByPathInAndOwnerId(List<String> paths, UUID ownerId);
+
     List<FileEntity> findAllByOwnerId(UUID ownerId);
 
     @Query("""

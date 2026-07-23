@@ -153,6 +153,7 @@ class CanonicalEmbeddingRefreshServiceTest {
                 .entity(person)
                 .label("person 1")
                 .entityType("PERSON")
+                .status(MentionStatus.CONFIRMED)
                 .build();
         FileEntity file = FileEntity.builder()
                 .fileName("x.jpg")

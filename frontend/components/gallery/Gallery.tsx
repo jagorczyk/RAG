@@ -14,13 +14,19 @@ type GalleryProps = {
   embedded?: boolean;
   /** Unique prefix so desktop + mobile instances don't clash on layoutId. */
   instanceId?: string;
+  /** Pause RAF flight (e.g. while phone hero is visible). */
+  animationPaused?: boolean;
 };
+
+const SURFACE_BG =
+  "radial-gradient(ellipse 58% 48% at 50% 44%, rgba(219,226,239,0.55) 0%, transparent 72%), linear-gradient(180deg, #F9F7F7 0%, #F3F1F1 100%)";
 
 export function Gallery({
   photos = GALLERY_PHOTOS,
   className = "",
   embedded = true,
   instanceId = "main",
+  animationPaused = false,
 }: GalleryProps) {
   const reducedMotionPref = useReducedMotion();
   const reduced = reducedMotionPref === true;
@@ -34,8 +40,8 @@ export function Gallery({
 
   const animation = useGalleryAnimation({
     itemCount: photos.length,
-    enabled: mounted && selectedId === null && !reduced,
-    reducedMotion: reduced || !mounted,
+    enabled: mounted && selectedId === null && !reduced && !animationPaused,
+    reducedMotion: reduced || !mounted || animationPaused,
   });
 
   const close = useCallback(() => setSelectedId(null), []);
@@ -61,16 +67,10 @@ export function Gallery({
   if (!mounted) {
     return (
       <div
-        className={`relative h-full min-h-[220px] w-full overflow-hidden bg-[#F4F1EE] ${className}`}
+        className={`relative h-full min-h-[220px] w-full overflow-hidden bg-surface ${className}`}
         aria-hidden
       >
-        <div
-          className="absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(ellipse 58% 48% at 50% 44%, rgba(231,238,247,0.96) 0%, transparent 72%), linear-gradient(180deg, #F9F7F7 0%, #EDE8E3 100%)",
-          }}
-        />
+        <div className="absolute inset-0" style={{ background: SURFACE_BG }} />
       </div>
     );
   }
@@ -78,7 +78,7 @@ export function Gallery({
   if (reduced) {
     return (
       <div
-        className={`relative h-full min-h-[220px] w-full overflow-y-auto bg-[#F4F1EE] ${className}`}
+        className={`relative h-full min-h-[220px] w-full overflow-y-auto bg-surface ${className}`}
       >
         <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
           {photos.slice(0, 8).map((photo, index) => (
@@ -109,17 +109,14 @@ export function Gallery({
   return (
     <LayoutGroup id={`gallery-${instanceId}`}>
       <div
-        className={`relative h-full min-h-[220px] w-full overflow-hidden bg-[#F4F1EE] touch-none select-none ${className}`}
+        className={`relative h-full min-h-[220px] w-full overflow-hidden bg-surface touch-none select-none ${className}`}
         ref={animation.bindStage}
         role="region"
         aria-label="Galeria zdjęć 3D. Przewiń lub przeciągnij, aby przelecieć między zdjęciami. Kliknij, aby powiększyć."
       >
         <div
           className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(ellipse 58% 48% at 50% 44%, rgba(231,238,247,0.96) 0%, transparent 72%), linear-gradient(180deg, #F9F7F7 0%, #EDE8E3 100%)",
-          }}
+          style={{ background: SURFACE_BG }}
         />
         <div
           className="pointer-events-none absolute left-1/2 top-[40%] h-[58%] w-[72%] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-55 blur-3xl"
@@ -176,19 +173,10 @@ export function Gallery({
           </div>
         </div>
 
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-14 bg-gradient-to-r from-[#F4F1EE] to-transparent lg:w-20" />
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-14 bg-gradient-to-l from-[#F4F1EE] to-transparent lg:w-20" />
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-[#F4F1EE] to-transparent" />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#F4F1EE] to-transparent" />
-
-        <div
-          data-gallery-chrome
-          className="pointer-events-none absolute bottom-5 left-0 right-0 z-20 flex flex-col items-center gap-2"
-        >
-          <p className="rounded-full border border-white/50 bg-white/35 px-3.5 py-1.5 text-[0.68rem] font-semibold tracking-[0.06em] text-[#4A6B8A] shadow-[0_8px_24px_rgba(17,45,78,0.08)] backdrop-blur-md">
-            Przelot przez bibliotekę
-          </p>
-        </div>
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-14 bg-gradient-to-r from-surface to-transparent lg:w-20" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-14 bg-gradient-to-l from-surface to-transparent lg:w-20" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-14 bg-gradient-to-b from-surface to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-surface to-transparent" />
 
         <GalleryLightbox
           photo={selected}

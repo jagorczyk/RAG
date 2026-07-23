@@ -20,6 +20,9 @@ public interface FactRepository extends JpaRepository<Fact, UUID> {
     @EntityGraph(attributePaths = {"mention", "mention.entity", "targetMention", "targetMention.entity"})
     List<Fact> findByFilePath(String filePath);
 
+    @EntityGraph(attributePaths = {"mention", "mention.entity", "targetMention", "targetMention.entity"})
+    List<Fact> findByFilePathIn(Collection<String> filePaths);
+
     @Modifying
     @Query("DELETE FROM Fact f WHERE f.mention.id IN :mentionIds OR f.targetMention.id IN :mentionIds")
     void deleteByMentionIds(@Param("mentionIds") Collection<UUID> mentionIds);

@@ -29,7 +29,7 @@ public class ClaimAnswerComposer {
     /** Keep answers short — avoid five near-duplicate appearance lines. */
     public static final int MAX_CLAIM_SENTENCES = 3;
 
-    @Qualifier("chatLanguageModel")
+    @Qualifier("structuredControlLanguageModel")
     private final ChatLanguageModel chatModel;
     private final ObjectMapper objectMapper = new ObjectMapper();
 

@@ -17,16 +17,12 @@ export function SheetAction({
     <button
       type="button"
       onClick={onClick}
-      className="flex min-h-[var(--touch-min)] w-full items-center gap-3.5 py-2 text-left transition-opacity active:opacity-55"
+      className={`sheet-action ${destructive ? "sheet-action-destructive" : ""}`}
     >
-      <span className={destructive ? "text-error" : "text-ink"} aria-hidden>
+      <span className="sheet-action-icon" aria-hidden>
         {icon}
       </span>
-      <span
-        className={`text-base font-bold ${destructive ? "text-error" : "text-ink"}`}
-      >
-        {label}
-      </span>
+      <span className="sheet-action-label">{label}</span>
     </button>
   );
 }

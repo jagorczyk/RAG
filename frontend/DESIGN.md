@@ -5,7 +5,9 @@ Przed edycją layoutu, stylów, routingu lub ekranów **przeczytaj ten plik w ca
 Kontrakt produktowy (retrieval, źródła, język odpowiedzi) pozostaje w root [`AGENTS.md`](../AGENTS.md).
 Konwencje Next.js: [`AGENTS.md`](./AGENTS.md).
 
-Ten dokument zastępuje Quiet Archive (monochrome). Nie wracaj do `#000` / `#fff` jako accent/surface bez jawnej decyzji użytkownika.
+Ten dokument łączy paletę Cogniface (accent `#3F72AF`, logo-maska) z **stoickim layoutem
+SDS** z Figmy (białe powierzchnie, szare bordery, spokojny chat). Nie wracaj do Quiet Archive
+bez jawnej decyzji użytkownika.
 
 Nazwa produktu w UI: **Cogniface**.
 
@@ -15,7 +17,7 @@ Nazwa produktu w UI: **Cogniface**.
 
 Aplikacja to prywatna biblioteka zdjęć z czatem GraphRAG: użytkownik przegląda foldery i osoby, pyta po polsku o treść zdjęć i dostaje krótką, pewną odpowiedź ze źródłami — bez halucynacji tożsamości i bez ścieżek plików w treści wiadomości.
 
-Sukces UX: spokojny, czytelny interfejs w palecie navy/blue; landing z żywym kolażem; sidebar z jasną hierarchią; konwersacja z panelem źródeł i osób przytoczonych.
+Sukces UX: stoicki, jasny interfejs Cogniface (navy ink, soft surface, accent `#3F72AF`); landing z kolażem; sidebar z wyszukiwaniem rozmów i avatarem; konwersacja z bubblami użytkownika + maską przy odpowiedziach AI.
 
 ---
 
@@ -38,22 +40,33 @@ Czytaj lokalne docs Next w `node_modules/next/dist/docs/` przed nietypowymi API.
 
 ### Paleta główna
 
-| Rola | Hex | Token CSS (mapowanie) |
-|------|-----|------------------------|
-| Tło app / soft | `#F9F7F7` | `--surface`, `--soft`, `--on-accent` |
-| Sidebar / miękkie ramki | `#DBE2EF` | `--sidebar`, delikatne bordery / chipy |
-| Accent (CTA, aktywny nav, focus) | `#3F72AF` | `--accent`, `--accent-hover` (ciemniejszy navy-blue) |
-| Tekst / ikony | `#112D4E` | `--ink` |
+| Rola | Hex | Token CSS |
+|------|-----|-----------|
+| Tekst (ink) | `#112D4E` | `--ink` |
+| Tekst muted | `#4A6B8A` | `--ink-muted` |
+| Tło app | `#F9F7F7` | `--surface` |
+| Karty / panele | `#FFFFFF` | `--surface-raised` |
+| Soft / hover | `#EEF2F7` | `--soft` |
+| Border | `#DBE2EF` | `--border` |
+| Accent | `#3F72AF` | `--accent` / `--accent-hover` `#2E5A8F` |
 
-### Tokeny pochodne (sugerowane)
+### Skala i rytm
+
+- Spacing: 8px (`--space-1`…`--space-10`).
+- Radius: `--radius-sm` 8 → `--radius-xl` 20.
+- Typografia: Bricolage (display) + Manrope (UI); skala `--text-xs`…`--text-display`.
+- Motion: `--duration-fast` 120ms / `--duration` 180ms / sheet 240ms; `ease-out` / `ease-out-expo`.
+- Avatary: inicjały lub prawdziwe zdjęcia twarzy (`Avatar`) — bez generatorów ludzików.
+
+### Tokeny semantyczne
 
 ```
 --ink:            #112D4E
 --ink-muted:      #3F72AF @ ~70% mieszane z #112D4E  → ok. #4A6B8A
 --surface:        #F9F7F7
 --surface-raised: #FFFFFF          /* karty / panele uniesione nad soft */
---sidebar:        #DBE2EF
---soft:           #F9F7F7
+--sidebar:        #FFFFFF
+--soft:           #EEF2F7
 --border:         #DBE2EF
 --border-strong:  #3F72AF @ 35%
 --accent:         #3F72AF
@@ -93,7 +106,8 @@ Skala orientacyjna: display ~2rem / 700; headline ~1.25rem / 650; title ~1.0625r
 
 ### Logo / marka
 
-Hero-level brand na landingu (nazwa produktu + logo z `public/`). W app shell logo w górze sidebara, bez przejmowania hierarchii treści.
+Marka: **grecka stoicka maska frontalnie** (SVG `currentColor`) w accent `#3F72AF` — komponent `CognifaceLogo`, asset `public/logo-cogniface.svg`.
+Hero-level brand na landingu (nazwa + logo). W app shell logo w górze sidebara, bez przejmowania hierarchii treści.
 
 ---
 
@@ -134,7 +148,7 @@ Mobile: kolaż jako krótki header / tło pod panelem albo ukryty za panelem —
 
 ### Kolaż (lewa)
 
-- **Desktop — `LandingHeroVisual`**: naprzemiennie **galeria 3D** i **frontalny fotorealistyczny iPhone** (`PhoneInHand`, mockup rysowany w CSS), z płynnym crossfade + scale (~1s). Faza telefonu: prosto z przodu, bez ręki i bez dodatkowego tła studia — tylko `bg-surface` + UI Cogniface w otworze ekranu.
+- **Desktop — `LandingHeroVisual`**: naprzemiennie **galeria 3D** i **frontalny iPhone 14 Pro** (`PhoneInHand`, ramka Space Black z Figma → `public/iphone-mockup/iphone-14-pro-space-black.png` nad UI w otworze ekranu), z płynnym crossfade (~0.55s). Faza telefonu: prosto z przodu, bez ręki — `bg-surface` + UI Cogniface w punch-through ramki.
 - **Galeria 3D — lot przez przestrzeń**: każde zdjęcie ma własną pozycję (`translateX/Y/Z` + `rotateX/Y/Z`) w tunelu z `perspective` / `preserve-3d`; kamera (RAF) leci wzdłuż Z z cruise, inertią wheel/drag i springiem.
 - Mouse parallax (desktop `pointer: fine`): tilt warstw z różną głębokością; hover = lift + scale + soft shadow.
 - Klik → shared layout fullscreen (`GalleryLightbox`); pozostałe kadry: blur, opacity ~30%, cofnięcie w Z.
@@ -190,10 +204,11 @@ Hierarchia (desktop rail):
 └─────────────────────┘
 ```
 
-- Aktywny item: accent `#3F72AF` (tło subtle lub indicator), nie czarny pasek.
+- Aktywny item: tło `--accent-muted`, tekst `--accent` (nie czarny pasek).
 - Grupowanie czatów: Dzisiaj / Ostatnie 7 dni / Starsze (zachować logikę z `Sidebar.tsx`).
-- Wylogowanie: w `/settings` lub menu profilu na dole — nie jako główny nav u góry.
-- Collapse sidebara na desktop OK; na mobile drawer + **MobileTabBar**: Biblioteka | Osoby | Rozmowy. Profil/ustawienia z dołu sidebara / overflow.
+- Profil: inicjały z e-maila + e-mail.
+- Wylogowanie: w `/settings` — nie jako główny nav u góry.
+- Collapse sidebara na desktop OK; na mobile drawer + **MobileTabBar**: Biblioteka | Osoby | Rozmowy.
 
 ---
 

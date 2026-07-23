@@ -3,6 +3,7 @@ package com.rag.rag.knowledge.extraction;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rag.rag.core.text.Utf8MojibakeRepair;
 import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.UserMessage;
@@ -40,7 +41,10 @@ public class StructuredVisionExtractor {
                 The image contains magenta face boxes labelled with these technical ids: %s.
                 For every PERSON whose face is inside a labelled box, copy that exact id to face_anchor_id.
                 Never attach an id to another participant and never invent an id. Keep labels such as person 1;
-                face_anchor_id is a separate technical field. Write all natural-language observations in Polish.
+                face_anchor_id is a separate technical field. The boxes and their ids are annotations, not
+                content visible in the original image. Never put them in scene, scene_summary, visible_texts,
+                nearby_text, actions, objects, relations, background or visual_cues. Write all natural-language
+                observations in Polish.
                 """.formatted(faceAnchors);
         UserMessage message = UserMessage.from(
                 TextContent.from(structuredPrompt + anchorInstruction),
@@ -52,7 +56,7 @@ public class StructuredVisionExtractor {
 
         ExtractionResult parsed = parseResponse(responseText);
         if (parsed.isStructured()) {
-            return parsed;
+            return sanitize(parsed, faceAnchors);
         }
         // One shorter retry — models sometimes wrap prose around JSON on the first attempt.
         log.warn("Vision JSON parse failed; retrying with compact instruction");
@@ -62,26 +66,38 @@ public class StructuredVisionExtractor {
                         {"entities":[{"label":"person 1","type":"PERSON","actions":[],"objects":[],"nearby_objects":[],
                         "visual_cues":[],"bbox":[]}],"relations":[],"scene":"","scene_summary":"",
                         "background":[],"setting":"","lighting":"","visible_texts":[]}
-                        Describe the image exhaustively in Polish field values. Face anchors: %s
+                        Describe the image exhaustively in Polish field values. Face anchors: %s.
+                        Face anchors and magenta boxes are technical annotations. Put an anchor only in
+                        face_anchor_id; never describe it as scene content or visible text.
                         """.formatted(faceAnchors == null ? Set.of() : faceAnchors)),
                 ImageContent.from(base64Image, normalizeImageMimeType(mimeType))
         );
         String retryText = visionModel.generate(retry).content().text();
         ExtractionResult retryParsed = parseResponse(retryText);
         if (retryParsed.isStructured()) {
-            return retryParsed;
+            return sanitize(retryParsed, faceAnchors);
         }
         // Prefer the longer raw text for embedding fallback.
-        String raw = responseText != null && responseText.length() >= (retryText == null ? 0 : retryText.length())
-                ? responseText : retryText;
-        return new ExtractionResult(null, raw, false);
+        String firstRaw = parsed.rawText();
+        String retryRaw = retryParsed.rawText();
+        String raw = firstRaw != null && firstRaw.length() >= (retryRaw == null ? 0 : retryRaw.length())
+                ? firstRaw : retryRaw;
+        return new ExtractionResult(null,
+                VisionTechnicalArtifactSanitizer.sanitizeFallbackText(raw, faceAnchors), false);
+    }
+
+    private ExtractionResult sanitize(ExtractionResult result, Set<String> faceAnchors) {
+        VisionResultDto sanitized = VisionTechnicalArtifactSanitizer.sanitize(
+                result.resultDto(), faceAnchors == null ? Set.of() : faceAnchors);
+        return new ExtractionResult(sanitized, result.rawText(), true);
     }
 
     private ExtractionResult parseResponse(String text) {
         if (text == null || text.isBlank()) {
             return new ExtractionResult(null, text, false);
         }
-        String jsonContent = extractJsonObject(text);
+        String normalizedText = Utf8MojibakeRepair.repair(text);
+        String jsonContent = extractJsonObject(normalizedText);
         VisionResultDto dto = tryReadDto(jsonContent);
         if (dto == null) {
             String repaired = repairCommonVisionJsonErrors(jsonContent);
@@ -91,11 +107,11 @@ public class StructuredVisionExtractor {
             }
         }
         if (dto == null) {
-            log.warn("Failed to parse vision response to JSON (raw len={})", text.length());
-            return new ExtractionResult(null, text, false);
+            log.warn("Failed to parse vision response to JSON (raw len={})", normalizedText.length());
+            return new ExtractionResult(null, normalizedText, false);
         }
         // Accept even if entities empty but scene_summary present — still useful graph/embed text.
-        return new ExtractionResult(dto, text, true);
+        return new ExtractionResult(dto, normalizedText, true);
     }
 
     private VisionResultDto tryReadDto(String jsonContent) {
@@ -108,7 +124,7 @@ public class StructuredVisionExtractor {
     }
 
     /** Prefer fenced ```json, else first balanced {...} object. */
-    static String extractJsonObject(String text) {
+    public static String extractJsonObject(String text) {
         if (text == null) {
             return "{}";
         }
@@ -145,7 +161,7 @@ public class StructuredVisionExtractor {
      * That yields invalid JSON and historically marked graph_projection FAILED
      * even though vision_analysis_status stayed COMPLETED.
      */
-    static String repairCommonVisionJsonErrors(String json) {
+    public static String repairCommonVisionJsonErrors(String json) {
         if (json == null || json.isBlank()) {
             return json == null ? "" : json;
         }
@@ -156,6 +172,8 @@ public class StructuredVisionExtractor {
         fixed = fixed.replaceAll(
                 "(\\])\\s*\\}\\s*,\\s*\"(face_anchor_id|visual_cues|nearby_objects|nearby_text|actions|objects)\"\\s*:",
                 "$1,\"$2\":");
+        // A following entity sometimes loses its opening `{`: `},"label":...`.
+        fixed = fixed.replaceAll("}\\s*,\\s*\"label\"\\s*:", "},{\"label\":");
         // Trailing commas before } or ]
         fixed = fixed.replaceAll(",\\s*}", "}");
         fixed = fixed.replaceAll(",\\s*]", "]");

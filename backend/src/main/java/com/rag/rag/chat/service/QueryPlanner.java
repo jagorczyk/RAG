@@ -6,6 +6,7 @@ import com.rag.rag.knowledge.graph.GraphQueryService;
 import com.rag.rag.knowledge.graph.EntityMatchMode;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -22,20 +23,32 @@ import java.util.Locale;
 @Component
 public class QueryPlanner {
     private static final int MAX_KNOWN_PEOPLE_IN_PROMPT = 80;
+    private static final int MAX_KNOWN_FOLDERS_IN_PROMPT = 100;
 
     private final GraphQueryService graphQueryService;
     private final ChatLanguageModel chatModel;
+    private final LibraryScopeService libraryScopeService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Autowired
     public QueryPlanner(GraphQueryService graphQueryService,
-                        @Qualifier("chatLanguageModel") ChatLanguageModel chatModel) {
+                        @Qualifier("structuredControlLanguageModel") ChatLanguageModel chatModel,
+                        LibraryScopeService libraryScopeService) {
         this.graphQueryService = graphQueryService;
         this.chatModel = chatModel;
+        this.libraryScopeService = libraryScopeService;
+    }
+
+    /** Compatibility constructor used by focused planner unit tests. */
+    public QueryPlanner(GraphQueryService graphQueryService, ChatLanguageModel chatModel) {
+        this(graphQueryService, chatModel, null);
     }
 
     public QueryPlan plan(String question, String conversationContext) {
         String safeQuestion = question == null ? "" : question.trim();
         List<String> knownEntities = graphQueryService.availableEntityNames();
+        List<String> knownFolders = libraryScopeService == null
+                ? List.of() : libraryScopeService.availableFolderNames();
         QueryPlan fallback = enrichedFallback(safeQuestion, knownEntities);
         if (chatModel == null || safeQuestion.isBlank()) {
             return fallback;
@@ -46,6 +59,10 @@ public class QueryPlanner {
                     ? knownEntities.toString()
                     : knownEntities.subList(0, MAX_KNOWN_PEOPLE_IN_PROMPT) + " … (+"
                     + (knownEntities.size() - MAX_KNOWN_PEOPLE_IN_PROMPT) + ")";
+            String foldersForPrompt = knownFolders.size() <= MAX_KNOWN_FOLDERS_IN_PROMPT
+                    ? knownFolders.toString()
+                    : knownFolders.subList(0, MAX_KNOWN_FOLDERS_IN_PROMPT) + " … (+"
+                    + (knownFolders.size() - MAX_KNOWN_FOLDERS_IN_PROMPT) + ")";
             String response = chatModel.generate("""
                     Jesteś planerem retrieval dla biblioteki zdjęć i dokumentów (GraphRAG). Zwróć wyłącznie JSON.
                     Nie używaj zamkniętej listy fraz, kolorów, ubrań ani czynności w kodzie aplikacji —
@@ -55,6 +72,7 @@ public class QueryPlanner {
                     Tryby (dokładnie jeden):
                     - GRAPH: pytanie o ludzi (kim są, współobecność, relacje, ubiór/czynności z grafu).
                       entities = kanoniczne imiona z listy znanych osób (mianownik, np. Olek nie Olka).
+                      Dla ogólnego pytania o ludzi w całej bibliotece GRAPH może mieć puste entities i fileScope.
                       Zwierzęta i same obiekty NIE wybierają GRAPH.
                     - HYBRID: pytanie NIE o tożsamość ludzi (dokumenty, scena, obiekty, tło). Domyślne dla non-person.
                     - VISUAL_VALIDATION: trzeba zweryfikować wygląd/pozycję na obrazie, gdy graf/embeddingi nie wystarczą.
@@ -64,21 +82,50 @@ public class QueryPlanner {
                     Gdy w historii jest SOURCES: ze ścieżkami, skopiuj te exact paths do fileScope przy follow-upach
                     o tym samym zdjęciu (chyba że użytkownik zmienia temat lub podaje inny @plik).
                     Puste entities + niepusty fileScope jest OK dla GRAPH (ładujemy uczestników pliku).
+                    Zakres kolekcji:
+                    - scopeKind=FOLDER i folderNames z poniższej listy, gdy pytanie dotyczy wskazanego folderu.
+                    - scopeKind=FILE dla wskazanego pliku; UNRESTRICTED dla całej biblioteki.
+                    - collectionOverview=true tylko gdy użytkownik chce katalogowy inwentarz:
+                      dokładne liczby folderów/plików/osób, nazwy folderów, potwierdzone imiona osób,
+                      nazwy plików albo status analizy. Ta ścieżka nie opisuje treści zdjęć.
+                    - collectionOverview=false dla pytań o scenę, wygląd, ubiór, czynność, obiekt,
+                      relację lub wyszukanie pasującego zdjęcia — również wtedy, gdy pytanie nie
+                      zawiera imienia konkretnej osoby.
+                    - Nie ustawiaj collectionOverview dla pytania o pojedynczy fakt z obrazu lub dokumentu.
+                    Rozpoznanie folderu i collectionOverview wynika wyłącznie ze znaczenia pytania.
                     ambiguous=true gdy odniesienia są niejednoznaczne.
                     Znane osoby (ludzie) w workspace: %s
+                    Znane foldery użytkownika: %s
                     Ostatnia rozmowa i ścieżki źródeł: %s
                     Schema JSON (przykład wartości — nie kopiuj dosłownie do odpowiedzi użytkownika):
-                    {"entities":["Igor"],"fileScope":["dir://folder/photo.jpg"],
+                    {"entities":["Igor"],"fileScope":["dir://folder/photo.jpg"],"folderNames":[],
+                    "scopeKind":"FILE","collectionOverview":false,
                     "retrievalQuery":"opis sceny i uczestników na wskazanym zdjęciu",
                     "condition":"opisz scenę, osoby i wygląd na podstawie dowodów","visualCondition":false,
                     "ambiguous":false,"retrievalMode":"HYBRID","entityMatchMode":"ANY",
-                    "answerInstruction":"naturalna odpowiedź po polsku z dostarczonych dowodów; bez list plików"}
+                    "answerInstruction":"naturalna odpowiedź po polsku z dostarczonych dowodów"}
                     entityMatchMode=ALL_SAME_FILE gdy odpowiedź wymaga współobecności wszystkich wybranych osób na jednym pliku;
                     wtedy retrievalMode=GRAPH.
                     Pytanie użytkownika: %s
-                    """.formatted(knownForPrompt,
+                    """.formatted(knownForPrompt, foldersForPrompt,
                     conversationContext == null ? "" : conversationContext, safeQuestion));
-            return fromJson(safeQuestion, knownEntities, response, fallback);
+            QueryPlan parsed = fromJson(safeQuestion, response, fallback);
+            if (parsed != null) {
+                return parsed;
+            }
+            String repaired = chatModel.generate("""
+                    Napraw poniższą odpowiedź planera do jednego poprawnego obiektu JSON.
+                    Nie zmieniaj sensu ani trybu. Dozwolone retrievalMode:
+                    DOCUMENT, GRAPH, HYBRID, VISUAL_VALIDATION. Zachowaj także folderNames,
+                    scopeKind i collectionOverview. Zwróć wyłącznie JSON.
+                    Odpowiedź do naprawy: %s
+                    """.formatted(response == null ? "" : response));
+            parsed = fromJson(safeQuestion, repaired, fallback);
+            if (parsed != null) {
+                return parsed;
+            }
+            log.warn("Dynamic query plan remained invalid after one repair; using fallback");
+            return fallback;
         } catch (Exception e) {
             log.warn("Dynamic query planning failed; using hybrid fallback: {}", e.getMessage());
             return fallback;
@@ -89,7 +136,7 @@ public class QueryPlanner {
         return plan(question, "");
     }
 
-    private QueryPlan fromJson(String question, List<String> knownEntities, String response, QueryPlan fallback) {
+    private QueryPlan fromJson(String question, String response, QueryPlan fallback) {
         try {
             JsonNode root = objectMapper.readTree(extractJson(response));
             List<String> entities = graphQueryService.validateEntityNames(readStrings(root.path("entities")));
@@ -103,15 +150,30 @@ public class QueryPlanner {
                 entities = List.copyOf(merged);
             }
             List<String> fileScope = graphQueryService.validateFilePaths(readStrings(root.path("fileScope")));
+            LibraryScopeService.FolderResolution folderResolution = libraryScopeService == null
+                    ? LibraryScopeService.FolderResolution.empty()
+                    : libraryScopeService.resolveFolderNames(readStrings(root.path("folderNames")));
             QueryPlan.RetrievalMode mode = parseMode(root.path("retrievalMode").asText(""), fallback.retrievalMode());
             EntityMatchMode entityMatchMode = parseEntityMatchMode(root.path("entityMatchMode").asText(""));
+            QueryPlan.ScopeKind scopeKind = parseScopeKind(root.path("scopeKind").asText(""));
+            if (!folderResolution.ids().isEmpty()) {
+                scopeKind = QueryPlan.ScopeKind.FOLDER;
+            } else if (!fileScope.isEmpty()) {
+                scopeKind = QueryPlan.ScopeKind.FILE;
+            }
             String condition = text(root, "condition", question);
+            boolean collectionOverview = root.path("collectionOverview").asBoolean(false);
+            boolean ambiguous = root.path("ambiguous").asBoolean(false)
+                    || folderResolution.ambiguous()
+                    || folderResolution.unresolved()
+                    || (scopeKind == QueryPlan.ScopeKind.FOLDER && folderResolution.ids().isEmpty());
             return new QueryPlan(question, entities, fileScope, text(root, "retrievalQuery", question), condition,
-                    root.path("visualCondition").asBoolean(false), root.path("ambiguous").asBoolean(false),
-                    mode, entityMatchMode, text(root, "answerInstruction", fallback.answerInstruction()));
+                    root.path("visualCondition").asBoolean(false), ambiguous,
+                    mode, entityMatchMode, text(root, "answerInstruction", fallback.answerInstruction()),
+                    scopeKind, folderResolution.ids(), collectionOverview);
         } catch (Exception e) {
-            log.warn("Dynamic query plan was not valid JSON; using hybrid fallback: {}", e.getMessage());
-            return fallback;
+            log.warn("Dynamic query plan was not valid JSON: {}", e.getMessage());
+            return null;
         }
     }
 
@@ -156,6 +218,14 @@ public class QueryPlanner {
             return EntityMatchMode.valueOf(value.toUpperCase(Locale.ROOT));
         } catch (Exception ignored) {
             return EntityMatchMode.ANY;
+        }
+    }
+
+    private QueryPlan.ScopeKind parseScopeKind(String value) {
+        try {
+            return QueryPlan.ScopeKind.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (Exception ignored) {
+            return QueryPlan.ScopeKind.UNRESTRICTED;
         }
     }
 

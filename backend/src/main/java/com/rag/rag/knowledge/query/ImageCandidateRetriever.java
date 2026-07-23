@@ -1,10 +1,12 @@
 package com.rag.rag.knowledge.query;
 
+import com.rag.rag.auth.security.CurrentUserService;
 import com.rag.rag.core.retrieval.LexicalEmbeddingSearch;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
 import dev.langchain4j.store.embedding.EmbeddingStore;
+import static dev.langchain4j.store.embedding.filter.MetadataFilterBuilder.metadataKey;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -23,6 +25,7 @@ public class ImageCandidateRetriever {
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final EmbeddingModel embeddingModel;
     private final LexicalEmbeddingSearch lexicalEmbeddingSearch;
+    private final CurrentUserService currentUserService;
 
     @Value("${rag.visual-retrieval.max-vector-candidates:40}")
     private int maxCandidates;
@@ -41,10 +44,13 @@ public class ImageCandidateRetriever {
         Map<String, BigDecimal> scores = new LinkedHashMap<>();
 
         var embedding = embeddingModel.embed(query).content();
-        var result = embeddingStore.search(EmbeddingSearchRequest.builder()
+        var builder = EmbeddingSearchRequest.builder()
                 .queryEmbedding(embedding)
                 .maxResults(Math.max(1, maxCandidates))
-                .minScore(minScore).build());
+                .minScore(minScore);
+        currentUserService.findUserId().ifPresent(ownerId ->
+                builder.filter(metadataKey("owner_id").isEqualTo(ownerId.toString())));
+        var result = embeddingStore.search(builder.build());
         result.matches().forEach(match -> {
             String path = match.embedded().metadata().getString("path");
             if (path != null && !path.isBlank()) {

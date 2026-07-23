@@ -42,6 +42,7 @@ import com.rag.rag.knowledge.extraction.ExtractedEntityDto;
 import com.rag.rag.knowledge.extraction.FaceAnchorImageRenderer;
 import com.rag.rag.knowledge.extraction.StructuredVisionExtractor;
 import com.rag.rag.knowledge.extraction.StructuredVisionExtractor.ExtractionResult;
+import com.rag.rag.knowledge.extraction.VisionTechnicalArtifactSanitizer;
 import com.rag.rag.knowledge.extraction.VisionResultDto;
 import com.rag.rag.knowledge.extraction.VisibleTextDto;
 import com.rag.rag.knowledge.fact.Fact;
@@ -546,8 +547,6 @@ public class IngestionService {
                     com.fasterxml.jackson.databind.node.ObjectNode failDoc =
                             objectMapper.createObjectNode();
                     failDoc.put("type", "image_knowledge");
-                    failDoc.put("file", fileName);
-                    failDoc.put("path", path);
                     failDoc.put("vision_status", "FAILED");
                     com.fasterxml.jackson.databind.node.ObjectNode scene = objectMapper.createObjectNode();
                     if (!raw.isBlank()) {
@@ -559,8 +558,8 @@ public class IngestionService {
                     failDoc.set("participants", objectMapper.createArrayNode());
                     return Document.from(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(failDoc));
                 } catch (Exception e) {
-                    return Document.from("{\"type\":\"image_knowledge\",\"file\":\"" + fileName
-                            + "\",\"vision_status\":\"FAILED\",\"scene\":{\"summary\":\"Brak opisu obrazu.\"},\"participants\":[]}");
+                    return Document.from("{\"type\":\"image_knowledge\",\"vision_status\":\"FAILED\","
+                            + "\"scene\":{\"summary\":\"Brak opisu obrazu.\"},\"participants\":[]}");
                 }
             }
         } catch (InvalidImageException e) {
@@ -751,7 +750,10 @@ public class IngestionService {
                 });
         try {
             CachedVisionResult cached = objectMapper.readValue(payload, CachedVisionResult.class);
-            return new ExtractionResult(cached.resultDto(), cached.rawText(), cached.structured());
+            VisionResultDto sanitized = cached.structured()
+                    ? VisionTechnicalArtifactSanitizer.sanitize(cached.resultDto(), faceAnchors)
+                    : cached.resultDto();
+            return new ExtractionResult(sanitized, cached.rawText(), cached.structured());
         } catch (Exception e) {
             throw new IllegalStateException("Unable to read cached vision result", e);
         }

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   FolderOpen,
   Plus,
@@ -10,8 +9,6 @@ import {
   FolderPlus,
   Loader2,
   RefreshCw,
-  Sparkles,
-  ArrowUp,
   MoreHorizontal,
   Settings2,
 } from "lucide-react";
@@ -25,9 +22,6 @@ import {
   startContextReanalysis,
   getContextReanalysisStatus,
   ReanalysisStatus,
-  getChats,
-  createChat,
-  type Chat,
 } from "@/lib/api";
 import {
   DEFAULT_UPLOAD_CONCURRENCY,
@@ -44,6 +38,8 @@ import { IconButton } from "@/components/ui/IconButton";
 import { AnimatedItem } from "@/components/ui/AnimatedList";
 import { FadeModal } from "@/components/ui/FadeModal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { ViewModeToggle } from "@/components/ui/ViewModeToggle";
+import { useViewMode } from "@/hooks/useViewMode";
 
 type FolderSort = "recent" | "asc" | "desc";
 
@@ -52,9 +48,7 @@ function formatFolderDate(value: string) {
 }
 
 export default function FoldersPage() {
-  const router = useRouter();
   const [folders, setFolders] = useState<FolderType[]>([]);
-  const [chats, setChats] = useState<Chat[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
   const [isUploadingFolder, setIsUploadingFolder] = useState(false);
@@ -68,14 +62,11 @@ export default function FoldersPage() {
   const [sorting, setSorting] = useState(false);
   const [selected, setSelected] = useState<FolderType | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [creatingChat, setCreatingChat] = useState(false);
+  const { viewMode, setViewMode } = useViewMode("rag-library-view-mode");
 
   useEffect(() => {
-    Promise.all([getFolders(), getChats().catch(() => [] as Chat[])])
-      .then(([f, c]) => {
-        setFolders(f);
-        setChats(c);
-      })
+    getFolders()
+      .then(setFolders)
       .finally(() => setIsLoading(false));
   }, []);
 
@@ -92,12 +83,6 @@ export default function FoldersPage() {
         );
       });
   }, [folders, needle, sort]);
-
-  const visibleChats = useMemo(() => {
-    return chats
-      .filter((chat) => !needle || chat.title.toLocaleLowerCase("pl-PL").includes(needle))
-      .slice(0, 3);
-  }, [chats, needle]);
 
   const handleCreateFolder = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -159,7 +144,6 @@ export default function FoldersPage() {
     try {
       await clearAllData();
       setFolders([]);
-      setChats([]);
       setShowClearModal(false);
       setClearConfirmText("");
     } catch (error) {
@@ -187,18 +171,6 @@ export default function FoldersPage() {
     }
   };
 
-  const handleNewChat = async () => {
-    setCreatingChat(true);
-    try {
-      const chat = await createChat();
-      router.push(`/chat/${chat.id}`);
-    } catch {
-      alert("Nie udało się utworzyć rozmowy.");
-    } finally {
-      setCreatingChat(false);
-    }
-  };
-
   return (
     <div className="page-shell">
       <PageHeader
@@ -217,36 +189,16 @@ export default function FoldersPage() {
         }
       />
 
-      <div className="page-body max-w-3xl !pt-1">
-        <SearchField
-          value={query}
-          onChange={setQuery}
-          placeholder="Szukaj folderów i rozmów"
-        />
-
-        <button
-          type="button"
-          onClick={handleNewChat}
-          disabled={creatingChat}
-          className="ask-card mt-3 w-full text-left"
-        >
-          <span className="ask-card-icon">
-            {creatingChat ? (
-              <Loader2 size={18} className="animate-spin" aria-hidden />
-            ) : (
-              <Sparkles size={18} aria-hidden />
-            )}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-extrabold text-ink">
-              O co chcesz zapytać?
-            </span>
-            <span className="mt-0.5 block text-xs text-ink-muted">
-              Przeszukaj swoją bazę wiedzy
-            </span>
-          </span>
-          <ArrowUp size={18} className="shrink-0 text-ink" aria-hidden />
-        </button>
+      <div className="page-body max-w-5xl !pt-1">
+        <div className="flex items-center gap-2">
+          <SearchField
+            value={query}
+            onChange={setQuery}
+            placeholder="Szukaj folderów"
+            className="min-w-0 flex-1"
+          />
+          <ViewModeToggle value={viewMode} onChange={setViewMode} />
+        </div>
 
         {reanalysis && (
           <div className="status-banner status-banner-info mt-4" role="status">
@@ -297,11 +249,11 @@ export default function FoldersPage() {
 
         {!isLoading && visibleFolders.length === 0 && (
           <EmptyState
-            icon="📁"
+            icon={<FolderOpen size={22} aria-hidden />}
             title={needle ? "Brak wyników" : "Dodaj pierwszy folder"}
             description={
               needle
-                ? "Spróbuj innej nazwy folderu lub rozmowy."
+                ? "Spróbuj innej nazwy folderu."
                 : "Utwórz folder albo wgraj katalog ze zdjęciami — potem możesz o nie pytać w rozmowie."
             }
             action={
@@ -319,7 +271,7 @@ export default function FoldersPage() {
           />
         )}
 
-        {!isLoading && visibleFolders.length > 0 && (
+        {!isLoading && visibleFolders.length > 0 && viewMode === "list" && (
           <div className="list-panel">
             {visibleFolders.map((folder, index) => (
               <AnimatedItem key={folder.id} index={index}>
@@ -354,63 +306,37 @@ export default function FoldersPage() {
           </div>
         )}
 
-        <SectionTitle
-          action={
-            <button
-              type="button"
-              onClick={handleNewChat}
-              disabled={creatingChat}
-              className="text-sm font-bold text-ink"
-            >
-              Nowa
-            </button>
-          }
-        >
-          Ostatnie rozmowy
-        </SectionTitle>
-        {visibleChats.length === 0 ? (
-          <EmptyState
-            icon="💬"
-            title={needle ? "Brak rozmów" : "Brak ostatnich rozmów"}
-            description={
-              needle
-                ? "Brak rozmów pasujących do wyszukiwania."
-                : "Nie masz jeszcze rozmów. Zacznij od pytania o bibliotekę."
-            }
-            action={
-              !needle ? (
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={handleNewChat}
-                  disabled={creatingChat}
-                >
-                  <Plus size={16} /> Nowa rozmowa
-                </button>
-              ) : undefined
-            }
-            className="!py-6"
-          />
-        ) : (
-          <div className="list-panel">
-            {visibleChats.map((chat, index) => (
-              <AnimatedItem key={chat.id} index={index}>
-                <Link href={`/chat/${chat.id}`} className="list-row">
-                  <span className="list-row-icon">
-                    <Sparkles size={16} aria-hidden />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-bold text-ink">{chat.title}</span>
-                    <span className="mt-0.5 block text-xs text-ink-muted">
-                      {chat.updatedAt
-                        ? new Date(chat.updatedAt).toLocaleDateString("pl-PL")
-                        : "Rozmowa"}
+        {!isLoading && visibleFolders.length > 0 && viewMode === "grid" && (
+          <ul className="library-grid m-0 list-none p-0">
+            {visibleFolders.map((folder, index) => (
+              <AnimatedItem key={folder.id} index={index}>
+                <li className="group relative">
+                  <Link
+                    href={`/folders/${folder.id}`}
+                    className="library-grid-card"
+                  >
+                    <span className="library-grid-thumb">
+                      <FolderOpen size={36} strokeWidth={1.6} aria-hidden />
                     </span>
-                  </span>
-                </Link>
+                    <span className="mt-2 block truncate text-sm font-semibold text-ink">
+                      {folder.name}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-ink-muted">
+                      {formatFolderDate(folder.updatedAt)}
+                    </span>
+                  </Link>
+                  <button
+                    type="button"
+                    className="absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-raised text-ink-muted opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:text-ink"
+                    aria-label={`Opcje folderu ${folder.name}`}
+                    onClick={() => setSelected(folder)}
+                  >
+                    <MoreHorizontal size={16} aria-hidden />
+                  </button>
+                </li>
               </AnimatedItem>
             ))}
-          </div>
+          </ul>
         )}
       </div>
 
@@ -419,25 +345,37 @@ export default function FoldersPage() {
         onClose={() => setIsAdding(false)}
         title="Nowy folder"
         description="Nadaj nazwę swojej kolekcji."
-      >
-        <form onSubmit={handleCreateFolder}>
-          <input
-            type="text"
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            placeholder="Np. Umowy 2026"
-            autoFocus
-            className="input-field mb-3"
-          />
-          <div className="flex gap-2.5">
-            <Button label="Anuluj" secondary onClick={() => setIsAdding(false)} />
+        footer={
+          <>
+            <Button
+              label="Anuluj"
+              secondary
+              onClick={() => setIsAdding(false)}
+              className="min-w-[7rem]"
+            />
             <Button
               label="Utwórz"
-              type="submit"
+              onClick={() => void handleCreateFolder()}
               disabled={!newFolderName.trim()}
+              className="min-w-[7rem]"
             />
-          </div>
-        </form>
+          </>
+        }
+      >
+        <input
+          type="text"
+          value={newFolderName}
+          onChange={(e) => setNewFolderName(e.target.value)}
+          placeholder="Np. Umowy 2026"
+          autoFocus
+          className="input-field"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void handleCreateFolder();
+            }
+          }}
+        />
       </BottomSheet>
 
       <BottomSheet
@@ -445,16 +383,22 @@ export default function FoldersPage() {
         onClose={() => setSelected(null)}
         title="Opcje folderu"
         description={selected?.name}
+        flush
       >
         <SheetAction
-          icon={<Trash2 size={20} />}
+          icon={<Trash2 size={18} />}
           label="Usuń folder"
           destructive
           onClick={() => selected && handleDeleteFolder(selected)}
         />
       </BottomSheet>
 
-      <BottomSheet open={sorting} onClose={() => setSorting(false)} title="Sortuj foldery">
+      <BottomSheet
+        open={sorting}
+        onClose={() => setSorting(false)}
+        title="Sortuj foldery"
+        flush
+      >
         {(
           [
             { key: "recent", label: "Ostatnio zmieniane" },
@@ -469,18 +413,20 @@ export default function FoldersPage() {
               setSort(option.key);
               setSorting(false);
             }}
-            className="flex min-h-12 w-full items-center justify-between text-left text-base text-ink"
+            className={`modal-option ${option.key === sort ? "is-active" : ""}`}
           >
             {option.label}
-            {option.key === sort && <span className="font-bold">✓</span>}
+            {option.key === sort ? <span className="modal-option-check">✓</span> : null}
           </button>
         ))}
       </BottomSheet>
 
-      <BottomSheet open={toolsOpen} onClose={() => setToolsOpen(false)} title="Narzędzia">
-        <label className="flex min-h-[3.25rem] w-full cursor-pointer items-center gap-3.5 text-left font-bold">
-          <FolderPlus size={20} />
-          <span>Wgraj folder</span>
+      <BottomSheet open={toolsOpen} onClose={() => setToolsOpen(false)} title="Narzędzia" flush>
+        <label className="sheet-action cursor-pointer">
+          <span className="sheet-action-icon" aria-hidden>
+            <FolderPlus size={18} />
+          </span>
+          <span className="sheet-action-label">Wgraj folder</span>
           <input
             type="file"
             className="hidden"
@@ -493,12 +439,12 @@ export default function FoldersPage() {
           />
         </label>
         <SheetAction
-          icon={<RefreshCw size={20} />}
+          icon={<RefreshCw size={18} />}
           label="Analizuj kontekst zdjęć"
           onClick={handleReanalysis}
         />
         <SheetAction
-          icon={<Trash2 size={20} />}
+          icon={<Trash2 size={18} />}
           label="Wyczyść wszystkie dane"
           destructive
           onClick={() => {
@@ -518,37 +464,38 @@ export default function FoldersPage() {
         }}
         variant="card"
         title="Wyczyścić wszystkie dane?"
+        description="Zostaną usunięte osoby, rozmowy, wiadomości, foldery i pliki. Wpisz WYCZYSC, aby potwierdzić."
+        showClose={!isClearingAll}
+        footer={
+          <>
+            <Button
+              label="Anuluj"
+              secondary
+              disabled={isClearingAll}
+              onClick={() => {
+                setShowClearModal(false);
+                setClearConfirmText("");
+              }}
+              className="min-w-[7rem]"
+              />
+            <Button
+              label={isClearingAll ? "Czyszczenie…" : "Wyczyść wszystko"}
+              disabled={isClearingAll || clearConfirmText !== "WYCZYSC"}
+              onClick={handleClearAllData}
+              className="min-w-[9rem] !border-error !bg-error hover:!bg-error/90"
+            />
+          </>
+        }
       >
-        <h3 className="text-lg font-extrabold text-ink">Wyczyścić wszystkie dane?</h3>
-        <p className="mt-2 text-sm text-ink-muted">
-          Zostaną usunięte osoby, rozmowy, wiadomości, foldery i pliki. Wpisz{" "}
-          <span className="font-semibold text-ink">WYCZYSC</span>, aby potwierdzić.
-        </p>
         <input
           type="text"
           value={clearConfirmText}
           onChange={(e) => setClearConfirmText(e.target.value)}
           placeholder="WYCZYSC"
-          className="input-field mt-4"
+          className="input-field"
           autoFocus
+          aria-label="Potwierdzenie usunięcia"
         />
-        <div className="mt-4 flex gap-2">
-          <Button
-            label="Anuluj"
-            secondary
-            disabled={isClearingAll}
-            onClick={() => {
-              setShowClearModal(false);
-              setClearConfirmText("");
-            }}
-          />
-          <Button
-            label={isClearingAll ? "Czyszczenie…" : "Wyczyść wszystko"}
-            disabled={isClearingAll || clearConfirmText !== "WYCZYSC"}
-            onClick={handleClearAllData}
-            className="!border-error !bg-error hover:!bg-error/90"
-          />
-        </div>
       </FadeModal>
     </div>
   );

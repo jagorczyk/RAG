@@ -5,7 +5,12 @@ import com.rag.rag.folder.entity.FileEntity;
 import com.rag.rag.folder.repository.FileRepository;
 import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphQueryService;
+import com.rag.rag.knowledge.graph.GroundedVisualClaim;
+import com.rag.rag.knowledge.graph.EntityVisualAnchor;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.output.Response;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.data.message.UserMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,6 +20,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.math.BigDecimal;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -46,6 +53,7 @@ class DynamicVisualMatcherTest {
         lenient().when(fileRepository.findByPath(image.getPath())).thenReturn(Optional.of(image));
         lenient().when(graphQueryService.buildFullContextForFile(image.getPath()))
                 .thenReturn("Michał ma jasne, blond włosy.");
+        lenient().when(graphQueryService.certainClaimsForFile(anyString(), any())).thenReturn(List.of(claim()));
     }
 
     @Test
@@ -98,9 +106,6 @@ class DynamicVisualMatcherTest {
     @Test
     void allSameFileEmptyIntersectionYieldsNoVisualSources() {
         when(graphQueryService.imagePathsForAllEntities(eq(List.of("Igor", "Anna")))).thenReturn(List.of());
-        when(candidateRetriever.recall(anyString())).thenReturn(Map.of(
-                "dir://only-igor.jpg", java.math.BigDecimal.valueOf(0.99)));
-
         QueryPlan plan = new QueryPlan("Czy jest zdjęcie z Igorem i Anną?", List.of("Igor", "Anna"),
                 List.of("dir://only-igor.jpg"), "Igor Anna", "obie osoby", true, false,
                 QueryPlan.RetrievalMode.VISUAL_VALIDATION, EntityMatchMode.ALL_SAME_FILE, "");
@@ -110,8 +115,76 @@ class DynamicVisualMatcherTest {
         verify(fileRepository, never()).findByPath("dir://only-igor.jpg");
     }
 
+    @Test
+    void explicitFileScopeNeverExpandsToRecallCandidates() {
+        when(chatModel.generate(anyString())).thenReturn("""
+                {"decision":"MATCH","confidence":0.95,"reasons":["wskazany obraz"],"missingEvidence":[]}
+                """);
+        QueryPlan scoped = new QueryPlan("Co przedstawia @person.jpg?", List.of(),
+                List.of(image.getPath()), "person.jpg", "opisz wskazany obraz", true, false,
+                QueryPlan.RetrievalMode.VISUAL_VALIDATION, EntityMatchMode.ANY, "");
+
+        assertEquals(List.of(image.getPath()), matcher.findEvidence(scoped).stream()
+                .map(VisualQueryMatch::filePath).toList());
+        verify(candidateRetriever, never()).recall(anyString());
+        verify(graphQueryService, never()).imagePathsForEntities(any());
+    }
+
+    @Test
+    void failedPixelVerificationDoesNotKeepStoredContextMatch() {
+        image.setImageData(new byte[]{1, 2, 3});
+        when(chatModel.generate(anyString())).thenReturn("""
+                {"decision":"MATCH","confidence":0.75,"reasons":["słaby kontekst"],"missingEvidence":[]}
+                """);
+        when(visionModel.generate(any(UserMessage.class))).thenThrow(new RuntimeException("vision down"));
+
+        assertTrue(matcher.findEvidence(plan("Czy Michał ma blond włosy?")).isEmpty());
+    }
+
+    @Test
+    void rejectsPixelClaimForAnotherPersonEvenOnTheCorrectFile() {
+        image.setImageData(new byte[]{1, 2, 3});
+        when(graphQueryService.certainClaimsForFile(anyString(), any())).thenReturn(List.of());
+        when(graphQueryService.certainEntityAnchorsForFile(image.getPath(), List.of("Michał")))
+                .thenReturn(List.of(new EntityVisualAnchor(UUID.randomUUID(), "Michał", "face_1",
+                        List.of(10f, 10f, 30f, 30f), BigDecimal.ONE)));
+        when(visionModel.generate(any(UserMessage.class))).thenReturn(Response.from(AiMessage.from("""
+                {"decision":"MATCH","confidence":0.96,"reasons":["widoczna czynność"],
+                 "missingEvidence":[],"claims":[{"entity":"Olek","predicate":"biegnie",
+                 "value":"","statementPl":"Olek biegnie.","confidence":0.96}]}
+                """)));
+
+        assertTrue(matcher.findEvidence(plan("Co robi Michał?")).isEmpty());
+    }
+
+    @Test
+    void acceptsPixelClaimOnlyForCertainRequestedAnchor() {
+        image.setImageData(new byte[]{1, 2, 3});
+        when(graphQueryService.certainClaimsForFile(anyString(), any())).thenReturn(List.of());
+        when(graphQueryService.certainEntityAnchorsForFile(image.getPath(), List.of("Michał")))
+                .thenReturn(List.of(new EntityVisualAnchor(UUID.randomUUID(), "Michał", "face_1",
+                        List.of(10f, 10f, 30f, 30f), BigDecimal.ONE)));
+        when(visionModel.generate(any(UserMessage.class))).thenReturn(Response.from(AiMessage.from("""
+                {"decision":"MATCH","confidence":0.96,"reasons":["twarz jest zakotwiczona"],
+                 "missingEvidence":[],"claims":[{"entity":"Michał","predicate":"stoi",
+                 "value":"","statementPl":"Michał stoi i patrzy w stronę aparatu.","confidence":0.96}]}
+                """)));
+
+        List<VisualQueryMatch> result = matcher.findEvidence(plan("Co robi Michał?"));
+
+        assertEquals(1, result.size());
+        assertEquals("Michał", result.get(0).claims().get(0).entityName());
+        assertEquals("Michał stoi i patrzy w stronę aparatu.", result.get(0).claims().get(0).statementPl());
+    }
+
     private QueryPlan plan(String question) {
         return new QueryPlan(question, List.of("Michał"), "", question, true, false,
                 QueryPlan.RetrievalMode.VISUAL_VALIDATION, "Oceń cechę na obrazie.");
+    }
+
+    private GroundedVisualClaim claim() {
+        return new GroundedVisualClaim("F-1", UUID.randomUUID(), "Michał", "ma", "blond włosy",
+                "Michał ma blond włosy.", image == null ? "dir://photos/person.jpg" : image.getPath(),
+                BigDecimal.valueOf(0.9), "GRAPH_FACT", "face_1");
     }
 }

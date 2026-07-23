@@ -6,10 +6,7 @@ import {
   BookMarked,
   FolderOpen,
   MessageCircle,
-  Signal,
   Users,
-  Wifi,
-  BatteryFull,
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 
@@ -22,154 +19,71 @@ const PHOTOS = [
   "/landing-page-photos/mircea-solomiea-6HfHU2WoDDQ-unsplash.jpg",
 ] as const;
 
-type PhoneScreen = "chat" | "library";
+/** Figma iPhone 14 Pro Space Black (1736×3528) — transparent screen punch. */
+const FRAME_SRC = "/iphone-mockup/iphone-14-pro-space-black.png";
+const FRAME_W = 1736;
+const FRAME_H = 3528;
 
 /**
- * Screen area placement within the iPhone frame (1024×1536 baseline).
+ * Screen hole measured from the Figma frame PNG (alpha < 10).
+ * Dynamic Island is painted into the frame and overlays the top of the punch.
  */
 const SCREEN = {
-  left: "23.34%",
-  top: "8.4%",
-  width: "53.22%",
-  height: "78.65%",
-  radius: "12% / 5.5%",
+  left: "5.184%",
+  top: "2.183%",
+  width: "89.631%",
+  height: "95.635%",
+  radius: "12.5% / 5.8%",
 } as const;
+
+type PhoneScreen = "chat" | "library";
 
 type PhoneInHandProps = {
   className?: string;
 };
 
-/** Front-facing iPhone product mockup — Cogniface UI composited into punched screen. */
+/** Front-facing iPhone 14 Pro (Figma) — Cogniface UI in the screen punch. */
 export function PhoneInHand({ className = "" }: PhoneInHandProps) {
   const reducedMotionPref = useReducedMotion();
   const reduced = reducedMotionPref === true;
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    setReady(true);
-  }, []);
 
   return (
     <div
-      className={`relative mx-auto flex h-full w-full max-w-[420px] items-center justify-center ${className}`}
+      className={`relative mx-auto flex h-full w-full max-w-[360px] items-center justify-center ${className}`}
       aria-hidden
     >
-      <motion.div
-        className="relative aspect-[1024/1536] h-[min(96%,780px)] w-auto"
-        initial={reduced || !ready ? false : { opacity: 0, y: 20, scale: 0.97 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-      >
-        {/* iPhone mockup drawn in CSS (no image asset). */}
-        {ready && <IphoneFrame reduced={reduced} />}
-      </motion.div>
-    </div>
-  );
-}
-
-function IphoneFrame({ reduced }: { reduced: boolean }) {
-  const FRAME_RADIUS = "16% / 6.8%";
-
-  return (
-    <div className="absolute inset-0">
-      {/* Soft shadow beneath the phone only. */}
       <div
-        className="pointer-events-none absolute left-1/2 top-[93%] h-[10%] w-[68%] -translate-x-1/2 rounded-full bg-black/20 blur-2xl"
-        style={{ opacity: reduced ? 0.85 : 1 }}
-      />
-
-      <div
-        className="absolute inset-0 overflow-hidden"
+        className="relative w-[min(310px,74vw)]"
         style={{
-          borderRadius: FRAME_RADIUS,
-          background:
-            "linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 10%, rgba(0,0,0,0.15) 48%, rgba(0,0,0,0.28) 100%), linear-gradient(90deg, #5a5a60 0%, #151519 18%, #0f0f12 50%, #151519 82%, #5a5a60 100%)",
-          boxShadow:
-            "inset 0 0 0 1px rgba(255,255,255,0.14), inset 0 -12px 40px rgba(0,0,0,0.55)",
+          aspectRatio: `${FRAME_W} / ${FRAME_H}`,
+          filter: "drop-shadow(16px 24px 44px rgba(17, 45, 78, 0.2))",
         }}
       >
-        {/* Subtle metallic edge highlights. */}
+        {/* Screen content sits under the frame PNG. */}
         <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "linear-gradient(110deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 35%), linear-gradient(180deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0) 40%)",
-          }}
-        />
-
-        {/* Side buttons (approximate). */}
-        <div
-          className="pointer-events-none absolute left-[1%] top-[26%] h-[3.2%] w-[2.2%] rounded-[4px] bg-[#2a2a2e]"
-          style={{
-            opacity: 0.95,
-            boxShadow:
-              "inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 -6px 14px rgba(0,0,0,0.25)",
-          }}
-        />
-        <div
-          className="pointer-events-none absolute left-[1.2%] top-[33%] h-[2.6%] w-[2.0%] rounded-[4px] bg-[#26262a]"
-          style={{
-            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
-          }}
-        />
-        <div
-          className="pointer-events-none absolute left-[1.2%] top-[39.5%] h-[2.6%] w-[2.0%] rounded-[4px] bg-[#26262a]"
-          style={{
-            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
-          }}
-        />
-        <div
-          className="pointer-events-none absolute right-[1%] top-[30%] h-[34%] w-[2.2%] rounded-[10px] bg-[#2a2a2e]"
-          style={{
-            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
-          }}
-        />
-
-        {/* Screen (where Cogniface UI renders). */}
-        <div
-          className="absolute z-10 overflow-hidden bg-[#F2F2F7]"
+          className="absolute z-0 overflow-hidden bg-[#F2F2F7]"
           style={{
             left: SCREEN.left,
             top: SCREEN.top,
             width: SCREEN.width,
             height: SCREEN.height,
             borderRadius: SCREEN.radius,
-            boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.06)",
           }}
         >
-          <DynamicIslandOverlay />
           <CognifacePhoneScreen reduced={reduced} />
         </div>
-      </div>
-    </div>
-  );
-}
 
-function DynamicIslandOverlay() {
-  // Rendered on top of the UI so the screen stays sharp & readable.
-  return (
-    <div
-      className="pointer-events-none absolute left-1/2 z-20"
-      style={{
-        top: "1.7%",
-        width: "38%",
-        height: "4.2%",
-        transform: "translateX(-50%)",
-        borderRadius: "999px",
-        background:
-          "linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(0,0,0,0.55) 100%), #0b0b0e",
-        boxShadow:
-          "inset 0 0 0 1px rgba(255,255,255,0.10), 0 6px 14px rgba(0,0,0,0.25)",
-      }}
-    >
-      <div
-        className="absolute left-1/2 top-[38%] w-[46%] -translate-x-1/2 rounded-full"
-        style={{
-          height: "26%",
-          background: "rgba(0,0,0,0.55)",
-          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
-        }}
-      />
+        {/* Figma hardware frame overlays the screen (transparent punch). */}
+        <Image
+          src={FRAME_SRC}
+          alt=""
+          fill
+          priority
+          sizes="300px"
+          className="pointer-events-none z-10 object-contain"
+          draggable={false}
+        />
+      </div>
     </div>
   );
 }
@@ -200,27 +114,21 @@ function CognifacePhoneScreen({ reduced }: { reduced: boolean }) {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-[#F2F2F7] text-black">
-      <div className="relative z-20 flex shrink-0 items-end justify-between px-[9%] pb-[1%] pt-[4.5%] text-[0.55rem] font-semibold leading-none">
-        <span className="min-w-[2.2rem]">9:41</span>
-        <div className="flex min-w-[2.6rem] items-center justify-end gap-[0.15rem]">
-          <Signal size={9} strokeWidth={2.4} />
-          <Wifi size={10} strokeWidth={2.4} />
-          <BatteryFull size={12} strokeWidth={2} />
-        </div>
-      </div>
+      {/* Top inset clears Dynamic Island from the Figma frame (no CSS status bar). */}
+      <div className="shrink-0 pt-[8%]" />
 
-      <div className="shrink-0 px-[7%] pb-[2%] pt-[1%]">
-        <p className="text-[0.45rem] font-semibold uppercase tracking-[0.14em] text-[#3F72AF]">
+      <div className="shrink-0 px-[7%] pb-[2%]">
+        <p className="text-[0.55rem] font-semibold uppercase tracking-[0.12em] text-[#3F72AF]">
           Cogniface
         </p>
         <AnimatePresence mode="wait" initial={false}>
           <motion.h2
             key={screen}
-            className="mt-[0.15rem] text-[0.95rem] font-bold leading-none tracking-tight"
+            className="mt-[0.15rem] text-[1.15rem] font-bold leading-none tracking-tight"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.25 }}
+            transition={{ duration: 0.22 }}
           >
             {screen === "chat" ? "Rozmowa" : "Biblioteka"}
           </motion.h2>
@@ -233,32 +141,32 @@ function CognifacePhoneScreen({ reduced }: { reduced: boolean }) {
             <motion.div
               key="chat"
               className="absolute inset-x-[6%] top-0 bottom-0 flex flex-col"
-              initial={{ opacity: 0, x: -16 }}
+              initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              exit={{ opacity: 0, x: -12 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
-              <p className="mb-[4%] text-[0.42rem] text-[#8E8E93]">Twoja baza wiedzy</p>
+              <p className="mb-[3%] text-[0.55rem] text-[#8E8E93]">Twoja baza wiedzy</p>
 
-              <div className="mb-[3%] ml-auto max-w-[88%] rounded-[0.65rem] rounded-br-[0.2rem] bg-[#112D4E] px-[8%] py-[5%] text-[0.48rem] leading-snug text-white">
+              <div className="mb-[2.5%] ml-auto max-w-[88%] rounded-[0.85rem] rounded-br-[0.25rem] bg-[#112D4E] px-[8%] py-[5%] text-[0.58rem] leading-snug text-white">
                 Kto jest na zdjęciu z wakacji przy stole?
               </div>
 
-              <div className="mb-[2%] max-w-[92%] text-[0.48rem] leading-snug text-[#112D4E]">
+              <div className="mb-[2%] max-w-[92%] text-[0.58rem] leading-snug text-[#112D4E]">
                 Na zdjęciu widać Annę w czerwonej sukience — siedzi przy stole z rodziną.
               </div>
 
-              <div className="mb-[3%] inline-flex w-fit items-center gap-[0.25rem] rounded-full bg-[#DBE2EF] px-[6%] py-[2%] text-[0.4rem] font-semibold text-[#3F72AF]">
-                <BookMarked size={8} strokeWidth={2.2} />
+              <div className="mb-[2.5%] inline-flex w-fit items-center gap-[0.3rem] rounded-full bg-[#DBE2EF] px-[6%] py-[2%] text-[0.48rem] font-semibold text-[#3F72AF]">
+                <BookMarked size={10} strokeWidth={2.2} />
                 1 źródło
               </div>
 
-              <div className="relative mb-[2%] aspect-[4/3] w-[72%] overflow-hidden rounded-[0.45rem] bg-[#D1D1D6] ring-1 ring-black/5">
+              <div className="relative mb-[2%] aspect-[4/3] w-[72%] overflow-hidden rounded-[0.55rem] bg-[#D1D1D6] ring-1 ring-black/5">
                 <Image
                   src={PHOTOS[2]}
                   alt=""
                   fill
-                  sizes="120px"
+                  sizes="140px"
                   className="object-cover"
                 />
               </div>
@@ -267,25 +175,22 @@ function CognifacePhoneScreen({ reduced }: { reduced: boolean }) {
             <motion.div
               key="library"
               className="absolute inset-x-[6%] top-0 bottom-0"
-              initial={{ opacity: 0, x: 20 }}
+              initial={{ opacity: 0, x: 12 }}
               animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              exit={{ opacity: 0, x: 12 }}
+              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             >
-              <div className="mb-[3%] rounded-[0.45rem] bg-[#E3E3E8] px-[6%] py-[3.5%] text-[0.45rem] text-[#8E8E93]">
+              <div className="mb-[3%] rounded-[0.55rem] bg-[#E3E3E8] px-[6%] py-[3.5%] text-[0.55rem] text-[#8E8E93]">
                 Szukaj folderów i rozmów
               </div>
               <div className="grid grid-cols-2 gap-[4%]">
-                {PHOTOS.slice(0, 4).map((src, i) => (
-                  <motion.div
+                {PHOTOS.slice(0, 4).map((src) => (
+                  <div
                     key={src}
-                    className="relative aspect-square overflow-hidden rounded-[0.4rem] bg-[#D1D1D6]"
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.04 + i * 0.04, duration: 0.28 }}
+                    className="relative aspect-square overflow-hidden rounded-[0.5rem] bg-[#D1D1D6]"
                   >
-                    <Image src={src} alt="" fill sizes="80px" className="object-cover" />
-                  </motion.div>
+                    <Image src={src} alt="" fill sizes="120px" className="object-cover" />
+                  </div>
                 ))}
               </div>
             </motion.div>
@@ -304,16 +209,16 @@ function CognifacePhoneScreen({ reduced }: { reduced: boolean }) {
           ).map(({ label, Icon, active }) => (
             <div
               key={label}
-              className={`flex flex-1 flex-col items-center gap-[0.1rem] py-[1%] text-[0.38rem] font-medium ${
+              className={`flex flex-1 flex-col items-center gap-[0.15rem] py-[1%] text-[0.45rem] font-medium ${
                 active ? "text-[#3F72AF]" : "text-[#8E8E93]"
               }`}
             >
-              <Icon size={11} strokeWidth={active ? 2.2 : 1.7} />
+              <Icon size={16} strokeWidth={active ? 2.1 : 1.7} />
               {label}
             </div>
           ))}
         </div>
-        <div className="mx-auto mb-[2.5%] mt-[0.5%] h-[0.18rem] w-[38%] rounded-full bg-black/80" />
+        <div className="mx-auto mb-[3%] mt-[0.5%] h-[0.22rem] w-[36%] rounded-full bg-black/80" />
       </div>
     </div>
   );

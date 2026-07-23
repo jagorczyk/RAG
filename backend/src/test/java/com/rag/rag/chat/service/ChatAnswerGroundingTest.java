@@ -9,6 +9,16 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatAnswerGroundingTest {
 
     @Test
+    void rejectsNonProseAndMoreThanThreeSentences() {
+        assertTrue(ChatAnswerGrounding.hasInvalidAnswerStructure("{\"answer\":\"Igor stoi.\"}"));
+        assertTrue(ChatAnswerGrounding.hasInvalidAnswerStructure("- Igor stoi.\n- Anna siedzi."));
+        assertTrue(ChatAnswerGrounding.hasInvalidAnswerStructure(
+                "Pierwsze zdanie. Drugie zdanie. Trzecie zdanie. Czwarte zdanie."));
+        assertFalse(ChatAnswerGrounding.hasInvalidAnswerStructure(
+                "Igor stoi przy rowerze. Ma białą koszulkę. Jest przed budynkiem."));
+    }
+
+    @Test
     void detectsPolishAndEnglishCapabilityDenials() {
         assertTrue(ChatAnswerGrounding.isCapabilityDenial(
                 "Niestety, nie mogę zobaczyć zdjęć ani obrazów."));

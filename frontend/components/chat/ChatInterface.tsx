@@ -9,8 +9,6 @@ import {
   ChevronLeft,
   Image as ImageIcon,
   File,
-  X,
-  Users,
 } from "lucide-react";
 import {
   getMessagesForChat,
@@ -31,6 +29,8 @@ import { ImagePreview } from "@/components/ui/ImagePreview";
 import { ChatMessageBubble, TypingIndicator } from "@/components/chat/ChatMessageBubble";
 import { BottomSheet } from "@/components/ui/BottomSheet";
 import { Loading } from "@/components/ui/Loading";
+import { CognifaceLogo } from "@/components/brand/CognifaceLogo";
+import { Avatar } from "@/components/ui/Avatar";
 import {
   resolveMentionedPeople,
   type MentionedPerson,
@@ -72,6 +72,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
   const [suggestionFilter, setSuggestionFilter] = useState("");
   const [allFolders, setAllFolders] = useState<Folder[]>([]);
   const [allFiles, setAllFiles] = useState<FileItem[]>([]);
+  const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const inputRef = useRef<HTMLDivElement>(null);
@@ -80,6 +81,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     if (chatId) {
       setIsInitialLoading(true);
       setHistoryIndex(-1);
+      setSelectedFolderIds([]);
       setPeopleByMessageId({});
       setSheetPeople(null);
       getMessagesForChat(chatId)
@@ -155,6 +157,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
     if (normalizedValue === "") {
       setInputValue("");
+      setSelectedFolderIds([]);
       if (target.innerText !== "") target.innerText = "";
     } else {
       setInputValue(value);
@@ -209,6 +212,11 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     const textBeforeAt = inputValue.slice(0, lastAtIdx);
     const newValue = `${textBeforeAt}@${suggestion.name} `;
     setInputValue(newValue);
+    if (suggestion.type === "folder") {
+      setSelectedFolderIds((current) =>
+        current.includes(suggestion.id) ? current : [...current, suggestion.id]
+      );
+    }
     setShowSuggestions(false);
 
     if (inputRef.current) {
@@ -318,6 +326,10 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     e.preventDefault();
     const userMsg = overrideMsg || inputValue.trim();
     if (!userMsg || !chatId) return;
+    const folderIds = selectedFolderIds.filter((id) => {
+      const folder = allFolders.find((candidate) => candidate.id === id);
+      return folder ? userMsg.includes(`@${folder.name}`) : false;
+    });
 
     const optimisticMsg: Message = {
       id: `temp-${Date.now()}`,
@@ -333,12 +345,13 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
     setFailedMessage(null);
 
     try {
-      const response = await sendMessage(chatId, userMsg);
+      const response = await sendMessage(chatId, userMsg, folderIds);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== optimisticMsg.id),
         optimisticMsg,
         response,
       ]);
+      setSelectedFolderIds([]);
     } catch (error) {
       console.error("Failed to send message", error);
       setMessages((prev) => prev.filter((message) => message.id !== optimisticMsg.id));
@@ -497,10 +510,10 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
         {!isInitialLoading && messages.length === 0 && chatId && (
           <div className="mx-auto flex h-full max-w-lg flex-col items-center justify-center px-3 pb-8 text-center">
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-[14px] bg-soft">
-              <AtSign size={22} className="text-ink" aria-hidden />
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface-raised">
+              <CognifaceLogo className="h-6 w-6 text-accent" />
             </div>
-            <h2 className="text-lg font-extrabold tracking-tight text-ink md:text-xl">
+            <h2 className="text-lg font-bold tracking-tight text-ink md:text-xl">
               Zadaj pierwsze pytanie
             </h2>
             <p className="mt-1.5 max-w-sm text-sm leading-snug text-ink-muted">
@@ -570,13 +583,13 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="relative shrink-0 border-t border-border bg-surface px-2.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 md:px-4">
+      <div className="relative shrink-0 bg-surface px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 md:px-6">
         {suggestionsOpen && (
           <div
             id={listboxId}
             role="listbox"
             aria-label="Sugestie folderów i plików"
-            className="absolute bottom-full left-2.5 right-2.5 z-[var(--z-dropdown)] mb-1.5 max-h-48 overflow-y-auto rounded-xl border border-border bg-surface-raised shadow-float md:left-4 md:right-4"
+            className="absolute bottom-full left-3 right-3 z-[var(--z-dropdown)] mb-1.5 max-h-48 overflow-y-auto rounded-[var(--radius-lg)] border border-border bg-surface-raised shadow-float md:left-6 md:right-6"
           >
             <div className="flex items-center gap-2 border-b border-border bg-soft px-3 py-2 text-xs font-semibold text-ink-muted">
               <AtSign size={14} aria-hidden />
@@ -624,7 +637,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
 
         <form
           onSubmit={handleSubmit}
-          className="mx-auto flex max-w-3xl items-end gap-1 rounded-2xl border border-border bg-surface-raised py-1 pl-3 pr-1"
+          className="mx-auto flex max-w-3xl items-end gap-2 rounded-[var(--radius-xl)] border border-border bg-surface-raised px-3 py-2.5 shadow-sm transition-[border-color,box-shadow] duration-[var(--duration)] ease-[var(--ease-out)] focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--focus-ring)]"
           aria-label="Wyślij wiadomość do asystenta"
         >
           <div className="relative min-h-[var(--touch-min)] flex-1">
@@ -633,7 +646,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
                 id="chat-input-placeholder"
                 className="pointer-events-none absolute left-0 top-1/2 z-20 -translate-y-1/2 text-[0.9375rem] text-ink-muted"
               >
-                {chatId ? "Napisz wiadomość…" : "Wybierz rozmowę"}
+                {chatId ? "O czym chcesz wiedzieć?" : "Wybierz rozmowę"}
               </div>
             )}
             <div
@@ -642,12 +655,12 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               onInput={handleInput}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              className="relative z-20 block max-h-24 min-h-[var(--touch-min)] w-full overflow-y-auto bg-transparent py-2 pr-2 text-[0.9375rem] text-ink caret-ink outline-none focus-visible:outline-none"
+              className="relative z-20 block max-h-28 min-h-[var(--touch-min)] w-full overflow-y-auto bg-transparent py-2 pr-2 text-[0.9375rem] text-ink caret-ink outline-none focus-visible:outline-none"
               spellCheck={false}
               role="textbox"
               aria-multiline="true"
               aria-label="Wiadomość do asystenta"
-              aria-placeholder={chatId ? "Napisz wiadomość…" : "Wybierz rozmowę"}
+              aria-placeholder={chatId ? "O czym chcesz wiedzieć?" : "Wybierz rozmowę"}
               aria-invalid={!!sendError}
               aria-describedby={sendError ? errorId : undefined}
               aria-controls={suggestionsOpen ? listboxId : undefined}
@@ -656,7 +669,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
               aria-activedescendant={
                 suggestionsOpen ? `chat-suggestion-${selectedIndex}` : undefined
               }
-              data-placeholder={chatId ? "Napisz wiadomość…" : "Wybierz rozmowę"}
+              data-placeholder={chatId ? "O czym chcesz wiedzieć?" : "Wybierz rozmowę"}
             />
           </div>
           <button
@@ -665,7 +678,7 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
             className={`send-button mb-0.5 ${canSend ? "send-button-ready" : "send-button-idle"}`}
             aria-label="Wyślij wiadomość"
           >
-            <ArrowUp size={20} strokeWidth={2.4} aria-hidden />
+            <ArrowUp size={18} strokeWidth={2.4} aria-hidden />
           </button>
         </form>
       </div>
@@ -674,20 +687,21 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
         open={!!sheetSources}
         onClose={() => setSheetSources(null)}
         title={sheetSources ? `Źródła (${sheetSources.length})` : "Źródła"}
+        flush
       >
-        <div className="-mx-1">
+        <div>
           {(sheetSources || []).map((item, index) => (
             <button
               key={`${item.path}-${index}`}
               type="button"
               onClick={() => openSourcePreview(item)}
-              className="flex min-h-[var(--touch-min)] w-full items-center gap-2.5 border-b border-border px-1 text-left last:border-b-0 transition-opacity active:opacity-55"
+              className="modal-option !justify-start gap-3"
             >
-              <span className="flex h-8 w-8 items-center justify-center rounded-[8px] bg-soft text-ink">
+              <span className="sheet-action-icon">
                 {sourceIcon(item.type)}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-bold text-ink">{item.fileName}</span>
+                <span className="block truncate text-sm font-semibold text-ink">{item.fileName}</span>
                 <span className="mt-0.5 block text-xs text-ink-muted">
                   {sheetEvidence.find((evidence) => evidence.path === item.path)?.reasons?.[0]
                     ?? "Otwórz podgląd"}
@@ -696,52 +710,38 @@ export function ChatInterface({ chatId }: ChatInterfaceProps) {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={() => setSheetSources(null)}
-          className="btn-ghost mt-2 w-full"
-        >
-          <X size={16} /> Zamknij
-        </button>
       </BottomSheet>
 
       <BottomSheet
         open={!!sheetPeople}
         onClose={() => setSheetPeople(null)}
         title={sheetPeople ? `Osoby (${sheetPeople.length})` : "Osoby"}
+        flush
       >
-        <div className="-mx-1">
+        <div>
           {(sheetPeople || []).map((person) => (
             <Link
               key={person.id}
               href={`/knowledge/${person.id}`}
               onClick={() => setSheetPeople(null)}
-              className="flex min-h-[var(--touch-min)] w-full items-center gap-2.5 border-b border-border px-1 text-left last:border-b-0 transition-opacity active:opacity-55"
+              className="modal-option !justify-start gap-3"
             >
-              <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-accent-muted text-accent">
-                {person.photoBase64 ? (
-                  <img
-                    src={`data:image/jpeg;base64,${person.photoBase64}`}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <Users size={16} aria-hidden />
-                )}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-sm font-bold text-ink">
+              <Avatar
+                seed={person.id}
+                src={
+                  person.photoBase64
+                    ? `data:image/jpeg;base64,${person.photoBase64}`
+                    : null
+                }
+                fallbackLabel={person.displayName}
+                size="sm"
+              />
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">
                 {person.displayName}
               </span>
             </Link>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={() => setSheetPeople(null)}
-          className="btn-ghost mt-2 w-full"
-        >
-          <X size={16} /> Zamknij
-        </button>
       </BottomSheet>
 
       {previewFile && (

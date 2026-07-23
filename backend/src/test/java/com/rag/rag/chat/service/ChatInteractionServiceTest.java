@@ -10,6 +10,8 @@ import com.rag.rag.ingestion.service.IngestionService;
 import com.rag.rag.knowledge.graph.EntityMatchMode;
 import com.rag.rag.knowledge.graph.GraphQueryService;
 import com.rag.rag.knowledge.graph.GraphEvidenceResult;
+import com.rag.rag.knowledge.graph.GraphEvidenceItem;
+import com.rag.rag.knowledge.graph.GraphPhotoEvidence;
 import com.rag.rag.knowledge.graph.GroundedVisualClaim;
 import com.rag.rag.knowledge.query.DynamicVisualMatcher;
 import com.rag.rag.knowledge.query.VisualMatchDecision;
@@ -47,7 +49,10 @@ class ChatInteractionServiceTest {
     @Mock private DynamicVisualMatcher dynamicVisualMatcher;
     @Mock private QueryPlanner queryPlanner;
     @Mock private VerifiedVisualAnswerService verifiedVisualAnswerService;
-    @Mock private ClaimAnswerComposer claimAnswerComposer;
+    @Mock private GraphSourceAttributionService graphSourceAttributionService;
+    @Mock private GraphGroundedAnswerRegenerationService graphGroundedAnswerRegenerationService;
+    @Mock private LibraryScopeService libraryScopeService;
+    @Mock private LibraryOverviewService libraryOverviewService;
     @InjectMocks private ChatInteractionService service;
     private UUID chatId;
 
@@ -60,11 +65,6 @@ class ChatInteractionServiceTest {
                 .thenReturn(new GraphEvidenceResult("", List.of()));
         lenient().when(graphQueryService.certainParticipantNamesForPaths(anyList()))
                 .thenReturn(List.of());
-        // Default: claim path not used (empty result) so free-form GRAPH tests keep working.
-        lenient().when(claimAnswerComposer.answerFromClaims(anyString(), anyList(), anyList()))
-                .thenReturn(ClaimAnswerComposer.ClaimAnswerResult.empty());
-        lenient().when(claimAnswerComposer.answerFromClaims(anyString(), anyList()))
-                .thenReturn(ClaimAnswerComposer.ClaimAnswerResult.empty());
         // Default: no forced index block unless a test stubs it.
         lenient().when(ingestionService.formatEmbeddingContextForPaths(anyList())).thenReturn("");
         lenient().when(ingestionService.embeddingTextsForPaths(anyList())).thenReturn(List.of());
@@ -92,6 +92,266 @@ class ChatInteractionServiceTest {
         assertFalse(response.response().contains("dir://"));
         verify(queryPlanner).plan(eq(plan.question()), anyString());
         verifyNoInteractions(dynamicVisualMatcher);
+    }
+
+    @Test
+    void collectionOverviewUsesOnlyCatalogEvidenceAndNeverReturnsPhotoSources() {
+        String question = "Co znajduje się w bibliotece?";
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(), question, question,
+                false, false, QueryPlan.RetrievalMode.HYBRID, EntityMatchMode.ANY, "",
+                QueryPlan.ScopeKind.UNRESTRICTED, List.of(), true);
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        GraphPhotoEvidence inventory = new GraphPhotoEvidence("I", "", List.of(
+                new GraphEvidenceItem("I.1", GraphEvidenceItem.Kind.INVENTORY,
+                        "Biblioteka zawiera 1 folder i 1 zdjęcie.", ""),
+                new GraphEvidenceItem("I.2", GraphEvidenceItem.Kind.INVENTORY,
+                        "Potwierdzone osoby: Igor. Nazwy plików: a.jpg.", "")));
+        GraphEvidenceResult evidence = new GraphEvidenceResult(
+                inventory.render(), List.of(), List.of(), List.of(inventory));
+        when(libraryOverviewService.build(plan)).thenReturn(
+                new LibraryOverviewService.Overview(evidence,
+                        "Biblioteka zawiera 1 folder i 1 zdjęcie. Potwierdzona osoba: Igor. "
+                                + "Nazwa pliku: a.jpg.",
+                        1, 1, 1, 0, 0, false));
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(Result.<String>builder()
+                .content("Biblioteka zawiera 1 folder i 1 zdjęcie. Jest tam Igor, a plik nazywa się a.jpg.")
+                .build());
+        when(graphSourceAttributionService.attributeCollection(
+                eq(question), anyString(), any(GraphEvidenceResult.class), eq(1)))
+                .thenReturn(new GraphSourceAttributionService.Attribution(
+                        List.of(), List.of("I.1", "I.2"), true, true));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(QueryPlan.RetrievalMode.HYBRID.name(), response.answerKind());
+        assertFalse(response.uncertain());
+        assertTrue(response.sources().isEmpty());
+        assertTrue(response.evidence().isEmpty());
+        assertTrue(response.response().contains("1 folder"));
+        assertTrue(response.response().contains("a.jpg"));
+        assertFalse(response.response().contains("plaż"));
+        verify(ingestionService, never()).getSources(any());
+        verify(ingestionService, never()).createSourceDto(anyString(), any(), any());
+    }
+
+    @Test
+    void unsupportedOverviewAnswerFallsBackToCertainCatalogText() {
+        String question = "Co jest w folderze?";
+        QueryPlan plan = new QueryPlan(question, List.of(), List.of(), question, question,
+                false, false, QueryPlan.RetrievalMode.HYBRID, EntityMatchMode.ANY, "",
+                QueryPlan.ScopeKind.UNRESTRICTED, List.of(), true);
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        GraphPhotoEvidence inventory = new GraphPhotoEvidence("I", "", List.of(
+                new GraphEvidenceItem("I.1", GraphEvidenceItem.Kind.INVENTORY,
+                        "Folder „Wakacje” zawiera 1 plik: a.jpg.", "")));
+        GraphEvidenceResult evidence = new GraphEvidenceResult(
+                inventory.render(), List.of(), List.of(), List.of(inventory));
+        String fallback = "Folder „Wakacje” zawiera 1 plik. Nazwa pliku: a.jpg.";
+        when(libraryOverviewService.build(plan)).thenReturn(
+                new LibraryOverviewService.Overview(
+                        evidence, fallback, 1, 1, 0, 0, 0, false));
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(Result.<String>builder()
+                .content("W folderze jest zdjęcie pięknej plaży.")
+                .build());
+        when(graphSourceAttributionService.attributeCollection(
+                eq(question), anyString(), eq(evidence), eq(1)))
+                .thenReturn(new GraphSourceAttributionService.Attribution(
+                        List.of(), List.of(), true, false));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(fallback, response.response());
+        assertFalse(response.uncertain());
+        assertTrue(response.sources().isEmpty());
+        assertFalse(response.response().contains("plaży"));
+    }
+
+    @Test
+    void structuredFolderReferenceOverridesOnlyScopeAndIsNotRejectedAsMissingFile() {
+        String question = "Co znajduje się w @Wakacje 2024?";
+        UUID folderId = UUID.randomUUID();
+        String path = "dir://Wakacje 2024/a.jpg";
+        QueryPlan plannerPlan = new QueryPlan(question, List.of(), List.of(), question, question,
+                false, false, QueryPlan.RetrievalMode.HYBRID, EntityMatchMode.ANY, "",
+                QueryPlan.ScopeKind.UNRESTRICTED, List.of(), true);
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plannerPlan);
+        when(libraryScopeService.validateFolderIds(List.of(folderId))).thenReturn(List.of(folderId));
+        when(libraryScopeService.filePathsForFolders(List.of(folderId))).thenReturn(List.of(path));
+        when(graphQueryService.hasExplicitFileReference(question)).thenReturn(true);
+        when(libraryOverviewService.build(any(QueryPlan.class))).thenReturn(
+                new LibraryOverviewService.Overview(
+                        new GraphEvidenceResult("[I.1] Folder jest pusty.", List.of()),
+                        "Folder „Wakacje 2024” jest pusty.", 0, 1, 0, 0, 0, false));
+
+        MessageResponse response = service.processChatMessage(
+                chatId, new MessageRequest(question, List.of(folderId)));
+
+        assertEquals("Folder „Wakacje 2024” jest pusty.", response.response());
+        assertFalse(response.uncertain());
+        ArgumentCaptor<QueryPlan> scopedPlan = ArgumentCaptor.forClass(QueryPlan.class);
+        verify(libraryOverviewService).build(scopedPlan.capture());
+        assertEquals(QueryPlan.ScopeKind.FOLDER, scopedPlan.getValue().scopeKind());
+        assertEquals(List.of(folderId), scopedPlan.getValue().folderScope());
+        assertEquals(List.of(path), scopedPlan.getValue().fileScope());
+    }
+
+    @Test
+    void unscopedGraphAnswerReturnsOnlyTheAttributedPhotoSource() {
+        String question = "Opisz zdjęcie, na którym Igor jest na siłowni.";
+        String bikePath = "dir://bike.jpg";
+        String gymPath = "dir://gym.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Igor"), List.of(), question, question,
+                false, false, QueryPlan.RetrievalMode.HYBRID, EntityMatchMode.ANY, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+
+        GraphPhotoEvidence bike = new GraphPhotoEvidence("1", bikePath, List.of(
+                new GraphEvidenceItem("E1.1", GraphEvidenceItem.Kind.FACT,
+                        "Igor stoi z rowerem przed budynkiem.", bikePath)));
+        GraphPhotoEvidence gym = new GraphPhotoEvidence("2", gymPath, List.of(
+                new GraphEvidenceItem("E2.1", GraphEvidenceItem.Kind.FACT,
+                        "Igor stoi na siłowni, nagi do pasa, w szarych spodniach.", gymPath)));
+        List<GraphPhotoEvidence> photos = List.of(bike, gym);
+        String context = bike.render() + "\n" + gym.render();
+        GraphEvidenceResult graph = new GraphEvidenceResult(
+                context, List.of(bikePath, gymPath), List.of(), photos);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any())).thenReturn(graph);
+
+        String answer = "Igor stoi na siłowni, nagi do pasa, w szarych spodniach.";
+        Result<String> result = Result.<String>builder().content(answer).build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of());
+        when(ingestionService.createGraphFactSourceDto(eq(bikePath), any(), anyDouble()))
+                .thenReturn(new SourceDto(bikePath, "bike.jpg", 1.0, null, "GRAPH_FACT"));
+        when(ingestionService.createGraphFactSourceDto(eq(gymPath), any(), anyDouble()))
+                .thenReturn(new SourceDto(gymPath, "gym.jpg", 1.0, null, "GRAPH_FACT"));
+        when(graphSourceAttributionService.attribute(eq(question), eq(answer), any()))
+                .thenReturn(new GraphSourceAttributionService.Attribution(
+                        List.of(gymPath), List.of("E2.1"), true, true));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(answer, response.response());
+        assertEquals(1, response.sources().size());
+        assertEquals(gymPath, response.sources().get(0).path());
+        assertFalse(response.sources().stream().anyMatch(source -> bikePath.equals(source.path())));
+    }
+
+    @Test
+    void attributedGraphSourcesAreExactAndAreNotCappedOrPollutedByRetrieval() {
+        String question = "Jakie są zdjęcia Bartka?";
+        QueryPlan plan = new QueryPlan(question, List.of("Bartek"), List.of(), question, question,
+                false, false, QueryPlan.RetrievalMode.GRAPH, EntityMatchMode.ANY, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+
+        List<GraphPhotoEvidence> photos = java.util.stream.IntStream.rangeClosed(1, 4)
+                .mapToObj(index -> new GraphPhotoEvidence(String.valueOf(index),
+                        "dir://bartek-" + index + ".jpg", List.of(new GraphEvidenceItem(
+                        "E" + index + ".1", GraphEvidenceItem.Kind.FACT,
+                        "Bartek jest w scenie " + index + ".", "dir://bartek-" + index + ".jpg"))))
+                .toList();
+        List<String> paths = photos.stream().map(GraphPhotoEvidence::sourcePath).toList();
+        String context = photos.stream().map(GraphPhotoEvidence::render)
+                .collect(java.util.stream.Collectors.joining("\n"));
+        GraphEvidenceResult graph = new GraphEvidenceResult(context, paths, List.of(), photos);
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any())).thenReturn(graph);
+
+        String answer = "Bartek jest pokazany w czterech różnych scenach.";
+        Result<String> result = Result.<String>builder().content(answer).build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of(
+                new SourceDto("dir://unrelated.jpg", "unrelated.jpg", 0.99, null, "IMAGE")));
+        for (String path : paths) {
+            when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                    .thenReturn(new SourceDto(path, path.substring("dir://".length()),
+                            1.0, null, "GRAPH_FACT"));
+        }
+        when(graphSourceAttributionService.attribute(eq(question), eq(answer), any()))
+                .thenReturn(new GraphSourceAttributionService.Attribution(
+                        paths, List.of("E1.1", "E2.1", "E3.1", "E4.1"), true, true));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(paths, response.sources().stream().map(SourceDto::path).toList());
+        assertEquals(4, response.sources().size());
+        assertTrue(response.sources().stream().noneMatch(
+                source -> "dir://unrelated.jpg".equals(source.path())));
+        assertEquals(response.sources().stream().map(SourceDto::path).toList(),
+                response.evidence().stream().map(evidence -> evidence.path()).toList());
+    }
+
+    @Test
+    void ungroundedGraphAnswerIsRegeneratedAndAttributedBeforeItReachesTheUser() {
+        String question = "A jakie są zdjęcia Olka?";
+        String path = "dir://olek-gym.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Olek"), List.of(), question, question,
+                false, false, QueryPlan.RetrievalMode.GRAPH, EntityMatchMode.ANY, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        GraphPhotoEvidence photo = new GraphPhotoEvidence("1", path, List.of(
+                new GraphEvidenceItem("E1.1", GraphEvidenceItem.Kind.FACT,
+                        "Olek stoi na siłowni w koszulce z napisem MUSTANG.", path)));
+        GraphEvidenceResult graph = new GraphEvidenceResult(
+                photo.render(), List.of(path), List.of(), List.of(photo));
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any())).thenReturn(graph);
+
+        String hallucination = "Olek stoi przed lustrem w koszulce z napisem Barcelona.";
+        String regenerated = "Olek stoi na siłowni w koszulce z napisem MUSTANG.";
+        Result<String> result = Result.<String>builder().content(hallucination).build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of());
+        when(graphSourceAttributionService.attribute(eq(question), eq(hallucination), any()))
+                .thenReturn(new GraphSourceAttributionService.Attribution(
+                        List.of(), List.of(), true, false));
+        when(graphGroundedAnswerRegenerationService.regenerate(eq(question), anyString()))
+                .thenReturn(regenerated);
+        when(graphSourceAttributionService.attribute(eq(question), eq(regenerated), any()))
+                .thenReturn(new GraphSourceAttributionService.Attribution(
+                        List.of(path), List.of("E1.1"), true, true));
+        when(ingestionService.createGraphFactSourceDto(eq(path), any(), anyDouble()))
+                .thenReturn(new SourceDto(path, "olek-gym.jpg", 1.0, null, "GRAPH_FACT"));
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(regenerated, response.response());
+        assertFalse(response.response().contains("Barcelona"));
+        assertEquals(List.of(path), response.sources().stream().map(SourceDto::path).toList());
+        assertFalse(response.uncertain());
+        assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
+        verify(chatMemoryService).replaceLastAiMessage(chatId, regenerated);
+    }
+
+    @Test
+    void ungroundedGraphAnswerFailsClosedWhenRegenerationStillHasNoEvidence() {
+        String question = "A jakie są zdjęcia Olka?";
+        String path = "dir://olek-gym.jpg";
+        QueryPlan plan = new QueryPlan(question, List.of("Olek"), List.of(), question, question,
+                false, false, QueryPlan.RetrievalMode.GRAPH, EntityMatchMode.ANY, "");
+        when(queryPlanner.plan(eq(question), anyString())).thenReturn(plan);
+        GraphPhotoEvidence photo = new GraphPhotoEvidence("1", path, List.of(
+                new GraphEvidenceItem("E1.1", GraphEvidenceItem.Kind.FACT,
+                        "Olek stoi na siłowni w koszulce z napisem MUSTANG.", path)));
+        GraphEvidenceResult graph = new GraphEvidenceResult(
+                photo.render(), List.of(path), List.of(), List.of(photo));
+        when(graphQueryService.buildEvidence(anyList(), anyList(), any())).thenReturn(graph);
+
+        String hallucination = "Olek siedzi w salonie w koszulce z niebieskimi rękawami.";
+        Result<String> result = Result.<String>builder().content(hallucination).build();
+        when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
+        when(ingestionService.getSources(result)).thenReturn(List.of());
+        when(graphSourceAttributionService.attribute(eq(question), anyString(), any()))
+                .thenReturn(new GraphSourceAttributionService.Attribution(
+                        List.of(), List.of(), true, false));
+        when(graphGroundedAnswerRegenerationService.regenerate(eq(question), anyString()))
+                .thenReturn("Olek stoi przed lustrem.");
+
+        MessageResponse response = service.processChatMessage(chatId, new MessageRequest(question));
+
+        assertEquals(ChatInteractionService.ATTRIBUTION_FAILURE_ANSWER, response.response());
+        assertTrue(response.sources().isEmpty());
+        assertTrue(response.evidence().isEmpty());
+        assertTrue(response.uncertain());
+        assertEquals("NO_EVIDENCE", response.answerKind());
+        verify(chatMemoryService).replaceLastAiMessage(
+                chatId, ChatInteractionService.ATTRIBUTION_FAILURE_ANSWER);
     }
 
     @Test
@@ -127,7 +387,7 @@ class ChatInteractionServiceTest {
                 "Jakie jest saldo na fakturze?", "", false, false, QueryPlan.RetrievalMode.GRAPH,
                 "Odpowiedz z dokumentów.");
         when(queryPlanner.plan(eq(plan.question()), anyString())).thenReturn(plan);
-        when(graphQueryService.buildEvidence(anyList(), anyList(), any()))
+        when(graphQueryService.buildEvidence(any(QueryPlan.class)))
                 .thenReturn(new GraphEvidenceResult("", List.of()));
         Result<String> result = Result.<String>builder().content("Saldo wynosi 1200 zł.").build();
         when(chatAiService.answer(eq(chatId), anyString())).thenReturn(result);
@@ -795,7 +1055,6 @@ class ChatInteractionServiceTest {
         assertFalse(response.response().contains("potwierdzonych"));
         assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
         assertEquals(1, response.sources().size());
-        verify(claimAnswerComposer, never()).answerFromClaims(anyString(), anyList(), anyList());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
         String prompt = promptCaptor.getValue();
@@ -936,7 +1195,6 @@ class ChatInteractionServiceTest {
 
         assertEquals(freeform, response.response());
         verify(chatAiService).answer(eq(chatId), anyString());
-        verify(claimAnswerComposer, never()).answerFromClaims(anyString(), anyList(), anyList());
         assertEquals(1, response.sources().size());
         assertEquals(path, response.sources().get(0).path());
     }
@@ -1014,7 +1272,6 @@ class ChatInteractionServiceTest {
         assertEquals(path, response.sources().get(0).path());
         assertEquals(QueryPlan.RetrievalMode.GRAPH.name(), response.answerKind());
         verify(chatAiService).answer(eq(chatId), anyString());
-        verify(claimAnswerComposer, never()).answerFromClaims(anyString(), anyList(), anyList());
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
         verify(chatAiService).answer(eq(chatId), promptCaptor.capture());
         String prompt = promptCaptor.getValue();

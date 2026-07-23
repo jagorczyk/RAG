@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ChevronLeft } from "lucide-react";
 
 export function PageHeader({
   title,
@@ -22,7 +23,7 @@ export function PageHeader({
 
   return (
     <header
-      className={`page-header flex min-h-[3rem] items-center justify-between gap-2 !pt-2.5 !pb-2 ${
+      className={`page-header flex min-h-[3.25rem] items-center justify-between gap-3 !pt-3 !pb-2.5 ${
         border ? "" : "!border-b-0"
       } ${className}`}
     >
@@ -35,22 +36,10 @@ export function PageHeader({
           <button
             type="button"
             onClick={onBack}
-            className="icon-button -ml-2 mr-1 shadow-none"
+            className="icon-button -ml-1 mr-1 shadow-none"
             aria-label="Wróć"
           >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
+            <ChevronLeft size={20} aria-hidden />
           </button>
         )}
         <div className={`min-w-0 ${isCenter ? "text-center md:text-left" : ""}`}>
