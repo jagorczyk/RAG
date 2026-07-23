@@ -161,13 +161,6 @@ export function Sidebar() {
   }, [chats, chatQuery]);
   const userSeed = user?.email || "cogniface-user";
 
-  useEffect(() => {
-    document.documentElement.dataset.sidebar = isOpen ? "open" : "collapsed";
-    return () => {
-      delete document.documentElement.dataset.sidebar;
-    };
-  }, [isOpen]);
-
   return (
     <>
       {isOpen && (
@@ -180,20 +173,16 @@ export function Sidebar() {
       )}
       <aside
         className={`absolute inset-y-0 left-0 z-[var(--z-sticky)] flex h-full shrink-0 flex-col border-r border-border bg-sidebar transition-[width,transform] duration-200 md:relative ${
-          isOpen
-            ? "w-64 translate-x-0"
-            : "pointer-events-none w-0 -translate-x-full overflow-hidden border-transparent md:w-0 md:translate-x-0"
+          isOpen ? "w-64 translate-x-0" : "w-20 -translate-x-full md:translate-x-0"
         }`}
         style={{ transitionTimingFunction: "var(--ease-out)" }}
         aria-label="Nawigacja boczna"
-        aria-hidden={!isOpen}
       >
-        <div className="flex h-12 w-64 items-center border-b border-border px-2">
+        <div className="flex h-12 items-center border-b border-border px-2">
           <Link
             href="/folders"
-            className="flex min-w-0 flex-1 items-center gap-2"
+            className={`flex min-w-0 items-center gap-2 ${isOpen ? "flex-1" : "mx-auto justify-center"}`}
             title="Cogniface"
-            tabIndex={isOpen ? undefined : -1}
           >
             <CognifaceLogo className="h-6 w-6 shrink-0 text-accent" />
             <AnimatePresence>
@@ -220,82 +209,110 @@ export function Sidebar() {
               <PanelLeftClose size={18} aria-hidden />
             </button>
           )}
+          {!isOpen && (
+            <button
+              type="button"
+              onClick={() => setIsOpen(true)}
+              className="btn-ghost absolute -right-3 top-5 z-20 rounded-full border border-border bg-surface-raised p-1.5 shadow-sm"
+              aria-label="Rozwiń panel"
+            >
+              <PanelLeftOpen size={16} />
+            </button>
+          )}
         </div>
 
-        <nav className="flex min-h-0 w-64 flex-1 flex-col p-3" aria-hidden={!isOpen}>
+        <nav className="flex min-h-0 flex-1 flex-col p-2.5">
           <ul className="space-y-0.5">
             <li>
               <Link
                 href="/folders"
-                className={`nav-item ${isFoldersActive ? "nav-item-active" : ""}`}
+                className={`nav-item ${isFoldersActive ? "nav-item-active" : ""} ${!isOpen ? "justify-center px-0" : ""}`}
                 title="Biblioteka"
-                tabIndex={isOpen ? undefined : -1}
               >
                 <FolderOpen size={18} className="shrink-0" />
-                <span className="truncate">Biblioteka</span>
+                {isOpen && <span className="truncate">Biblioteka</span>}
               </Link>
             </li>
             <li>
               <Link
                 href="/knowledge"
-                className={`nav-item ${isKnowledgeActive ? "nav-item-active" : ""}`}
+                className={`nav-item ${isKnowledgeActive ? "nav-item-active" : ""} ${!isOpen ? "justify-center px-0" : ""}`}
                 title="Osoby"
-                tabIndex={isOpen ? undefined : -1}
               >
                 <Users size={18} className="shrink-0" />
-                <span className="truncate">Osoby</span>
+                {isOpen && <span className="truncate">Osoby</span>}
               </Link>
             </li>
             <li className="md:hidden">
               <Link
                 href="/chats"
-                className={`nav-item ${pathname.startsWith("/chats") || pathname.startsWith("/chat") ? "nav-item-active" : ""}`}
+                className={`nav-item ${pathname.startsWith("/chats") || pathname.startsWith("/chat") ? "nav-item-active" : ""} ${!isOpen ? "justify-center px-0" : ""}`}
                 title="Rozmowy"
-                tabIndex={isOpen ? undefined : -1}
               >
                 <MessageSquare size={18} className="shrink-0" />
-                <span className="truncate">Rozmowy</span>
+                {isOpen && <span className="truncate">Rozmowy</span>}
               </Link>
             </li>
           </ul>
 
           <div className="my-3 border-t border-border" />
 
-          <div className="mb-2 flex items-center gap-1 px-1">
-            <p className="section-caption min-w-0 flex-1 px-1">Rozmowy</p>
-            <button
-              type="button"
-              onClick={handleCreateChat}
-              disabled={isCreating}
-              className="touch-target btn-ghost shrink-0 rounded-full p-1.5"
-              title="Nowa rozmowa"
-              aria-label="Nowa rozmowa"
-              tabIndex={isOpen ? undefined : -1}
-            >
-              {isCreating ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <Plus size={18} />
-              )}
-            </button>
-          </div>
-          {createError && (
+          {isOpen && (
+            <div className="mb-2 flex items-center gap-1 px-1">
+              <p className="section-caption min-w-0 flex-1 px-1">Rozmowy</p>
+              <button
+                type="button"
+                onClick={handleCreateChat}
+                disabled={isCreating}
+                className="touch-target btn-ghost shrink-0 rounded-full p-1.5"
+                title="Nowa rozmowa"
+                aria-label="Nowa rozmowa"
+              >
+                {isCreating ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Plus size={18} />
+                )}
+              </button>
+            </div>
+          )}
+          {!isOpen && (
+            <div className="mb-2">
+              <button
+                type="button"
+                onClick={handleCreateChat}
+                disabled={isCreating}
+                className="nav-item w-full justify-center px-0"
+                title="Nowa rozmowa"
+                aria-label="Nowa rozmowa"
+              >
+                {isCreating ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Plus size={18} />
+                )}
+              </button>
+            </div>
+          )}
+          {createError && isOpen && (
             <p className="mb-2 px-2 text-xs text-error" role="alert">
               {createError}
             </p>
           )}
 
-          <SearchField
-            value={chatQuery}
-            onChange={setChatQuery}
-            placeholder="Szukaj rozmów"
-            aria-label="Szukaj rozmów"
-            className="mb-2"
-          />
+          {isOpen && (
+            <SearchField
+              value={chatQuery}
+              onChange={setChatQuery}
+              placeholder="Szukaj rozmów"
+              aria-label="Szukaj rozmów"
+              className="mb-2"
+            />
+          )}
 
           <div className="sidebar-scroll min-h-0 flex-1 overflow-y-auto pe-0.5">
             <ul className="space-y-0.5">
-              {isLoadingChats && (
+              {isLoadingChats && isOpen && (
                 <>
                   <li className="px-1 py-1">
                     <div className="skeleton h-9 w-full" />
@@ -305,40 +322,58 @@ export function Sidebar() {
                   </li>
                 </>
               )}
-              {!isLoadingChats && filteredChats.length === 0 && (
+              {!isLoadingChats && filteredChats.length === 0 && isOpen && (
                 <li className="px-2 py-3 text-xs text-ink-muted">
                   {chatQuery.trim() ? "Brak wyników" : "Brak rozmów"}
                 </li>
               )}
-              {groups.map((group) => (
-                <li key={group.title} className="mb-2">
-                  <p className="section-caption px-2 pt-2">{group.title}</p>
-                  <ul className="space-y-0.5">
-                    {group.items.map((chat) => (
-                      <ChatRow
-                        key={chat.id}
-                        chat={chat}
-                        isOpen={isOpen}
-                        isActive={isChatActive(chat.id)}
-                        editing={editingChatId === chat.id}
-                        editValue={editValue}
-                        editInputRef={editInputRef}
-                        onEditChange={setEditValue}
-                        onKeyDown={handleKeyDown}
-                        onBlur={saveRename}
-                        onSave={saveRename}
-                        onCancel={() => setEditingChatId(null)}
-                        onStartEdit={startEditing}
-                      />
-                    ))}
-                  </ul>
-                </li>
-              ))}
+              {isOpen
+                ? groups.map((group) => (
+                    <li key={group.title} className="mb-2">
+                      <p className="section-caption px-2 pt-2">{group.title}</p>
+                      <ul className="space-y-0.5">
+                        {group.items.map((chat) => (
+                          <ChatRow
+                            key={chat.id}
+                            chat={chat}
+                            isOpen={isOpen}
+                            isActive={isChatActive(chat.id)}
+                            editing={editingChatId === chat.id}
+                            editValue={editValue}
+                            editInputRef={editInputRef}
+                            onEditChange={setEditValue}
+                            onKeyDown={handleKeyDown}
+                            onBlur={saveRename}
+                            onSave={saveRename}
+                            onCancel={() => setEditingChatId(null)}
+                            onStartEdit={startEditing}
+                          />
+                        ))}
+                      </ul>
+                    </li>
+                  ))
+                : filteredChats.map((chat) => (
+                    <ChatRow
+                      key={chat.id}
+                      chat={chat}
+                      isOpen={isOpen}
+                      isActive={isChatActive(chat.id)}
+                      editing={false}
+                      editValue=""
+                      editInputRef={editInputRef}
+                      onEditChange={setEditValue}
+                      onKeyDown={handleKeyDown}
+                      onBlur={saveRename}
+                      onSave={saveRename}
+                      onCancel={() => setEditingChatId(null)}
+                      onStartEdit={startEditing}
+                    />
+                  ))}
             </ul>
           </div>
 
           <div className="mt-2 border-t border-border pt-2">
-            {user && (
+            {isOpen && user && (
               <div className="mb-1 flex items-center gap-2.5 rounded-[var(--radius-md)] px-2 py-2">
                 <Avatar seed={userSeed} fallbackLabel={user.email} size="sm" />
                 <div className="min-w-0">
@@ -348,14 +383,18 @@ export function Sidebar() {
                 </div>
               </div>
             )}
+            {!isOpen && (
+              <div className="mx-auto mb-1 flex justify-center" title={user?.email || "Profil"}>
+                <Avatar seed={userSeed} fallbackLabel={user?.email || "?"} size="sm" />
+              </div>
+            )}
             <Link
               href="/settings"
-              className={`nav-item w-full ${isSettingsActive ? "nav-item-active" : ""}`}
+              className={`nav-item w-full ${isSettingsActive ? "nav-item-active" : ""} ${!isOpen ? "justify-center px-0" : ""}`}
               title="Ustawienia"
-              tabIndex={isOpen ? undefined : -1}
             >
               <Settings size={18} className="shrink-0" />
-              <span className="truncate">Ustawienia</span>
+              {isOpen && <span className="truncate">Ustawienia</span>}
             </Link>
           </div>
         </nav>
@@ -364,10 +403,10 @@ export function Sidebar() {
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="mobile-drawer-toggle icon-button fixed z-40 h-8 w-8 min-h-8 min-w-8 border border-border shadow-sm"
+          className="mobile-drawer-toggle icon-button fixed z-40 border border-border md:hidden"
           aria-label="Otwórz panel rozmów"
         >
-          <PanelLeftOpen size={16} />
+          <PanelLeftOpen size={18} />
         </button>
       )}
     </>

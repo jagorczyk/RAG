@@ -258,14 +258,6 @@
     }
   }
 
-  /* Desktop: collapsed sidebar frees full width; leave room for the reopen control */
-  @media (min-width: 768px) {
-    html[data-sidebar="collapsed"] .page-header,
-    html[data-sidebar="collapsed"] .mobile-top-bar {
-      padding-left: 3rem;
-    }
-  }
-
   .page-title {
     font-family: var(--font-bricolage), system-ui, sans-serif;
     font-size: var(--text-2xl);
