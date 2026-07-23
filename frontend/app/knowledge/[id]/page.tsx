@@ -100,15 +100,15 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
         <button
           type="button"
           onClick={() => router.push("/knowledge")}
-          className="icon-button -ml-1 shadow-none"
+          className="icon-button -ml-1 h-8 w-8 min-h-8 min-w-8 shadow-none"
           aria-label="Wróć do osób"
         >
-          <ArrowLeft size={20} />
+          <ArrowLeft size={16} />
         </button>
         <h1 className="min-w-0 flex-1 truncate text-center text-base font-bold text-ink">
           {entity?.displayName ?? (isLoading ? "Ładowanie…" : "Album osoby")}
         </h1>
-        <div className="w-9" />
+        <div className="w-8" />
       </header>
       {!isLoading && entity && (
         <div className="flex flex-col items-center px-4 pt-4 pb-2">
@@ -197,11 +197,11 @@ export default function EntityAlbumPage({ params }: EntityAlbumPageProps) {
         >
           <button
             type="button"
-            className="btn-ghost absolute right-4 top-4 text-surface-raised hover:bg-surface-raised/10 hover:text-surface-raised"
+            className="btn-ghost absolute right-4 top-4 h-8 w-8 min-h-8 min-w-8 p-0 text-surface-raised hover:bg-surface-raised/10 hover:text-surface-raised"
             onClick={() => setPreview(null)}
             aria-label="Zamknij podgląd"
           >
-            <X size={28} />
+            <X size={16} />
           </button>
           <div
             className="w-full max-w-5xl rounded-[10px] border border-border bg-surface-raised shadow-md"

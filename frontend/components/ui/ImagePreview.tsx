@@ -121,10 +121,10 @@ export function ImagePreview({ preview, onClose }: FilePreviewModalProps) {
         <button
           type="button"
           onClick={onClose}
-          className="icon-button shadow-none"
+          className="icon-button h-8 w-8 min-h-8 min-w-8 shadow-none"
           aria-label="Zamknij podgląd"
         >
-          <X size={22} />
+          <X size={16} />
         </button>
       </header>
 
